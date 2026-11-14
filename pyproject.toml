@@ -56,7 +56,7 @@ cli = ["static/*"]
 tradingagents = ["assets/*.svg"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "test/offline"]
 addopts = "-ra --strict-markers -m \"not integration\""
 markers = [
     "unit: fast isolated unit tests",
