@@ -122,7 +122,7 @@ requirements:
     tradeoff: "Must. An unguarded Yahoo path would still send a misleading value to the analyst."
     status: "selected_for_development"
     source_review: "sources-v2.0/O1-SMA-Guard-Requirements-Latest.md#L26"
-    verification: ["T-O1-05", "T-O1-06", "T-O1-10"]
+    verification: ["T-O1-01", "T-O1-02", "T-O1-03", "T-O1-05", "T-O1-06"]
     source_code: ["tradingagents/dataflows/vendors/yahoo/market.py", "tradingagents/dataflows/vendors/yahoo/snapshot.py"]
   - id: "REQ-O1-05"
     type: "invariant"
@@ -146,7 +146,7 @@ requirements:
     tradeoff: "Must. A generic N/A would hide the reason from the analyst."
     status: "selected_for_development"
     source_review: "sources-v2.0/O1-SMA-Guard-Requirements-Latest.md#L28"
-    verification: ["T-O1-08", "T-O1-12"]
+    verification: ["T-O1-08", "T-O1-10", "T-O1-12"]
     source_code: ["tradingagents/dataflows/vendors/yahoo/market.py", "tradingagents/dataflows/vendors/yahoo/snapshot.py"]
   - id: "O2-FR-01"
     type: "functional_behavior"
