@@ -2,8 +2,9 @@
 
 **Owner:** Member E (O5). **Execution-plan reviewer:** Member A (registry `approval_roles.coding_agent_execution_plan`: "A reviews each scoped plan before first code edit").
 **Companion:** [`O5-Test-Plan-precode-v1.1-DRAFT.md`](./O5-Test-Plan-precode-v1.1-DRAFT.md) — **F** reviews that one.
-**Status:** DRAFT (revision **v1.2**). **NOT approved.** **No code written; no project tests or benchmarks run; no commands run beyond the inspections in §1.**
-> **v1.2 review-revision note.** This file keeps its v1.1 filename so it replaces the same path in PR #3 and keeps stable links; **v1.2 is the active document revision**. v1.2 responds to A's review of PR #3 commit `85ffc242b10ebd242501ef61e7c7b95deee0a9d2` and rebases active baseline references on the **merged** baseline `4f87e29f7a52842dba8272071d2a4a1b527def10`. Anything not amended here stands as in the v1.1 text.
+**Status:** DRAFT (revision **v1.3**). **NOT approved.** **No code written; no project tests or benchmarks run; no commands run beyond the inspections in §1.**
+> **v1.3 review-revision note (supersedes the v1.2 note).** This file keeps its v1.1 filename so it replaces the same path in PR #3 and keeps stable links; **v1.3 is the active document revision**.
+> v1.3 responds to A's review of commit `27c8e4be0f0e8b1af4611ae29a86ac106fd00967` and changes: **ownership** (§3.2 — E implements the O5 private integration in `news.py`), the **evidence lifecycle** (§3.4, replacing the loop-`finally` emission), the **`rules_version` blocking decision** (§7), and **T17 digest references** (§8). The merged baseline `4f87e29f7a52842dba8272071d2a4a1b527def10` and v1.2's collection findings are unchanged.
 
 ---
 
@@ -51,25 +52,39 @@ Existing code at `4f87e29` (byte-identical to `970a9ea`), with the inspected loc
 
 **Region 1 — request validation and K=0, before retrieval.** Immediately after the config defaults are read (`:155-160`) and before `start_dt`/the loop; validate `limit` (int ≥ 0, not bool) and resolve `rules_version` from config. If `limit == 0`, return the LIMIT_ZERO result **without** calling `yf.Search`. Today no such block exists; lines `:162-201` run unconditionally.
 
-**Region 2 — retrieval-loop exception and evidence handling.** Wrap the existing loop `:169-189` in a `try/except/finally` that preserves its body byte-for-byte (queries, `news_count`, fuzzy, window filter, title dedup, early stop at `:188`). The `except` path records the failure kind for the evidence variant and re-raises or lets the caller's exception propagate; the `finally` emits the ordered evidence. `yf_retry` already converts non-rate-limit errors into `VendorUnavailableError` inside the loop, so the wrapper does not change retry behaviour.
+**Region 2 — retrieval-loop exception and evidence handling.** Wrap the existing loop `:169-189` in a `try/except` that preserves its body byte-for-byte (queries, `news_count`, fuzzy, window filter, title dedup, early stop at `:188`). The `except` path builds and emits the single failure event (`V-PARTIAL` when candidates were collected, else `V-VENDOR` from the typed cause) and then re-raises so the existing error path is unchanged. **`finally` performs cleanup only and emits nothing** (`V1.3`). `yf_retry` still converts non-rate-limit errors into `VendorUnavailableError` inside the loop; retry behaviour is unchanged and retries are not evidence events.
 
 **Region 3 — selection, before the final slice/format.** Between the loop end (`:189`) and `_format_articles(in_window_news[:limit])` (`:191`), normalize the collected records and call the selector; then format the selector's `selected` list instead of `in_window_news[:limit]`.
 
 **Region 4 — post-selection empty handling.** Keep the existing `:193-199` coverage-gap branch for an empty pool; add the filtered-to-empty and suppression branches according to Interface §5.
 
-### 3.2 Ownership table
+### 3.2 Ownership table (v1.3, A's requested direction)
 
 | Item | Owner | Status |
 |---|---|---|
-| Selector module + logic (new file) | **E** | proposed |
-| Adapter Regions 1–4 inside `news.py` | **C** (shared vendor file per `development_contract.integration_owner`) with E providing the module call; **A** reviews | proposed |
-| Evidence schema and emission content | E | proposed |
-| O2 run-directory context plumbing | **C** | unconfirmed |
-| Config keys (`o5_*`) or module constants | **A/C** | unconfirmed |
-| `test/offline/conftest.py` (already exists) | **F** owns; E must not edit | verified present |
-| CI wiring / gates | **F** | partially existing |
+| **O5 private adapter integration inside `tradingagents/dataflows/vendors/yahoo/news.py`** (regions 1-4) | **E** | **A's requested direction.** No existing team governance assigns this file to C; the v1.2 claim is withdrawn. Execution-plan approval still Pending. |
+| Selector module `tradingagents/dataflows/macro_news_filter.py` + classification/allocation | **E** | proposed |
+| **O2 run-directory handoff** into the evidence sink | **C confirms** | **unconfirmed interface detail** |
+| C-owned shared integration, where applicable (`default_config.py` `o5_*` keys; any `cli/run.py` / graph wiring) | **C** | unconfirmed; E does not edit these |
+| `docs/req/*` registry text | **B/A** | not E's |
+| CI workflows, `test/offline/conftest.py` | **F** | E must not edit |
+| Invariant-failure wording / negation-flag field name | **D** | unconfirmed |
 
-**Proposed, unimplemented signatures:** `select_macro_news(request) -> result` (name/shape Pending C), an O5 JSONL sink `emit(evidence)` with a run-scoped path. **No agreement is asserted** where none exists.
+**Distinction A asked for:** A's ownership direction (E owns the `news.py` integration) is **separate from** (a) C's still-unconfirmed O2 handoff and (b) A's approval of the whole execution plan. None of the three implies the others.
+
+### 3.4 Evidence lifecycle (v1.3, A3) — replaces loop-`finally` emission
+
+The v1.2 text said terminal evidence is emitted from the retrieval loop's `finally`. **Withdrawn** — at loop exit no selection has happened. The authoritative path plan is the Test Plan's §4.6 table (P-K0, P-OK, P-PARTIAL, P-VENDOR, P-INVARIANT, P-INVALID-REQ) plus its pseudocode. Implementation consequences here:
+
+| Path | Emit at | Nothing else may emit |
+|---|---|---|
+| K=0 | region 1, before `yf.Search` | no success event |
+| success | region 4, **after** selector + invariant validation + final result | no `finally` emission |
+| partial/full retrieval failure | region 2 except path, with candidate/query counts and the exception | no second event on re-raise; router emits none |
+| invariant failure | region 4 after the check, result suppressed | no `V-SELECTED` |
+| invalid request | region 1, zero retrieval | — |
+
+`finally` is cleanup only. Exactly-once is per **invocation** of `get_global_news_yfinance` (not per query, not per `yf_retry` retry). T13c-D/T13c-R still each emit exactly one `V-PARTIAL` and no `V-VENDOR`.
 
 ### 3.3 How the O2 run directory reaches the evidence sink
 
@@ -95,8 +110,8 @@ Registry `development_contract.o5.evidence_path` = "same O2 run directory/o5_evi
 7. `test/offline/test_o5_macro_news_perf.py` — **T17 harness** (see §6; must have an implementation step, not just a command).
 8. `test/offline/fixtures/o5/` — copies of DEV20 and the four T17 artifacts, with hashes.
 
-**Modify:**
-9. `tradingagents/dataflows/vendors/yahoo/news.py` — **only** the private adapter insertion plus the evidence hook; no change to `_extract_article_data`, `_format_articles`, query strings, fuzzy matching, `news_count`, early stop.
+**Modify (E-owned, v1.3):**
+9. `tradingagents/dataflows/vendors/yahoo/news.py` — the O5 private integration (regions 1-4: pre-fetch validation + K=0, retrieval-loop failure handling, selection before the final slice, post-selection empty/invariant branches). **Owner: E** per A's direction. No change to `_extract_article_data`, `_format_articles`, query strings, fuzzy matching, `news_count`, or early stop.
 
 **Conditionally modify (not yet approved):**
 10. `default_config.py` — only if the `o5_*` config keys are adopted (C-owned).
@@ -127,7 +142,7 @@ If any seam is missing, the affected cases are **blocked**, not dropped; the all
 3. **Selector skeleton** (pure): request/result types, `rules_version` validation, canonical `candidate_id`, ordering helpers.
 4. **Selector logic:** validation precedence → ID registration → title/timestamp/window → classification → buckets/round-robin. Add **S** cases to `test_o5_macro_news_filter.py`, including **T03c (A-1)** and **T12 (A-2)**.
 5. **Evidence builder** + fault-injection seams. Add **B** cases (`test_o5_evidence_builder.py`) and **I** cases (`test_o5_invariants.py`), keeping I6–I10 parameter tables intact.
-6. **Adapter wiring** (insertion + K=0 zero-fetch + sink). Add **A** cases (`test_o5_macro_news_integration.py`) including **T03a-A** and T13c-D/T13c-R.
+6. **Adapter wiring by E** in `news.py` (K=0 zero-fetch + failure handling + post-selection emission). Add **A** cases (`test_o5_macro_news_integration.py`) including **T03a-A** and T13c-D/T13c-R, plus the §3.4 lifecycle assertions (no event from `finally`).
 7. **Regression** (`test_o5_regression.py`): RT-1..RT-4; adapt inherited macro-news tests only where owner review agrees.
 8. **Fixtures:** copy DEV20 (`a6f65bf2…`) and the four T17 artifacts (hashes in the test plan §7) into `test/offline/fixtures/o5/`.
 9. **T17 harness:** implement `test_o5_macro_news_perf.py` with the boundary in test plan §7 (load outside; selector inside; assertions outside); runner ubuntu-latest/Py3.11 per the registry; 100 ms unverified.
@@ -136,14 +151,18 @@ If any seam is missing, the affected cases are **blocked**, not dropped; the all
 
 ---
 
-## 7. Plan-level review questions
+## 7. Blocking decisions and review questions (v1.3)
 
-1. **A:** PB-1 target branch/SHA; PB-2 governance readiness.
-2. **C:** seams in §5; whether `o5_*` config keys are added.
-3. **F:** whether the base already provides `test/offline/` isolation, so a new conftest is unnecessary.
-4. **F/E:** T17 runner realization and 100 ms acceptance; relaxation requires a registry decision.
+**BLOCKING (A1) — canonical `rules_version`.** `requirements.yaml` carries both `o5-rules-v1.1` (inside `REQ-O5-01.statement`) and `o5-rules-v1.1-draft` (`development_contract.o5.rules_version`); the DEV20 fixture repeats `-draft`. Verified at `4f87e29` **and** the PR head `27c8e4b`; no A/B resolution exists. A/B must select one literal and update: `requirements.yaml` statement, `development_contract.o5.rules_version`, the DEV20 fixture's `rules_version` (bytes → `dev20_fixture_sha256` change), the `o5_rules_version` config value, and every active plan/evidence example. **E proposes `o5-rules-v1.1`**; it is not approved, and this package changes no requirement text and no fixture byte.
 
----
+Other open questions:
+
+1. **A:** PB-1/PB-2/PB-3 base checks on the implementation branch; PB-3 is required because this package was authored at `970a9ea` and the baseline is `4f87e29`.
+2. **C:** O2 run-directory handoff into the sink; whether `o5_*` keys enter `default_config.py` or stay module constants.
+3. **D:** exact "filter-unavailable" string; negation-flag field name.
+4. **C7:** whether a `V-VENDOR` should accompany `V-PARTIAL` (the plans preserve exactly one `V-PARTIAL`).
+5. **F:** per-invariant case mapping; any extra per-test config/cache reset.
+6. **F/E:** T17 runner realization and 100 ms.
 
 ## 8. Planned verification commands (NOT executed)
 
@@ -173,7 +192,20 @@ Every module named above is in the §4 create-list, so each command has a corres
 
 Approved cases pass with the T17 correctness gate; no added retrieval/LLM calls; public `str` and ticker output unchanged; evidence JSONL emitted per schema for every exercised path; sink failure does not corrupt results; approval record filled with real times; applicable CI gates block on failure.
 
-## 10a. A/F review-comment mapping (v1.2)
+## 9a. T17 digest references (v1.3, A4)
+
+This plan does not hard-code manifest/handoff digests. The authoritative values are in [`README.md`](./README.md) and are computed from actual bytes:
+
+| File | Value source |
+|---|---|
+| fixture | SHA-256 `4b6699eca6a8958779479dabd2063cdf31ce31807ebaeb2e2f047462ae14f1f0` (bytes unchanged) |
+| expected results | SHA-256 `42e1c0fb5e1d7d42adbe19b3f780a1a8a7b92fe3a6895c6807b9434da49d1bc6` (bytes unchanged) |
+| handoff | digest recorded **in the manifest**; also in README |
+| manifest | digest recorded **in README only** (manifest does not hash README) |
+
+**One-way:** manifest → {fixture, expected, handoff}; handoff → manifest by filename; README/plans → manifest digest. No cycle.
+
+## 10a. A/F review-comment mapping (v1.2 + v1.3)
 
 | Comment | Revised section |
 |---|---|
@@ -187,6 +219,10 @@ Approved cases pass with the T17 correctness gate; no added retrieval/LLM calls;
 | F8 invariant reconciliation | Test Plan §4.5 |
 | F9/F10 T17 hash integrity | `README.md`, `O5-T17-F-Handoff-v1-DRAFT.md`, `O5-T17-Manifest-v1-DRAFT.json`, Test Plan §7 |
 | F11 runner/threshold/fail-overall | Test Plan §7, Execution §9 |
+| **A1 (v1.3)** canonical `rules_version` | Test Plan §0a, §8 D-02, §9 Q3; Execution §7 |
+| **A2 (v1.3)** ownership of `news.py` | Execution §3.2, §4 item 9; Test Plan §0a |
+| **A3 (v1.3)** evidence lifecycle | Test Plan §4.6, §9b; Execution §3.4 |
+| **A4 (v1.3)** T17 hashes | Test Plan §7; Execution §9a; `README.md` |
 
 ## 11. Status
 

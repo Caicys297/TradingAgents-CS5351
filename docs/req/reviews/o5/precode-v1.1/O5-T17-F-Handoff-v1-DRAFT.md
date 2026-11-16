@@ -1,6 +1,8 @@
 # O5 T17 Performance Review - Handoff to Member F (DRAFT)
 
 **Owner:** Member E (O5). **Status:** PROPOSED review artifact. Not implementation approval. No benchmark run performed. All software tests remain Not run.
+**Revision:** v1.3 package. Evidence/ownership/`rules_version` changes are in the two plans; this handoff's only v1.3 change is the provisional `rules_version` wording above and the digest-authority note below.
+**Digest authority (A4):** this handoff contains no manifest digest (one-way integrity); the manifest records this file's digest. Authoritative final digests live in `README.md`.
 **Files in this directory:**
 
 | File | SHA-256 |
@@ -44,7 +46,7 @@ The fixture is serialized (RFC3339 strings); the loader converts to the in-memor
 1. Read `O5-T17-Perf-Fixture-1000-v1-DRAFT.json` (UTF-8).
 2. Parse `published_at` RFC3339 -> aware UTC `datetime`.
 3. Apply defaults for absent/null `summary`/`source`/`url`.
-4. Build request: `topics = ["MONETARY_POLICY","INFLATION","ECONOMIC_ACTIVITY"]`, `start_at`/`end_at` from the fixture window, `limit = 30`, `rules_version = "o5-rules-v1.1-draft"`.
+4. Build request: `topics = ["MONETARY_POLICY","INFLATION","ECONOMIC_ACTIVITY"]`, `start_at`/`end_at` from the fixture window, `limit = 30`, and `rules_version` set to the **canonical literal once A/B resolve it** (currently `"o5-rules-v1.1-draft"`, a **provisional/historical** value; E proposes `o5-rules-v1.1`). Do not hard-code the provisional value in any approved measurement.
 5. Verify the fixture SHA-256 matches the manifest before measuring.
 
 ---

@@ -2,8 +2,10 @@
 
 **Owner:** Member E (O5). **Test-plan reviewer:** Member F (registry `development_contract.approval_roles.O5_test_plan` → "F reviews").
 **Execution-plan reviewer:** Member A ("A reviews each scoped plan before first code edit").
-**Status:** DRAFT for review (revision **v1.2**). **NOT approved. No software test or benchmark has been run. No project test code exists.**
-> **v1.2 review-revision note.** This file keeps its v1.1 filename so it can replace the same path in PR #3 and keep stable links; **v1.2 is the active document revision**. v1.2 responds to A's and F's review of commit `85ffc242b10ebd242501ef61e7c7b95deee0a9d2` and rebases every active baseline reference on the **merged** requirements baseline `4f87e29f7a52842dba8272071d2a4a1b527def10`. Everything not amended by v1.2 stands as written in this file's v1.1 text.
+**Status:** DRAFT for review (revision **v1.3**). **NOT approved. No software test or benchmark has been run. No project test code exists.**
+> **v1.3 review-revision note (supersedes the v1.2 note).** This file keeps its v1.1 filename so it replaces the same path in PR #3 and keeps stable links; **v1.3 is the active document revision**.
+> v1.3 responds to A's review of PR #3 commit `27c8e4be0f0e8b1af4611ae29a86ac106fd00967` and adds: a **blocking canonical `rules_version` decision** (§8 D-02), **revised ownership** (§0a), the **evidence lifecycle path table + pseudocode** (§4.6) and **T17 hash consistency across all nine files** (§7).
+> v1.2's changes (merged baseline `4f87e29f7a52842dba8272071d2a4a1b527def10` rebase, verification remap, I9-b layer, INV mapping, T17 one-way hashing) remain in force. Everything else stands as written in this file's v1.1 text.
 **Development authority for this review:** `docs/req/requirements.yaml` and `docs/req/A-Requirements-Decisions.md` at **merged baseline `4f87e29f7a52842dba8272071d2a4a1b527def10`** (PR #2 **merged**; this is F's identified baseline, full SHA resolved here). It is distinct from the current remote `main` tip if that tip later moves. Neither the registry nor this document is a test-plan or execution-plan approval.
 
 ---
@@ -22,6 +24,33 @@
 | [`O5-T17-F-Handoff-v1-DRAFT.md`](./O5-T17-F-Handoff-v1-DRAFT.md) | T17 handoff (byte-identical copy). |
 
 **Reading rule:** the two `*-r2.md` files are the detailed case sources. This plan **amends** them only in §5. Where this plan and an r2 reference disagree **outside** §5, treat it as an error in this plan to be reported, not as license to pick either — there is exactly one contract, amended once, in §5.
+
+---
+
+## 0a. Ownership direction and canonical `rules_version` (v1.3, A's review)
+
+**Ownership (revised).** A's requested direction is that **E implements the O5 private integration in `tradingagents/dataflows/vendors/yahoo/news.py`**. No existing team governance assigns that file to C; the v1.2 text implied C owned it and is **corrected here**. What stays with C is narrower and explicitly conditioned:
+
+| Item | Owner | Status |
+|---|---|---|
+| O5 private adapter integration inside `vendors/yahoo/news.py` (regions 1-4) | **E** | A's requested direction; final execution-plan approval still Pending |
+| Selector module + classifier + allocation | E | proposed |
+| **O2 run-directory handoff** into the evidence sink | **C confirms** | **unconfirmed interface detail** |
+| Other C-owned shared integration, where applicable (e.g. `default_config.py` `o5_*` keys, any `cli/run.py` or graph wiring) | **C** | unconfirmed; E does not touch those files |
+| `docs/req/*`, CI workflows, `test/offline/conftest.py` | B/A, F, F | not E's |
+
+This separation matters: A's ownership direction is **not** approval of the execution plan, and C's O2 handoff is **not** resolved by it.
+
+**Canonical `rules_version` — ONE BLOCKING DECISION (A1).** Inspected at `4f87e29` and on the PR head `27c8e4b`: `docs/req/requirements.yaml` contains **both**
+
+- `REQ-O5-01.statement` → "…using O5 rules version **`o5-rules-v1.1`**…", and
+- `development_contract.o5.rules_version` → **`"o5-rules-v1.1-draft"`**,
+
+and `docs/req/O5-Dev20-Fixtures-v0.5.3-DRAFT.json` carries `"rules_version": "o5-rules-v1.1-draft"` (SHA-256 `a6f65bf2…` unchanged). **No A/B resolution exists in any inspected revision.** Therefore:
+
+> **BLOCKING:** A/B must choose the canonical literal and synchronize it across (a) `requirements.yaml` `REQ-O5-01.statement`, (b) `requirements.yaml` `development_contract.o5.rules_version`, (c) `docs/req/O5-Dev20-Fixtures-v0.5.3-DRAFT.json` `rules_version` (and any `expected`/label metadata that repeats it), (d) the `o5_rules_version` config value used by the adapter, (e) every active plan and evidence example that prints the literal, **before any coding**.
+
+**E's proposal:** `o5-rules-v1.1`. It is **not approved**, and this package does **not** change any authoritative requirement text or any fixture byte. The `-draft` values are **historical/provisional**, not approved implementation defaults; where the plans print them they are marked provisional. Changing the fixture literal would change the fixture bytes and therefore `dev20_fixture_sha256`, which is itself a separate registry edit — hence the decision must land before code.
 
 ---
 
@@ -148,6 +177,66 @@ Consequences for O5:
 
 ---
 
+## 4.6 Evidence lifecycle (v1.3, A3) - supersedes any "emit from the retrieval loop's finally" idea
+
+The v1.2 execution plan proposed emitting terminal O5 outcome evidence from the retrieval loop's `finally`. **That is withdrawn:** at loop exit, selection has not run, so a "success" event would be a guess. The table below is the authoritative path plan.
+
+| Path | Stage reached | Retrieval calls | Selection run? | Evidence emitted | Emitted where | Result |
+|---|---|---|---|---|---|---|
+| **P-K0** | request validated, `limit == 0` | **0** (no `yf.Search`) | no | exactly **one `V-LIMIT-ZERO`** | region 1, before retrieval | LIMIT_ZERO string |
+| **P-OK** | retrieval complete, selector + invariant validation + final publishable result all done | n (as baseline) | **yes** | exactly **one** of `V-SELECTED` / `V-FILTERED-EMPTY` / `V-UPSTREAM-EMPTY` | region 4, **after** selection and invariants, **before** return | honest string |
+| **P-PARTIAL** | retrieval raised mid-loop with ≥1 collected candidate | k attempted, 1 failed | **no** | exactly **one `V-PARTIAL`** | retrieval-failure boundary (region 2's except path) | direct: raise `VendorUnavailableError`; routed: router `DATA_UNAVAILABLE` |
+| **P-VENDOR** | retrieval raised with no usable candidate / rate limit exhausted | n attempted | no | exactly **one `V-VENDOR`** (trigger from the typed cause) | region 2 except path | as baseline error path |
+| **P-INVARIANT** | selection returned, invariant check failed | n | yes, result **suppressed** | exactly **one `V-INVARIANT`** | region 4 after the invariant check | "filter-unavailable" message, no articles |
+| **P-INVALID-REQ** | request validation failed | 0 | no | exactly **one `V-INVALID-REQUEST`** | region 1, before any fetch | request error |
+
+**Planned control-flow pseudocode (proposed; not code).**
+
+```
+get_global_news_yfinance(as_of_date, look_back_days, limit):
+    cfg, start_dt, queries = resolve_config_and_window(...)      # existing :155-164
+    try:
+        request = validate_request(limit, topics, start_at, end_at, rules_version)   # region 1
+    except InvalidRequest as e:
+        emit_once(V_INVALID_REQUEST(field, reason))              # P-INVALID-REQ, 0 calls
+        raise                                                     # existing error path unchanged
+
+    if request.limit == 0:                                        # P-K0
+        emit_once(V_LIMIT_ZERO(input_count=0, executed_query_count=0,
+                               pre_filter_candidate_count=0, batch_id=None))
+        return LIMIT_ZERO_TEXT                                    # zero retrieval calls
+
+    pool, executed, failed, failure = run_retrieval_loop(...)      # region 2; unchanged body
+    #   the existing loop body (queries, news_count, fuzzy, window filter,
+    #   exact-title dedup, early stop at :188) is byte-identical
+    #   the loop wrapper catches the exception, records `failure`, and stops
+
+    if failure is not None:                                       # P-PARTIAL / P-VENDOR
+        if pool: emit_once(V_PARTIAL(executed, failed, len(pool),
+                                     batch_id=None, input_count=None, reason_counts=None))
+        else:    emit_once(V_VENDOR(vendor, method, trigger=typed_trigger(failure)))
+        raise failure                                             # then the unchanged error path
+
+    result = select_macro_news(build_selector_request(pool, request))   # region 3
+    verify_invariants(result, original=pool)                      # region 4
+    if violated:
+        emit_once(V_INVARIANT(...))                               # P-INVARIANT
+        return FILTER_UNAVAILABLE_TEXT
+    final = format(result)                                        # only now is "success" true
+    emit_once(terminal_variant_for(result))                       # P-OK: V-SELECTED / filtered / upstream-empty
+    return final
+```
+
+**Exactly-once rules.**
+
+- `emit_once` is per **invocation** of `get_global_news_yfinance`, not per query and not per retry. It is a single guarded call on each path above; nothing else emits terminal evidence, so a second outcome cannot be published from a `finally`.
+- `finally` may only perform **cleanup** (closing the sink, releasing a lock). It must not emit, and must not infer a result.
+- **Retry boundary:** `yf_retry` retries *inside* a single query; those retries are invisible to the evidence layer (they are neither invocations nor queries). `executed_query_count` counts **query attempts**, `queries_failed` counts failed queries.
+- **T13c-D / T13c-R preserved:** each independent run emits exactly **one `V-PARTIAL`** and **no `V-VENDOR`**; the router never emits O5 evidence, and propagation must not add a second event.
+- **Sink failures** are handled by the Interface §7 branches: a **construction** failure and an **emit** failure are distinct; neither changes the served string; `SINK_FAILED` is logged on the independent logger.
+- **No CLI run context:** evidence can still be **constructed** in memory; it is **not persisted** (registry `o5.sink_failure`). Construction ≠ persistence, and the plans never claim a file was written when it was not.
+- **Unspecified semantics left as review decisions:** whether a `V-VENDOR` should also accompany a `V-PARTIAL` (C7), the exact `filter-unavailable` string (D), and whether evidence is buffered when the sink is constructed late (C).
+
 ## 4.5 Invariant-case reconciliation (F requirement 8)
 
 r2's detailed cases name an invariant in their prose; the merged registry gives INV-O5-01..04 one shared `verification` string. This table is the traceable mapping.
@@ -246,7 +335,7 @@ Everything not listed A-1..A-12 stands as written in the two r2 references.
 
 Case IDs above are defined once, in the r2 detailed reference, and referenced — not redefined — here.
 
-## 7. T17 measurement conditions (registry-specified; v1.2)
+## 7. T17 measurement conditions (registry-specified; v1.3)
 
 **Fail-overall rule.** If **any** of the 30 measured selector calls returns a result that differs from the expected file or raises an unexpected exception, **T17 fails overall**. That sample must not be dropped, retried away, or replaced; a passing p95 cannot be manufactured from the remaining samples.
 
@@ -256,28 +345,32 @@ Metric, runner and threshold are the registry's specification (ubuntu-latest / P
 
 - Fixture: [`O5-T17-Perf-Fixture-1000-v1-DRAFT.json`](./O5-T17-Perf-Fixture-1000-v1-DRAFT.json), SHA-256 `4b6699eca6a8958779479dabd2063cdf31ce31807ebaeb2e2f047462ae14f1f0`, 1000 records, K=30.
 - Expected: [`O5-T17-Expected-Results-v1-DRAFT.json`](./O5-T17-Expected-Results-v1-DRAFT.json), SHA-256 `42e1c0fb5e1d7d42adbe19b3f780a1a8a7b92fe3a6895c6807b9434da49d1bc6`; `status=OK`, selected 30 (10/10/10), counts `{1000,30,890,60,0,0,20,0}`.
-- Manifest: [`O5-T17-Manifest-v1-DRAFT.json`](./O5-T17-Manifest-v1-DRAFT.json), SHA-256 `1ed6d0a4674afe74b856fc5b1430074370c7bb100aec6454d76eebbb5bd07959`.
-- Handoff: [`O5-T17-F-Handoff-v1-DRAFT.md`](./O5-T17-F-Handoff-v1-DRAFT.md), SHA-256 `97a36c5124d37d53fe28384a53a3a9dd1f72c8d002e8e0868adb08f6b411de5a`.
+
+
 - Boundary: load/deserialize/RFC3339 parse/defaults **outside**; validation, classification, sort, allocation, result construction **inside**; assertions and persistence **outside**. Input mutation is a correctness failure.
-- Correctness gate before timing; any mismatch or error ⇒ **invalid measurement**.
+- Correctness gate before timing; any mismatch or error ⇒ **invalid measurement** and, per the fail-overall rule above, **T17 fails**.
+- **Digest references are not hard-coded here.** This section previously froze stale manifest/handoff digests (a `1ed6d0a4`-prefixed manifest digest and a `97a36c51`-prefixed handoff digest, both since superseded). In v1.3 the **manifest and handoff digests are referenced only through [`README.md`](./README.md)**, which records the final values computed from actual bytes. Fixture and expected digests above are unchanged because their bytes are unchanged.
+- **One-way dependency:** manifest → {fixture, expected, handoff}; handoff → manifest **by filename only**; README/plans → manifest digest. Nothing hashes the README.
 - The T17 artifacts contain the old note "runner pending F". **Superseded only here** by A-8: the registry names ubuntu-latest/Py3.11 as the specified condition. 100 ms remains unverified.
 
 ## 8. Registry contradictions kept visible
 
 | ID | Contradiction | Status |
 |---|---|---|
-| D-02 | `REQ-O5-01` says `o5-rules-v1.1`; `development_contract.o5.rules_version` says `o5-rules-v1.1-draft` (re-verified at `4f87e29`) | **Open** — A/B to resolve; **neither value is selected here** |
+| D-02 | `REQ-O5-01` says `o5-rules-v1.1`; `development_contract.o5.rules_version` says `o5-rules-v1.1-draft`; the DEV20 fixture repeats `-draft` (re-verified at `4f87e29` **and** PR head `27c8e4b`) | **BLOCKING** — A/B must pick one literal and synchronize registry, config, fixture metadata and every active plan before coding; E proposes `o5-rules-v1.1`, unapproved. See §0a |
 | D-03 | Rule strings: merged YAML has `basis points` only (no `basis point`); `price pressure` **and** `price pressures`; `hike`/`hikes`, `cut`/`cuts`, `fall`/`falls`, `rise`/`rises` | **Open (narrowed)** — only the `basis point` absence differs from r2; verified in §9a; DEV20 labels not re-derived |
 | D-04 | INV-O5-01..04 share one `verification` string | **Open** — E's per-invariant mapping Pending F |
 | D-06 | REQ-O5-07 needs a human holdout; DEV20 is provisional | **Open** — DEV20 labels **not** human-approved; no quality acceptance or human-label approval claimed |
 | D-17 | Collection/CI: merged baseline already configures `testpaths=["tests","test/offline"]` and ships `test/offline/conftest.py` | **Resolved for configuration**; **O5 execution unverified** |
 | D-18 | Local checkout `970a9ea` vs merged baseline `4f87e29` | **Open** — base check required before implementation |
+| D-19 | Evidence must be emitted **after** selection/invariant validation, not from the retrieval loop's `finally` | **Amended in v1.3** — see §4.6; the v1.2 execution-plan text that emitted terminal evidence in `finally` is withdrawn |
+| D-20 | `vendors/yahoo/news.py` ownership was implied to be C's | **Corrected in v1.3** — E implements the O5 private integration there; C confirms only the O2 run-dir handoff and C-owned shared files (§0a) |
 
 ## 9. Review questions (v1.2, genuinely open)
 
 1. **A:** confirm the implementation base — the merged baseline `4f87e29…` is the review baseline, but the local package was authored at `970a9ea`; a **new base check** is required before implementation. `A-Requirements-Decisions.md`'s `feature/o1-sma-guard` line is authoring context only.
 2. **F:** confirm the per-invariant case mapping in §4.5 (the registry's shared "I1-I12" string does not name cases).
-3. **A/B:** resolve `o5-rules-v1.1` (REQ-O5-01 statement) vs `o5-rules-v1.1-draft` (`development_contract.o5.rules_version`). **Neither is selected here.** The merged YAML was re-inspected and the mismatch persists.
+3. **A/B (BLOCKING):** choose the canonical `rules_version` literal and synchronize `requirements.yaml` (statement + `development_contract`), the DEV20 fixture metadata, the `o5_rules_version` config value and every active plan. **Neither value is selected here**; E proposes `o5-rules-v1.1` (§0a). Re-verified at `4f87e29` and PR head `27c8e4b`.
 4. **A/B:** rule-vocabulary difference (see §8 D-03 as verified below) — the merged YAML uses `basis points`, `price pressures`, plus `hike`/`hikes`, `cut`/`cuts`, `rise`/`rises`, `fall`/`falls`. No singular/plural equivalence is inferred.
 5. **C:** O2 run-directory handoff into the evidence sink, and whether `o5_*` keys enter `default_config.py`.
 6. **D:** exact "filter-unavailable" string; negation-flag field name.
@@ -299,12 +392,30 @@ Metric, runner and threshold are the registry's specification (ubuntu-latest / P
 
 **Result:** A-7's premise that the merged list uses only `basis points` (no singular `basis point`) is **confirmed**, and `price pressure`/`price pressures` are **both** present (so the earlier r2 list was not wrong for that anchor). The v1.1 wording "no singular variants" was therefore **too broad**; A-7 is corrected here: the only singular/plural asymmetry that matters is **`basis point`**, which the YAML does **not** list. `easing` remains an R2 context token (hence M01/M02 match both topics), which is unchanged by the merge. **DEV20 labels have not been re-derived** and remain provisional.
 
+## 9b. Test cases affected by the v1.3 lifecycle (A3)
+
+Unchanged and preserved: T13c-D, T13c-R (still exactly one `V-PARTIAL`, no `V-VENDOR`), the I10 18 field-state cases, I6-RV-1..8, I9-a builder boundary, and the Interface §4.2 count constraints.
+
+**Renewed review needed only for these:**
+
+| Case | Renewed assertion |
+|---|---|
+| T03a-A | evidence must be emitted at **region 1 with `executed_query_count=0` and zero `yf.Search` calls** (§4.6 P-K0) |
+| T04a/T04b/T04c | terminal `V-UPSTREAM-EMPTY` / filtered variant is emitted **after** selection, not from a `finally` (§4.6 P-OK) |
+| T01/T02/T05/T06/T19/T20 | terminal `V-SELECTED` emitted **after** invariant validation (§4.6 P-OK) |
+| I1/I2/I3/I11 | `V-INVARIANT` emitted after the invariant check and the result suppressed; no success event beforehand (§4.6 P-INVARIANT) |
+| I5/I5b | sink **construction** vs **emit** failures stay distinct; neither changes the string (§4.6) |
+| T10f–T10j | `V-INVALID-REQUEST` emitted at region 1 with **zero** retrieval calls (§4.6 P-INVALID-REQ) |
+| T13a/T13b | `V-VENDOR` from the typed cause, one event (§4.6 P-VENDOR) |
+
+**A-comment mapping (v1.3):** A1 canonical `rules_version` → §0a, §8 D-02, §9 Q3; A2 ownership → §0a, D-20; A3 evidence lifecycle → §4.6, §9b; A4 T17 hashes → §7 and `README.md`.
+
 ## 10. Approval status
 
 - **F reviews this O5 test plan.** **A reviews the execution plan.**
 - Implementation and test coding may begin only after both scoped approvals and project governance readiness; an approval comment must name the reviewed version, requirement IDs, case IDs, allowed files and exclusions; an empty `docs/test-approvals/TEMPLATE.md` is **not** approval.
 - **All software tests and benchmarks: Not run.**
-- **v1.2 status:** both plans remain **pending review** — **F reviews this test plan; A reviews the execution plan.** Neither plan is approved for implementation.
+- **v1.3 status:** both plans remain **pending review** — **F reviews this test plan; A reviews the execution plan.** Neither plan is approved for implementation, and the A1 `rules_version` decision is **blocking**.
 
 ## 11. Preserved F closures (r2 document-review scope) - v1.2 status
 
