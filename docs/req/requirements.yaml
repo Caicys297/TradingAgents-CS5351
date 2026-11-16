@@ -290,7 +290,7 @@ requirements:
     tradeoff: "The analysis can complete without a manifest, but the failure is visible and no provenance is claimed."
     status: "selected_for_development"
     source_review: "sources-v2.0/O2-Reproducibility-Manifest-Requirements.md#L70"
-    verification: ["O2-TC-08", "O2-TC-09", "O2-TC-17", "O2-TC-24", "O2-TC-13", "O2-TC-14"]
+    verification: ["O2-TC-13", "O2-TC-14"]
     source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py"]
   - id: "O2-NFR-01"
     type: "quality_attribute"
