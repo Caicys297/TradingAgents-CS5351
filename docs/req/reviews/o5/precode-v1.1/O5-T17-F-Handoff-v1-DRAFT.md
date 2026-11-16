@@ -7,8 +7,10 @@
 |---|---|
 | `O5-T17-Perf-Fixture-1000-v1-DRAFT.json` | `4b6699eca6a8958779479dabd2063cdf31ce31807ebaeb2e2f047462ae14f1f0` |
 | `O5-T17-Expected-Results-v1-DRAFT.json` | `42e1c0fb5e1d7d42adbe19b3f780a1a8a7b92fe3a6895c6807b9434da49d1bc6` |
-| `O5-T17-Manifest-v1-DRAFT.json` | `53bd45f761a56efeb1862b32f1a715ee646ddd98db741e6b90154b920e392f21` |
-| `O5-T17-F-Handoff-v1-DRAFT.md` | *(self-hash recorded in the manifest after write)* |
+| `O5-T17-Manifest-v1-DRAFT.json` | **referenced by filename; its digest is recorded in `README.md`** |
+| `O5-T17-F-Handoff-v1-DRAFT.md` | *(this file; its digest is recorded in the manifest)* |
+
+**Integrity relationship is one-way.** The manifest records this handoff's digest; this handoff therefore **must not** record the manifest's digest, or the pair would be circular. The stale digest that an earlier handoff cited (beginning `53bd45f7`) is **superseded and removed** — it described a manifest revision that no longer exists. The final manifest digest lives in `README.md`, which the manifest does not hash.
 
 ---
 

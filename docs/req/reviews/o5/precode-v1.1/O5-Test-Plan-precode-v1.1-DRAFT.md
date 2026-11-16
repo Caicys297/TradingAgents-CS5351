@@ -2,8 +2,9 @@
 
 **Owner:** Member E (O5). **Test-plan reviewer:** Member F (registry `development_contract.approval_roles.O5_test_plan` → "F reviews").
 **Execution-plan reviewer:** Member A ("A reviews each scoped plan before first code edit").
-**Status:** DRAFT for review. **NOT approved. No software test has been run. No project test code exists.**
-**Development authority for this review:** `docs/req/requirements.yaml` and `docs/req/A-Requirements-Decisions.md` at `3cb83f3ff8fddb780b9c9c7fb2a6fd930b3395cf` (PR #2, reported **not merged**). Neither that registry nor this document is a test-plan or execution-plan approval.
+**Status:** DRAFT for review (revision **v1.2**). **NOT approved. No software test or benchmark has been run. No project test code exists.**
+> **v1.2 review-revision note.** This file keeps its v1.1 filename so it can replace the same path in PR #3 and keep stable links; **v1.2 is the active document revision**. v1.2 responds to A's and F's review of commit `85ffc242b10ebd242501ef61e7c7b95deee0a9d2` and rebases every active baseline reference on the **merged** requirements baseline `4f87e29f7a52842dba8272071d2a4a1b527def10`. Everything not amended by v1.2 stands as written in this file's v1.1 text.
+**Development authority for this review:** `docs/req/requirements.yaml` and `docs/req/A-Requirements-Decisions.md` at **merged baseline `4f87e29f7a52842dba8272071d2a4a1b527def10`** (PR #2 **merged**; this is F's identified baseline, full SHA resolved here). It is distinct from the current remote `main` tip if that tip later moves. Neither the registry nor this document is a test-plan or execution-plan approval.
 
 ---
 
@@ -35,9 +36,29 @@
 | Selector implementation | filesystem check | `tradingagents/dataflows/macro_news_filter.py` **absent**; `src/` and `test/offline/` contain only `.gitkeep` |
 | Repository instructions | filesystem check | no `AGENTS.md`; `.agent/` only `.gitkeep`; `.opencode/` tooling only. Sole repository instruction is `docs/PROJECT_WORKSPACE.md` |
 
+### 1.0 Merged baseline verification (v1.2)
+
+| Item | Evidence |
+|---|---|
+| PR #2 status | **Merged** (A's review; the branch `refs/heads/3cb83f3` still exists on the remote, which is why the old SHA appeared as a branch tip) |
+| Baseline identified as `4f87e29` | Resolved to full SHA `4f87e29f7a52842dba8272071d2a4a1b527def10` = `refs/heads/main` at inspection time |
+| Reviewed PR #3 commit | `85ffc242b10ebd242501ef61e7c7b95deee0a9d2` = `refs/heads/docs/o5-precode-review-v1.1` |
+| Registry bytes | `docs/req/requirements.yaml` @ `4f87e29` = 88,122 bytes, SHA-256 `365dd2d8bf12b138b19ce8d90e1103f19a48eed8c1fce38be4c2287219d8d5f9` |
+| Delta vs `3cb83f3` | 31 diff lines: O6 unattributed/out-of-scope wording, O5 `REQ-O5-04/05/06/08` **fit_criterion** rewrites, `REQ-O5-05` verification gains **T13**, `REQ-O5-08` verification gains **T07**, O6 requirement/verification edits. **No O5 `statement`, `rules_version`, rule table or fixture hash changed.** |
+| `development_contract.o5` | unchanged: `rules_version: "o5-rules-v1.1-draft"`, topic_order, matching_scope, negation, evidence_path, sink_failure, invariant_failure, zero_limit, `dev20_fixture_sha256 a6f65bf2…` |
+| DEV20 fixture @ `4f87e29` | SHA-256 `a6f65bf271d9c9ac555f5d9f81cde5cbdb4ff526f46772c065cfe2653f0231f6` — identical to the local r2 fixture |
+| `test/offline/` @ `4f87e29` | **`conftest.py` exists** (1,206 bytes, SHA-256 `abd1c54e8170ec90c09b8ac31a1b0b09401a20502e3c145c32f9ff11702fa2d8`) |
+| `pyproject.toml` @ `4f87e29` | `testpaths = ["tests", "test/offline"]` (SHA-256 `cd3f44217eadcb8b945f68b70d7f8391f87ce6b3e491728a5832611804617f9d`) |
+| `news.py` @ `4f87e29` | byte-identical to `970a9ea` (8,529 bytes); insertion points unchanged |
+| Selector | `tradingagents/dataflows/macro_news_filter.py` **still absent** at `4f87e29` |
+
+**Collection infrastructure (F requirement 5).** Collection of `test/offline/` is **already configured on the merged baseline**, and a sibling isolation `conftest.py` already exists there. The stale v1.1 claim that F must add initial collection is **withdrawn**. What remains untested is **O5's own** tests and isolation behaviour: no O5 test module exists, and nobody has yet executed a `test/offline/` O5 case. **A new base check is required before implementation** (§9 Q1).
+
+**Historical statements** about PR #2 being unmerged remain only in the preserved v1.1 files and earlier drafts; they are labelled historical and are not active.
+
 ### 1.1 Git-state note (corrected wording)
 
-An earlier draft called the requirements fetch "read-only". **Correction:** the fetch *did* populate Git objects and `.git/FETCH_HEAD`, i.e. **Git metadata changed**. What is guaranteed is narrower and accurate: `main`, `origin/main`, `HEAD`, the index and every tracked working-tree file are **unchanged**. No pull, merge, checkout or branch creation occurred.
+An earlier draft called the requirements fetch "read-only". **Correction:** the fetch *did* populate Git objects and `.git/FETCH_HEAD`, i.e. **Git metadata changed**. What is guaranteed is narrower and accurate: the local `main` ref, `HEAD`, the index and every tracked working-tree file are **unchanged**. No pull, merge, checkout or branch creation occurred. **v1.2 fetches:** `git fetch --no-tags --depth=1 origin 4f87e29…` and `… origin 85ffc24…` were run for review; they added objects and rewrote `FETCH_HEAD` only. Local `main` remains at `970a9ea`, and the shallow `origin/main` tracking ref was **not** advanced, so it still points at `970a9ea` — the merged baseline was read by explicit SHA, not via `origin/main`.
 
 ---
 
@@ -51,50 +72,98 @@ The registry is the **proposed development authority** for review purposes. Its 
 
 ---
 
-## 3. Traceability (registry → cases)
+## 3. Traceability, re-derived against merged baseline `4f87e29` (v1.2)
 
-| Requirement | Registry statement focus | `verification` | Cases |
-|---|---|---|---|
-| REQ-O5-01 | Classify with `o5-rules-v1.1` + rule catalog; query text never evidence | T01, T08e, RT-3 | T01, T08a–i, RT-3 |
-| REQ-O5-02 | Primary bucket, round-robin, `published_at desc, candidate_id asc`, ≤K | T01,T02,T05,T06,T19,T20 | T01,T02,T05,T06,T19,T20 |
-| REQ-O5-03 | Honest empty; no padding; K=0 ≠ failure | T03,T04,T13 | T03,T04,T13 |
-| REQ-O5-04 | One decision per input position; verbatim business fields | T12, I11 | T12, I11 |
-| REQ-O5-05 | Request/record validation; window; isolate damaged; adapter failure | T10,T11 | T10,T11 |
-| REQ-O5-06 (invariant) | 100× equal; unique-ID permutation; no wall clock | T14 | T14 |
-| REQ-O5-07 (quality) | precision ≥0.90, pre-limit recall ≥0.75, coverage ==1.0 | T01, T18 | T01, T18 |
-| REQ-O5-08 (cost) | 0 added requests, 0 LLM calls, 0 mutations | T10,T14,T16 | T10,T14,T16 |
-| REQ-O5-09 (invariant) | Public `str`; ticker path unchanged; prior tests | T15, RT-1, RT-4 | T15, RT-1..RT-4 |
-| REQ-O5-10 (performance) | 1000 records, K=30, p95 ≤ 100 ms on ubuntu-latest/Py3.11 | T17 | T17 |
-| INV-O5-01 | No fabrication / irrelevant padding | "O5 invariant tests I1-I12" | I1, I3, I11 |
-| INV-O5-02 | No out-of-input / duplicate / mutation | "O5 invariant tests I1-I12" | I1, I2, I3 |
-| INV-O5-03 | Window containment | "O5 invariant tests I1-I12" | I2 |
-| INV-O5-04 | No network / LLM | "O5 invariant tests I1-I12" | I4, T16 |
+The registry `verification` column below is copied from `4f87e29`. The r2/v1.1 mapping was built from the older `3cb83f3` and is superseded here.
 
-The registry gives INV-O5-01..04 one shared `verification` string; the per-invariant split above is **E's mapping, Pending F** (see §9 Q2).
+| Requirement | type | Registry `verification` @ `4f87e29` | Cases in this plan | Change vs v1.1 |
+|---|---|---|---|---|
+| REQ-O5-01 | functional_behavior | T01, T08e, RT-3 | T01, T08a–i, RT-3 | unchanged |
+| REQ-O5-02 | functional_behavior | T01, T02, T05, T06, T19, T20 | same | unchanged |
+| REQ-O5-03 | functional_behavior | T03, T04, T13 | same | unchanged |
+| REQ-O5-04 | functional_behavior | T12, I11 | T12, I11 | fit_criterion rewritten upstream; cases unchanged |
+| REQ-O5-05 | functional_behavior | **T10, T11, T13** | **T10, T11, T13** | **added T13** (v1.2) |
+| REQ-O5-06 | invariant | T14 | T14 | fit_criterion rewritten upstream; unchanged |
+| REQ-O5-07 | quality_attribute | T01, T18 | T01, T18 | unchanged |
+| REQ-O5-08 | cost | **T07, T10, T14, T16** | **T07, T10, T14, T16** | **added T07** (v1.2) |
+| REQ-O5-09 | invariant | T15, RT-1, RT-4 | T15, RT-1, RT-2, RT-3, RT-4 | unchanged registry; this plan also runs RT-2/RT-3 because REQ-O5-01 cites RT-3 |
+| REQ-O5-10 | performance | T17 | T17 | unchanged |
+| INV-O5-01 | invariant | "O5 invariant tests I1-I12" | **I1, I3, I11** | per-invariant split amended (F requirement 8) |
+| INV-O5-02 | invariant | "O5 invariant tests I1-I12" | **I1, I2, I3** | per-invariant split amended |
+| INV-O5-03 | invariant | "O5 invariant tests I1-I12" | **I2, T11f** | per-invariant split amended |
+| INV-O5-04 | invariant | "O5 invariant tests I1-I12" | **I4, T16** | per-invariant split amended |
+
+**Why REQ-O5-07's `verification` (T01, T18) is not a contradiction with "add T07":** T07 is not a quality case; the merged registry attaches T07 to **REQ-O5-08 (cost)** because a duplicate-ID input is how "zero extra requests / no mutation on repeats" is exercised. Both lines above are copied from the YAML, not invented.
+
+**REQ-O5-04/05/06/08 fit_criterion text changed upstream.** The active acceptance wording is the YAML string, not the old r2 shorthand ("T12; I11.", "T10/T11.", "T14", "T10/T14/T16"). This plan defers to the YAML text; the case IDs are unchanged.
 
 ---
 
-## 4. Layers, files and offline isolation
+## 4. Layers, files and offline isolation (v1.2)
+
+### 4.1 Layer definitions
 
 | Layer | Meaning | Planned file |
 |---|---|---|
 | `S` | Pure selector, in-memory inputs, no clock | `test/offline/test_o5_macro_news_filter.py` |
-| `B` | Evidence-builder unit tests (construct evidence directly; no selector under test) | `test/offline/test_o5_evidence_builder.py` |
-| `A` | Adapter over the real `get_global_news_yfinance` entry | `test/offline/test_o5_macro_news_integration.py` |
+| `B` | **Evidence-builder unit tests** — construct the evidence object directly; no selector under test | `test/offline/test_o5_evidence_builder.py` |
+| `A` | **Reachable adapter-path integration** through real `get_global_news_yfinance` / `tools.get_global_news` | `test/offline/test_o5_macro_news_integration.py` |
 | `I` | Invariant / fault injection | `test/offline/test_o5_invariants.py` |
 | `R` | Public interface / inherited regression | `test/offline/test_o5_regression.py` |
 | `P` | T17 measurement harness | `test/offline/test_o5_macro_news_perf.py` |
 
-**Schema vs builder vs integration (requirement 5).**
-- **Schema tests** validate an evidence dict against Interface §4 alone: I6, I7, I8, I9-a, I9-b (nullability), I10 field/state and count constraints.
-- **Builder tests** exercise the code that *produces* V-PARTIAL / V-VENDOR / V-INVALID-REQUEST evidence at a stage that production retrieval cannot reach (I9-a). They construct the evidence directly and assert the emitted object.
-- **Reachable integration tests** go through `get_global_news_yfinance` / `tools.get_global_news`: T13a, T13b, T13c-D, T13c-R, T13d, T15.
+### 4.2 Schema vs builder vs reachable integration
 
-**Offline isolation (unchanged requirement, F owns):** `test/offline/` must run under default `pytest -q`; sockets and `curl_cffi` blocked; `integration` marker reserved for live services; per-test config reset and temp `data_cache_dir`; T16 records every attempted connect/DNS/HTTP call and asserts the list is empty. Member F reported that `8c7eec3` collects both trees and has isolation; that is **F-reported for that revision** and **O5's own collection/isolation remains untested**.
+- **Schema tests** validate an evidence dict against Interface §4 alone (no production code): **I6** (required-key deletion, including the eight I6-RV rows), **I7** (extra key), **I8** (action/trigger/disposition triples), **I10** (V-PARTIAL branch/field/state matrix + count constraints).
+- **Builder-only unit test:** **I9-a**. It directly constructs a `V-VENDOR` object for a stage where rules have not yet been resolved and asserts the builder's `rules_version` is present-and-`None`. Production retrieval resolves rules before any fetch, so this stage is unreachable through `get_global_news_yfinance`; it must **not** be described as an integration case.
+- **Reachable integration tests:** **T03a-A, T13a, T13b, T13c-D, T13c-R, T13d, T15, I9-b** — they enter through the public adapter/tool path.
+- **Selector-level:** T01–T12, T14, T19, T20.
+
+### 4.3 I9-b — full specification (F requirement 7)
+
+| Element | Specification |
+|---|---|
+| Layer | **A** — reachable adapter-path integration (not a builder test) |
+| Entry point | `tradingagents.dataflows.vendors.yahoo.news.get_global_news_yfinance(as_of_date, look_back_days, limit)` called directly; the routed variant through `route_to_vendor("get_global_news", …)` is optional extra coverage |
+| Setup | `limit=10`; `global_news_queries=["q1","q2","q3"]`; single-vendor `yfinance`; `common.time.sleep` patched to a no-op; `yf.Search` patched so `q1` returns one in-window article, `q2` returns `[]`, and `q3` raises `RuntimeError("boom")`; adapter sink replaced by a fresh `InMemorySink` |
+| Rule-resolution stage | **After** request validation and rule resolution succeeded: `rules_version` is resolved from config (`o5-rules-v1.1-draft` or the active registry value) **before** the retrieval loop begins; the fault occurs later, inside the loop |
+| Captured evidence | The single emitted event, from the sink |
+| Assertions | exactly one event; `variant="V-PARTIAL"`; `action="PARTIAL_UPSTREAM"`; `trigger="PARTIAL_QUERY_FAILURE"`; `disposition="PARTIAL_UPSTREAM"`; **`rules_version` present and equal to the resolved version string** (not `None`); `executed_query_count=3`; `queries_failed=1`; `pre_filter_candidate_count=1`; `batch_id`, `input_count`, `reason_counts` **present and `None`** (AM-44); **no `V-VENDOR` event**; the direct call raises `VendorUnavailableError` and no article text is returned |
+| Contrast with I9-a | I9-a asserts `rules_version` present-and-`None` at the unreachable pre-resolution stage; I9-b asserts present-and-non-`None` at the reachable post-resolution stage. The schema has no stage field, so the **test setup** supplies the stage |
+
+### 4.4 Offline isolation, against the merged baseline (supersedes v1.1 §4)
+
+Verified at `4f87e29`:
+
+- `pyproject.toml` → `testpaths = ["tests", "test/offline"]`. **Collection of the offline tree is already configured.**
+- `test/offline/conftest.py` **already exists** and provides the autouse `_no_network` fixture blocking `socket.socket.connect`, `connect_ex`, `socket.getaddrinfo` and `curl_cffi` `Session.request`/`AsyncSession.request`, skipping only `integration`.
+- `tests/conftest.py` still provides the inherited suite's isolation and config/cache reset.
+
+Consequences for O5:
+
+1. **F does not need to add initial collection.** The v1.1 statement to that effect is withdrawn.
+2. O5 **must not create or replace** `test/offline/conftest.py`; it only adds tests beside it. If O5 needs per-test config reset and a temp `data_cache_dir`, that is a **separate, F-coordinated** addition (the merged sibling conftest does **not** currently reset `tradingagents.dataflows.config` or the cache dir).
+3. **O5 collection/isolation remains untested**: no O5 test module exists and no O5 case has been executed.
+4. A **new base check** is required before implementation (§9 Q1) because the local package was authored against `970a9ea`, not `4f87e29`.
 
 ---
 
-## 5. Explicit v1.1 amendments (the ONLY changes to the r2 references)
+## 4.5 Invariant-case reconciliation (F requirement 8)
+
+r2's detailed cases name an invariant in their prose; the merged registry gives INV-O5-01..04 one shared `verification` string. This table is the traceable mapping.
+
+| Invariant | Registry statement | Active cases | r2 detailed-case expectation | Verdict |
+|---|---|---|---|---|
+| INV-O5-01 | No fabrication / irrelevant padding | I1, I3, I11 | I1 → "stub ID∉input ⇒ V-INVARIANT INV-O5-02"; I3 → "duplicate output IDs ⇒ INV-O5-02"; I11 → business-field guard ⇒ INV-O5-01 | **Amended here:** I1 and I3 are **INV-O5-02** (out-of-input / duplicate), not INV-O5-01. Only **I11** asserts INV-O5-01. |
+| INV-O5-02 | No out-of-input / duplicate / mutation | I1, I2, I3 | I1, I3 as above; I2 → INV-O5-03 | I1, I3 confirmed INV-O5-02. I2 moves to INV-O5-03. |
+| INV-O5-03 | Window containment | I2, T11f | I2 → INV-O5-03; T11 → window boundaries | Confirmed; T11f added as the adapter-side recompute case. |
+| INV-O5-04 | No network / LLM | I4, T16 | I4 → import boundary + blocked network; T16 → attempt recording | Confirmed. |
+
+**Historical note.** The r2 §5 mapping line that associated I1/I3 with INV-O5-01 is the **conflicting active expectation**; the r2 reference is retained verbatim as history and this table is the amendment. The multi-violation precedence `INV-O5-04 > INV-O5-02 > INV-O5-03 > INV-O5-01` is unchanged.
+
+---
+
+## 5. Explicit amendments (A-1..A-8 from v1.1 + A-9..A-12 from v1.2) — the ONLY changes to the r2 references
 
 ### A-1. T03c — complete, well-formed input (fixes the malformed/abbreviated r2 input)
 
@@ -143,13 +212,29 @@ A negated match remains **selectable as context** and carries a negation flag. T
 
 ### A-7. Rule-vocabulary strings (registry rule tables)
 
-Use the registry's literal strings, including `basis points`, `price pressures`, `hike`, `cut` (no singular variants). This is a **Pending** difference from r2 (which listed `basis point`, `price pressure`) and is tracked in §8 D-03; **DEV20 labels have not been re-derived under the registry list** and remain provisional.
+Use the registry's literal strings. **Verified against the merged YAML (§9a):** R1 context has `basis points` **only** (no `basis point`); R2 anchors have **both** `price pressure` and `price pressures`; R1 has both `hike`/`hikes` and `cut`/`cuts`; R2 context has both `fall`/`falls` and `rise`/`rises`; `easing` is an R2 context token. **Corrected v1.1 over-generalisation:** the r2 list was wrong only about `basis point`, not about `price pressure`. No singular/plural equivalence is inferred. **DEV20 labels have not been re-derived under the registry list** and remain provisional. Tracked as §8 D-03.
 
 ### A-8. T17 acceptance condition wording
 
 `REQ-O5-10` **specifies** ubuntu-latest / Python 3.11, 5 warmups, 30 measured runs, nearest-rank p95 ≤ 100 ms. This is the **specified acceptance condition**, distinct from (a) F/E reviewer approval of the plan, (b) runner realization, and (c) actual measurements — none of which have occurred. A relaxation would require an explicit registry decision.
 
-Everything not listed A-1..A-8 stands as written in the two r2 references.
+### A-9. Merged-baseline rebase (v1.2)
+
+Every active reference points at `4f87e29f7a52842dba8272071d2a4a1b527def10`, not `3cb83f3`. Statements that PR #2 is unmerged are **withdrawn as active claims** and appear only in labelled history.
+
+### A-10. Verification mapping re-derived from the merged YAML (v1.2)
+
+REQ-O5-05 gains **T13**; REQ-O5-08 gains **T07**; the INV-O5-01..04 split is amended per §4.5. All other O5 mappings were re-checked against the merged YAML (§3).
+
+### A-11. T17 handoff/manifest integrity, one-way only (v1.2)
+
+The **manifest** records the handoff's hash; the handoff must **not** record the manifest's hash (that would be circular). The v1.1 handoff cited a stale manifest digest `53bd45f7…`; that digest is **removed**. The handoff will reference the manifest **by filename**, and after the handoff is edited its digest is recomputed and written into the manifest. The final manifest digest is recorded in `README.md` only, because the manifest does not hash the README.
+
+### A-12. T17 acceptance wording from the merged registry (v1.2)
+
+`REQ-O5-10` **specifies** ubuntu-latest / Python 3.11, 5 warmups, 30 measured calls, nearest-rank p95 ≤ 100 ms. **If any of the 30 measured selector calls returns an incorrect result or raises an unexpected exception, T17 fails overall.** Such a sample is **not** discarded or replaced to obtain a passing p95. A specified threshold is not an observed result, not an approval, and is not relaxed without a registry decision.
+
+Everything not listed A-1..A-12 stands as written in the two r2 references.
 
 ---
 
@@ -161,7 +246,13 @@ Everything not listed A-1..A-8 stands as written in the two r2 references.
 
 Case IDs above are defined once, in the r2 detailed reference, and referenced — not redefined — here.
 
-## 7. T17 measurement conditions (registry-specified)
+## 7. T17 measurement conditions (registry-specified; v1.2)
+
+**Fail-overall rule.** If **any** of the 30 measured selector calls returns a result that differs from the expected file or raises an unexpected exception, **T17 fails overall**. That sample must not be dropped, retried away, or replaced; a passing p95 cannot be manufactured from the remaining samples.
+
+**One-way hashing.** The manifest records the handoff hash; the handoff references the manifest **by filename only**; `README.md` records the final manifest hash. The manifest does not hash the README, so there is no cycle.
+
+Metric, runner and threshold are the registry's specification (ubuntu-latest / Python 3.11, p95 ≤ 100 ms); they are not an approval and not a measurement.
 
 - Fixture: [`O5-T17-Perf-Fixture-1000-v1-DRAFT.json`](./O5-T17-Perf-Fixture-1000-v1-DRAFT.json), SHA-256 `4b6699eca6a8958779479dabd2063cdf31ce31807ebaeb2e2f047462ae14f1f0`, 1000 records, K=30.
 - Expected: [`O5-T17-Expected-Results-v1-DRAFT.json`](./O5-T17-Expected-Results-v1-DRAFT.json), SHA-256 `42e1c0fb5e1d7d42adbe19b3f780a1a8a7b92fe3a6895c6807b9434da49d1bc6`; `status=OK`, selected 30 (10/10/10), counts `{1000,30,890,60,0,0,20,0}`.
@@ -175,27 +266,46 @@ Case IDs above are defined once, in the r2 detailed reference, and referenced �
 
 | ID | Contradiction | Status |
 |---|---|---|
-| D-02 | `REQ-O5-01` says `o5-rules-v1.1`; `development_contract.o5.rules_version` says `o5-rules-v1.1-draft` | **Open** — flagged to B; this plan uses the `development_contract` value |
-| D-03 | Registry rule strings (`basis points`, `price pressures`, `hike`, `cut`) differ from r2's singular variants | **Open** — A-7 adopts the registry list; DEV20 labels not re-derived |
+| D-02 | `REQ-O5-01` says `o5-rules-v1.1`; `development_contract.o5.rules_version` says `o5-rules-v1.1-draft` (re-verified at `4f87e29`) | **Open** — A/B to resolve; **neither value is selected here** |
+| D-03 | Rule strings: merged YAML has `basis points` only (no `basis point`); `price pressure` **and** `price pressures`; `hike`/`hikes`, `cut`/`cuts`, `fall`/`falls`, `rise`/`rises` | **Open (narrowed)** — only the `basis point` absence differs from r2; verified in §9a; DEV20 labels not re-derived |
 | D-04 | INV-O5-01..04 share one `verification` string | **Open** — E's per-invariant mapping Pending F |
-| D-06 | REQ-O5-07 needs a human holdout; DEV20 is provisional | **Open** — DEV20 labels **not** human-approved; no quality acceptance claimed |
+| D-06 | REQ-O5-07 needs a human holdout; DEV20 is provisional | **Open** — DEV20 labels **not** human-approved; no quality acceptance or human-label approval claimed |
+| D-17 | Collection/CI: merged baseline already configures `testpaths=["tests","test/offline"]` and ships `test/offline/conftest.py` | **Resolved for configuration**; **O5 execution unverified** |
+| D-18 | Local checkout `970a9ea` vs merged baseline `4f87e29` | **Open** — base check required before implementation |
 
-## 9. Review questions (genuinely open seams)
+## 9. Review questions (v1.2, genuinely open)
 
-1. **A:** confirm the implementation base branch (the `feature/o1-sma-guard` line in A's document is the authoring context, not E's target) — a pre-code check, not a registry contradiction.
-2. **F:** confirm the per-invariant case mapping (D-04) and whether I-cases may be approved under one `verification` string.
-3. **C:** confirm the O2 run-directory handoff for `o5_evidence.jsonl`, and whether `o5_*` keys go into `default_config.py` or stay module constants.
-4. **D:** confirm the exact "filter-unavailable" string.
-5. **D:** confirm the negation-flag field name.
-6. **F/E:** confirm T17 runner realization and whether 100 ms stands after measurement (relaxation requires a registry decision).
-7. **B/A:** normalize the rules-version naming (D-02) and the rule strings (D-03).
+1. **A:** confirm the implementation base — the merged baseline `4f87e29…` is the review baseline, but the local package was authored at `970a9ea`; a **new base check** is required before implementation. `A-Requirements-Decisions.md`'s `feature/o1-sma-guard` line is authoring context only.
+2. **F:** confirm the per-invariant case mapping in §4.5 (the registry's shared "I1-I12" string does not name cases).
+3. **A/B:** resolve `o5-rules-v1.1` (REQ-O5-01 statement) vs `o5-rules-v1.1-draft` (`development_contract.o5.rules_version`). **Neither is selected here.** The merged YAML was re-inspected and the mismatch persists.
+4. **A/B:** rule-vocabulary difference (see §8 D-03 as verified below) — the merged YAML uses `basis points`, `price pressures`, plus `hike`/`hikes`, `cut`/`cuts`, `rise`/`rises`, `fall`/`falls`. No singular/plural equivalence is inferred.
+5. **C:** O2 run-directory handoff into the evidence sink, and whether `o5_*` keys enter `default_config.py`.
+6. **D:** exact "filter-unavailable" string; negation-flag field name.
+7. **F/E:** T17 runner realization and 100 ms; a relaxation requires a registry decision.
+8. **F:** whether O5 needs additional per-test config/cache reset beside the existing `test/offline/conftest.py`.
+
+## 9a. Direct verification of amendment A-7 against the merged YAML (A requirement 3)
+
+| Phrase | In R1-MP context | In R2-IN anchors | In R2-IN context | In R3-EA context |
+|---|---|---|---|---|
+| `basis points` | **present** | — | — | — |
+| `basis point` | absent | — | — | — |
+| `price pressures` | — | **present** | — | — |
+| `price pressure` | — | **present** (also listed) | — | — |
+| `hike` / `hikes` | both present | — | — | — |
+| `cut` / `cuts` | both present | — | — | — |
+| `fall` / `falls`, `rise` / `rises` | — | — | both forms present | — |
+| `easing` | in R1 context | — | **present in R2 context** | — |
+
+**Result:** A-7's premise that the merged list uses only `basis points` (no singular `basis point`) is **confirmed**, and `price pressure`/`price pressures` are **both** present (so the earlier r2 list was not wrong for that anchor). The v1.1 wording "no singular variants" was therefore **too broad**; A-7 is corrected here: the only singular/plural asymmetry that matters is **`basis point`**, which the YAML does **not** list. `easing` remains an R2 context token (hence M01/M02 match both topics), which is unchanged by the merge. **DEV20 labels have not been re-derived** and remain provisional.
 
 ## 10. Approval status
 
 - **F reviews this O5 test plan.** **A reviews the execution plan.**
 - Implementation and test coding may begin only after both scoped approvals and project governance readiness; an approval comment must name the reviewed version, requirement IDs, case IDs, allowed files and exclusions; an empty `docs/test-approvals/TEMPLATE.md` is **not** approval.
-- **All software tests: Not run.**
+- **All software tests and benchmarks: Not run.**
+- **v1.2 status:** both plans remain **pending review** — **F reviews this test plan; A reviews the execution plan.** Neither plan is approved for implementation.
 
-## 11. Preserved F closures (r2 document-review scope)
+## 11. Preserved F closures (r2 document-review scope) - v1.2 status
 
-Preserved unchanged: T13c-D/T13c-R independent sinks + single `V-PARTIAL`; the I10 18 field-state cases; I6-RV-1..8; I9-a builder-only boundary; Interface §4.2 count constraints + the four A/B examples; M02 vocabulary wording. **Not reopened** by A-3 (the K=0 zero-fetch path is a separate adapter case and does not touch V-PARTIAL counts). Renewed-review flags: A-7 may affect the QC list wording; A-8 supersedes only the runner note inside the T17 artifacts.
+Preserved unchanged: T13c-D/T13c-R independent sinks + single `V-PARTIAL`; the I10 18 field-state cases; I6-RV-1..8; I9-a builder-only boundary; Interface §4.2 count constraints + the four A/B examples; M02 vocabulary wording. **Not reopened** by A-3 (the K=0 zero-fetch path is a separate adapter case and does not touch V-PARTIAL counts). **v1.2 renewals (only changed assertions need re-review):** §3 verification mapping (A-10), §4.3 I9-b layer correction (F7), §4.5 invariant mapping (F8), §7 T17 wording (F11) and A-7's narrowed vocabulary claim (§9a). Everything else above stays closed.

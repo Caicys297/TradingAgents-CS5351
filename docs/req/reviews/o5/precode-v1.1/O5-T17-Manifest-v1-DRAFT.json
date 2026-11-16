@@ -1,6 +1,6 @@
 {
- "schema": "o5-t17-manifest-v1-draft",
- "status": "PROPOSED review artifact. Not implementation approval; no benchmark run performed.",
+ "schema": "o5-t17-manifest-v1-draft-r2",
+ "status": "PROPOSED review artifact (v1.2 package). Not implementation approval; no benchmark run performed. Fixture and expected bytes unchanged.",
  "fixture_version": "v1-draft",
  "generated_at_utc": "2026-11-16T00:00:00Z",
  "generator": "Member E deterministic document generator (Python, standard library only: hashlib, unicodedata, re, datetime). No live data, no network, no external packages.",
@@ -61,8 +61,8 @@
  "hashes": {
   "fixture_sha256": "4b6699eca6a8958779479dabd2063cdf31ce31807ebaeb2e2f047462ae14f1f0",
   "expected_sha256": "42e1c0fb5e1d7d42adbe19b3f780a1a8a7b92fe3a6895c6807b9434da49d1bc6",
-  "handoff_sha256": "97a36c5124d37d53fe28384a53a3a9dd1f72c8d002e8e0868adb08f6b411de5a",
-  "manifest_sha256_note": "manifest cannot contain its own hash; recorded in the F handoff table and in the response report"
+  "handoff_sha256": "3294965982fbd1e306f232d6063f00053990e6046d026b914ca5e7c2f01ae783",
+  "manifest_sha256_note": "manifest cannot contain its own hash; the final digest is recorded in README.md, which this manifest does not hash"
  },
  "files": [
   {
@@ -77,15 +77,16 @@
   },
   {
    "path": "O5-T17-Manifest-v1-DRAFT.json",
-   "sha256": "<self>",
+   "sha256": "<self - recorded in README.md>",
    "role": "this manifest; hash of this file is recorded in the handoff, not self-referential"
   },
   {
    "path": "O5-T17-F-Handoff-v1-DRAFT.md",
-   "sha256": "97a36c5124d37d53fe28384a53a3a9dd1f72c8d002e8e0868adb08f6b411de5a",
+   "sha256": "3294965982fbd1e306f232d6063f00053990e6046d026b914ca5e7c2f01ae783",
    "role": "F handoff (contract, loader, timing boundary)"
   }
  ],
  "implementation_status": "No O5 selector implementation exists in the repository (tradingagents/dataflows/macro_news_filter.py absent; src/ only .gitkeep). No runnable entry point exists.",
- "result_provenance": "Expected results derived from the frozen rules by document arithmetic - not copied from any implementation run."
+ "result_provenance": "Expected results derived from the frozen rules by document arithmetic - not copied from any implementation run.",
+ "one_way_integrity": "manifest -> handoff hash (recorded here); handoff -> manifest by filename only; README -> manifest hash (README not hashed by manifest)"
 }
