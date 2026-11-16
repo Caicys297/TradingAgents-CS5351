@@ -106,7 +106,7 @@ None of these tests are claimed implemented, executed, or approved. `test/offlin
 | O2-TC-05 | Reference report/state/message artifacts | Correct stability labels; mutable artifacts not claimed immutable | FR-10 |
 | O2-TC-06 | Fake secret and credential-bearing URL in supplied config | No secret key/value or credentials serialized | FR-05/11, NFR-03 |
 | O2-TC-07 | No immutable market/news snapshot | `actual_input_data_provenance` is `not_captured`; no data hash | FR-09 |
-| O2-TC-08 | Git unavailable | Explicit unavailable status; manifest creation continues | FR-06/14 |
+| O2-TC-08 | Git unavailable | Explicit unavailable status; manifest creation continues | FR-06 |
 | O2-TC-09 | Model/provider metadata missing | Explicit missing status; no invented values | FR-05/06 |
 | O2-TC-10 | Empty optional fields, Unicode, reordered mappings | Valid JSON and deterministic equivalent fingerprint | FR-07, NFR-02/05 |
 | O2-TC-11 | Two invocations start within same second | Distinct IDs and paths | FR-02/03 |
