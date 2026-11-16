@@ -1,0 +1,42 @@
+product: "TradingAgents CS5351 team extension"
+version: "1.0.0-a-baseline"
+status: "A-selected development baseline; test and coding-agent plan approvals remain separate"
+baseline: "TradingAgents imported at 970a9ea; each implementer must inspect the current target branch before editing"
+goal: "Make the existing CLI analysis more honest about market history, news coverage, rating evidence and usage while preserving traceable run metadata."
+users:
+  - "A CLI user reviewing an analysis result"
+  - "A team member reproducing or auditing a run"
+in_scope:
+  - feature: "O1"
+    outcome: "Yahoo 50/200-session SMA values are numeric only with enough cleaned dated closes."
+    registry_ids: ["REQ-O1-01", "REQ-O1-02", "REQ-O1-03", "REQ-O1-04", "REQ-O1-05", "REQ-O1-06"]
+  - feature: "O2"
+    outcome: "Completed CLI runs expose a unique manifest or an explicit provenance failure."
+    registry_ids: ["O2-FR-01", "O2-FR-02", "O2-FR-03", "O2-FR-14"]
+  - feature: "O3"
+    outcome: "Sentiment Analyst input blocks are condensed within character caps with protected context and an audit report."
+    registry_ids: ["O3-FR-01", "O3-FR-02", "O3-FR-04", "O3-FR-05", "O3-FR-06"]
+  - feature: "O4"
+    outcome: "Selected-report evidence is checked before any final tradeable rating is published."
+    registry_ids: ["O4-FR-01", "O4-FR-03", "O4-FR-07", "O4-FR-09", "O4-FR-15", "O4-FR-16"]
+  - feature: "O5"
+    outcome: "Already fetched Yahoo global-news candidates are filtered and allocated by fixed macro rules, with honest empty/failure states."
+    registry_ids: ["REQ-O5-01", "REQ-O5-02", "REQ-O5-03", "REQ-O5-07"]
+  - feature: "O6"
+    outcome: "Selected Analyst model calls have attributable usage and duration with an explicit coverage limitation."
+    registry_ids: ["O6-FR-01", "O6-FR-02", "O6-NFR-01", "O6-NFR-02"]
+out_of_scope:
+  - "Full historical OHLCV recovery or Alpha Vantage SMA warm-up repair"
+  - "Immutable market/news payload archiving or full data-level reproducibility"
+  - "O5 retrieval expansion beyond already fetched candidates"
+  - "O4 semantic truth-checking of non-empty reports"
+  - "Attribution of the first structured model call in O6 v1"
+  - "Live network/model access in deterministic offline tests"
+acceptance:
+  - "All selected Must requirements in requirements.yaml pass their mapped tests or documented manual checks."
+  - "Existing applicable tests have zero regressions."
+  - "The six course CI gates block the changes to which they apply."
+  - "Human approval records show each test plan and coding-agent execution plan was approved before that feature's first code edit."
+sources:
+  course_brief: "CS5351 Course Project Specification (Canvas), pp. 5-10"
+  registry: "requirements.yaml"
