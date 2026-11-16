@@ -1,8 +1,8 @@
-# O3 Execution Plan — rev.3 (read-only inspection)
+# O3 Execution Plan — rev.4 (read-only inspection)
 
-Status: DRAFT for A review. Not approved. No code written, no file created, no git write.
+Status: DRAFT for A review. Approval pending. Documentation revision only.
 Base: branch `docs/o3-precode-review-v0.1`, HEAD `a0f2933`; `origin/main` at `4f87e29`.
-Companion: O3 Test Plan v0.2 (draft). Registry: `docs/req/requirements.yaml` @
+Companion: O3 Test Plan v0.3 (draft). Registry: `docs/req/requirements.yaml` @
 `a0f2933`, `registry_version: 1.0.0-a-baseline`.
 
 ## 1. Inspection baseline
@@ -43,9 +43,7 @@ rendered at the head of its source block, and **counted inside that source's cap
 
 - **StockTwits summary line is prologue, not an item.** It is never ranked, never dropped,
   and never counted in `items_in`.
-- **Reddit subreddit header is prologue for that subreddit group.** A Reddit block with
-  several subreddits therefore has a prologue segment per group; each group's header stays
-  attached to the group.
+- **Reddit subreddit header is prologue for that subreddit group.** Parse each header and its posts as a separate group. Rank posts without losing group membership. Render groups in their original order with the original headers and their own retained posts. Count all rendered headers, separators and omission markers in the Reddit source cap.
 - **Stance counts must not be misread after trimming.** The StockTwits summary reports the
   counts of messages fetched *before* condensation. When any message item is dropped or
   truncated, the report records `stocktwits_items_dropped` / `stocktwits_items_truncated`,
@@ -53,8 +51,8 @@ rendered at the head of its source block, and **counted inside that source's cap
   never rewritten, so the model can still read the original stance split.
 - **All Reddit posts dropped for a group:** keep the group header and append a fixed marker
   `[all posts omitted by input budget]`, so the reader sees a subject with no rows rather
-  than a missing subreddit. **PENDING TEAM DECISION** — see Open review items below.
-- If the prologue alone exceeds the source cap, that is a protected-content failure:
+  than a missing subreddit. A confirmed this behavior in the review of `8508be9`.
+- If the combined protected content, including required omission markers and separators, exceeds the source cap, that is a protected-content failure:
   raise `CondensationError` (§5). It is not silently truncated.
 
 ## 4. Configuration and budget
@@ -88,7 +86,7 @@ Two failure classes are kept distinct:
 
 | Class | Trigger | Handling | `budget_exception` |
 |---|---|---|---|
-| Protected content exceeds its source cap | a protected placeholder, or a prologue, is longer than that source's cap | `CondensationError`; the node uses the **original block** for that source | **`True`**, and that source is excluded from budget-pass accounting |
+| Protected content exceeds its source cap | a protected placeholder, or a prologue, cannot fit inside that source's cap | `CondensationError`; the node uses the **original block** for that source | **`True`**, and the entire run is excluded from FC-5 pass results |
 | Any other parsing / input fault | `None` input, malformed type, unexpected internal error | `CondensationError`; node logs a warning and uses the original block; the run completes | **not set**; it is reported as a parse/input error, never as a budget result |
 
 `budget_exception` is therefore set **only** by the first class.
@@ -100,14 +98,14 @@ into `{news_block}` / `{stocktwits_block}` / `{reddit_block}`. The alternative �
 after `_build_system_message` returns — is rejected because it would place the footer after
 the output-field specification.
 
-**Proposed backward-compatible private helper change (pending A review):** `_build_system_message` keeps its current keyword-only
+**Private helper change confirmed by A:** `_build_system_message` keeps its current keyword-only
 parameters and adds two defaulted keyword arguments, `audit_footer: str = ""` and
-`stocktwits_trimmed: bool = False`. Existing calls remain valid. The helper signature changes and A should confirm compatibility with NFR-06.
+`stocktwits_trimmed: bool = False`. Existing calls remain valid. The helper is private. A confirmed that defaulted keyword arguments are acceptable.
 
 **Byte-level compatibility when disabled:** when `input_condensation_enabled` is `False`,
 the node skips the condenser, passes `audit_footer=""`, and the template renders exactly the
 baseline string. The audit footer must not leave URL-encoded whitespace (use str.format).
-T-R2 asserts byte equality against the baseline.
+T-R2 asserts byte equality against the baseline and uses spies to compare the fetchers’ call counts, order and arguments.
 
 ## 6. Implementation sequence
 
@@ -181,12 +179,11 @@ collected node under `test/offline/test_input_condensation.py`, and no automated
 case is missing or skipped. The number of collected nodes is not prescribed. T-R3 and T-P1
 are not expected in collection any more than any other manual observation.
 
-**T-R5 as a sub-check of T-R1, per approved case:** before each offline case calls the
-condenser, install a counting probe on `socket.socket.connect`, `socket.socket.connect_ex`,
+**T-R5 as a sub-check of T-R1, per approved case:** exercise both the direct condenser call and the complete Sentiment Analyst node with fake fetchers and a fake LLM already installed. For each test, install a counting probe on `socket.socket.connect`, `socket.socket.connect_ex`,
 `socket.getaddrinfo`, `curl_cffi.requests.Session.request`,
 `curl_cffi.requests.AsyncSession.request` and `urllib.request.urlopen`. Each patched
 callable increments a counter and raises. The assertion
-`assert probe.attempts == 0` runs **after** the condenser returns, so an implementation
+`assert probe.attempts == 0` runs **after** the tested call returns, so an implementation
 that catches the exception still fails. One recorded attempt fails the case.
 
 ## 9. Manual, non-CI records
@@ -203,27 +200,14 @@ Both are recorded in the approval record's verification section, not in CI.
 Per `docs/test-approvals/TEMPLATE.md`, in this order:
 
 1. Requirements registry commit SHA recorded (`a0f2933` unless the registry moves).
-2. **F approves the O3 test plan** (v0.2 with the case-ID list from `requirements.yaml`)
+2. **F approves the O3 test plan** (v0.3 with the case-ID list from `requirements.yaml`)
    via a fixed GitHub comment on an immutable commit or attachment.
-3. **A approves this execution plan** (rev.3) at an immutable commit, including allowed
+3. **A approves this execution plan** (rev.4) at an immutable commit, including allowed
    files and exclusions.
 4. Only then does the first implementation commit exist; its SHA and time are recorded.
 
-This plan changes no scope relative to the registry. If any §C item changes the case IDs or
-the budget contract, rev.4 and a renewed approval are required before code.
+The over-cap protected-content case is a T-B4 parameter and the StockTwits trimming assertions belong to T-N8. Use the actual shared news formatter in the T-N8 contract test. Record the final review commit and approved case scope before implementation.
 
-## Open review items
+## Open review item
 
-| # | Item | Who |
-| --- | --- | --- |
-| 1 | `input_condensation_audit_note` is required by FR-08 but **absent from the O2 `config_allowlist`** (L29) — add it, or confirm it is intentionally excluded from the fingerprint. | **B** |
-| 2 | T-E9 and T-E10 are **new case IDs not named in the registry's `verification` lists**. Add them to O3-FR-04 / O3-NFR-04, or confirm they are covered by T-B4 and T-N8. | **F** (with A) |
-| 3 | Reddit group with **all** posts dropped: keep header + `[all posts omitted by input budget]`, or drop the group entirely. Chosen: keep. | **Team (A)** |
-| 4 | Footer placement: confirmed to be **inside** `_build_system_message` before `## How to analyze this data`, with two defaulted keywords. Confirm this counts as an unchanged public signature under NFR-06. | **A** |
-| 5 | T-R5 within T-R1: confirm "any recorded attempt fails the whole T-R1 case" rather than only T-R5. | **F** |
-| 6 | `test/offline/conftest.py` does not patch `urllib.request.urlopen`, which `stocktwits.py:100` uses. Add it to the shared fixture, or keep the probe test-local only. | **F** |
-| 7 | Whether T-P1 should stay the label or use `FC-14` in prose only; registry L495 still says `"FC-14 performance record"`. | **F** |
-| 8 | This plan needs a **new approval** after v0.2 test-plan approval, because the case-ID set changes (T-E9, T-E10). | **A** |
-
-**Status: both plans remain DRAFT and unapproved. No file was created or modified, no git
-write was performed, and implementation has not started.**
+B can confirm whether omitting `input_condensation_audit_note` from the O2 fingerprint allowlist is intentional. This plan does not change the allowlist.

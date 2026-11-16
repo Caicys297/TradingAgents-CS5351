@@ -1,6 +1,6 @@
-# O3 Test Plan v0.2 — Input Condensation
+# O3 Test Plan v0.3 — Input Condensation
 
-Status: Draft v0.2 for F review. Supersedes v0.1. Owner: C. Test execution and pre-code approval are pending.
+Status: Draft v0.3 for F review. Supersedes v0.2. Owner: C. Test execution and pre-code approval are pending.
 
 Basis: requirements baseline `4f87e29`, inspected from `a0f2933`, `docs/req/requirements.yaml` (O3-FR-01–09 and O3-NFR-01–06).
 Use network-disabled fixtures and a fake model for node-level checks. Use the actual source
@@ -19,7 +19,7 @@ synthetic values for privacy tests.
 | T-N5 | Node-level test with fake LLM capturing messages | Captured prompt contains condensed blocks plus unchanged instrument identity, date and safety text |
 | T-N6 | 3× duplication fixture | Length reduction ≥ 30 % (FC-10), figure labelled "chars" |
 | T-N7 | Invalid cap allocation, or a block over its cap while the total fits | A non-positive cap, or caps summing above input_budget_chars, raises ValueError. A valid over-cap block is condensed to its own cap; unused capacity is not redistributed. |
-| T-N8 | Three known source shapes, plus formatter-drift and prologue cases | News, StockTwits and Reddit fixtures parse as expected; a changed formatter shape fails the contract test. The StockTwits summary line and each Reddit group header are preserved verbatim, are never in items_in, and are counted inside their source cap. When all Reddit posts of a group are dropped, the group header plus [all posts omitted by input budget] remains (proposed, pending A confirmation). After any StockTwits trim, the original Bullish/Bearish/Total line is unchanged and the audit footer states the listed messages are a subset. |
+| T-N8 | Real formatter contract and source structure | Feed actual shared news formatter output from fixed input into the parser and compare against the expected structure. Check that structural drift fails the contract. For StockTwits, assert the original summary bytes, subset notice when the audit footer is enabled, and drop/truncation counts. For multi-group Reddit, assert each verbatim header stays attached to its group in original group order, retained posts stay under their own header, and fully omitted groups keep their header and the omission marker. Count headers, markers and separators against the source cap. |
 
 ### Boundary
 | ID | Scenario | Expected |
@@ -27,7 +27,7 @@ synthetic values for privacy tests.
 | T-B1 | Empty input (`""`) | Returns input unchanged, all counts 0, no exception |
 | T-B2 | Exactly at cap (chars == cap) | No truncation; the block, its prologue and separators exactly fill the cap. |
 | T-B3 | Budget + 1 char | Output fits the cap including the marker, or the ordinary item is dropped |
-| T-B4 | Protected placeholder longer than its source cap | Raise, fall back to original block, record exception and fail FC-5 |
+| T-B4 | Protected placeholder or protected preamble over its source cap | Parameterize both cases. Return the affected source block unchanged, record `budget_exception=True`, and exclude the entire run from FC-5 pass results. Include the combined protected text of multiple Reddit groups. |
 | T-B5 | Single ordinary item longer than its source cap | Truncated at a word boundary including …[truncated] when it fits, otherwise dropped; prologue and protected text preserved. |
 | T-B6 | Two items, Jaccard exactly 0.8 | Treated as duplicates (inclusive threshold) |
 | T-B7 | Two items, Jaccard 0.79 | Not merged |
@@ -45,17 +45,15 @@ synthetic values for privacy tests.
 | T-E6 | Unknown block shape with sufficient budget | The whole block enters budgeting as one item and parse_fallbacks > 0. |
 | T-E7 | Optional tokenizer available | On the duplicate-heavy fixture record before/after estimates from the same tokenizer, `after < before`, explicitly labelled estimated. T-E5 covers absence. |
 | T-E8 | Audit privacy | Inject synthetic raw titles, URLs, body text, endpoints and credentials. Capture INFO and any audit serialization used by O3 and assert none of those values appear there. Verify stable safe IDs and counts. |
-| T-E9 | Protected prologue longer than its source cap | CondensationError; original block used; budget_exception = True; the source is excluded from budget-pass accounting. **Proposed, pending A/F review.** |
-| T-E10 | StockTwits messages trimmed | Summary line bytes unchanged; footer states the listed messages are a subset; stocktwits_items_dropped / _truncated reported. **Proposed, overlaps T-N8.** |
 
 ### Regression and manual observations
 | ID | Scenario | Expected |
 | --- | --- | --- |
 | T-R1 | Explicit offline collection and execution | Collection contains at least one node for every approved automated case; all pre-existing suites pass. Includes sub-check T-R5. |
-| T-R2 | `input_condensation_enabled=False` golden | Output byte-identical to baseline (FC-12) |
+| T-R2 | Disabled condensation baseline | Compare the final prompt byte-for-byte with the baseline. Spy on all three fetchers and assert the same call count, order and arguments as the baseline. |
 | T-R3 | Manual live diagnostic | Run once by a human after the offline suite; record provider usage in transcripts/o3/. Diagnostic only; not a pass criterion; not in CI. |
 | T-R4 | Repeat and re-condense | Two runs on identical input/config return byte-identical output and equal reports. Re-condense the first output with the same config. Assert identical text and zero further duplicates, drops or truncations. |
-| T-R5 | No-network counting probe (sub-check of T-R1) | Installed before the condenser call on socket.connect, socket.connect_ex, getaddrinfo, curl_cffi Session.request, AsyncSession.request and urllib.request.urlopen; assert probe.attempts == 0 after the call. Any recorded attempt fails, even if the implementation caught the exception. |
+| T-R5 | No-network probe (T-R1 sub-check) | Exercise the condenser directly and the entire Sentiment Analyst node with fake fetchers and a fake LLM already installed. Use a test-local counting probe around each call, including `urlopen`. Assert zero attempts after each call. A recorded attempt fails the corresponding test even if its exception was caught. |
 | T-P1 | Manual performance record (FC-14) | Record elapsed time, peak memory, fixture SHA-256 and machine ID on a 200,000-character fixture. No threshold. Diagnostic only; not in CI. |
 
 ## Traceability
@@ -97,6 +95,9 @@ Record the tested commit, commands, collected case IDs, expected/actual outputs,
 T-R3 is a manual diagnostic when provider usage is available. Record F's test-plan approval
 against this version and case IDs using `docs/test-approvals/TEMPLATE.md`.
 
-## Pending review
+## Review scope
 
-A and F should confirm the proposed over-budget prologue behavior and whether T-E9/T-E10 should remain separate cases or be folded into T-B4/T-N8. The registry mappings remain the baseline until any change is agreed.
+Automated cases: T-N1–N8, T-B1–B9, T-E1–E8, T-R1, T-R2 and T-R4.
+T-R5 is an automated sub-check of T-R1. T-R3 and FC-14 (T-P1) are manual records.
+The former T-E9 and T-E10 scenarios are covered by T-B4 and T-N8, respectively.
+F's approval of this revision is pending.
