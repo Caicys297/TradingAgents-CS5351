@@ -1,7 +1,7 @@
 # O5 T17 Performance Review - Handoff to Member F (DRAFT)
 
 **Owner:** Member E (O5). **Status:** PROPOSED review artifact. Not implementation approval. No benchmark run performed. All software tests remain Not run.
-**Revision:** v1.3 package. Evidence/ownership/`rules_version` changes are in the two plans; this handoff's only v1.3 change is the provisional `rules_version` wording above and the digest-authority note below.
+**Revision:** v1.4 package (active). v1.3 is historical. Evidence/ownership/`rules_version` changes are in the two plans; this handoff's only v1.3 change is the provisional `rules_version` wording above and the digest-authority note below.
 **Digest authority (A4):** this handoff contains no manifest digest (one-way integrity); the manifest records this file's digest. Authoritative final digests live in `README.md`.
 **Files in this directory:**
 
@@ -60,14 +60,15 @@ The fixture is serialized (RFC3339 strings); the loader converts to the in-memor
 
 ---
 
-## 5. Measurement procedure (proposed, pending F/E agreement)
+## 5. Measurement procedure (registry-specified; F2)
 
-- 5 warmup calls (discarded).
-- 30 measured calls.
-- Nearest-rank **p95 = 29th smallest** sample.
-- **100 ms** is a **proposed** threshold (team proposal, not a teacher mandate).
-- **Correctness gate first:** every measured call's result must equal `O5-T17-Expected-Results-v1-DRAFT.json` (selected ID order, primary topics, status, all counts). Any error or mismatch makes that measurement **invalid**, not a passing performance result.
-- Runner specification remains **pending F**; final threshold remains **pending F/E agreement**.
+- **Runner (registry `REQ-O5-10`):** **ubuntu-latest / Python 3.11**.
+- **5 warmup calls** (discarded).
+- **30 measured calls**.
+- **Acceptance condition:** nearest-rank **p95 = 29th smallest** sample **≤ 100 ms**.
+- **Fail-overall rule:** if **any** of the 30 measured calls returns a result that differs from `O5-T17-Expected-Results-v1-DRAFT.json` or raises an unexpected exception, **T17 fails overall**. The failing sample must **not** be discarded, retried away or replaced to obtain a passing p95.
+- **Correctness gate runs before timing is accepted:** selected ID order, primary topics, status and every count must match the expected file.
+- **Runner realization and actual measurements remain unverified.** No benchmark has been executed. The threshold is the registry's specification, not an observation and not an approval; relaxing it requires an explicit registry decision.
 
 ---
 

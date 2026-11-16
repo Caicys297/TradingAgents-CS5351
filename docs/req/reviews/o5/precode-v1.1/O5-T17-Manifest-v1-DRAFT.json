@@ -1,6 +1,6 @@
 {
- "schema": "o5-t17-manifest-v1-draft-r3",
- "status": "PROPOSED review artifact (v1.3 package). Not implementation approval; no benchmark run performed. Fixture and expected-result bytes unchanged.",
+ "schema": "o5-t17-manifest-v1-draft-r4",
+ "status": "PROPOSED review artifact (v1.4 package). Not implementation approval; no benchmark run performed. Fixture and expected-result bytes unchanged.",
  "fixture_version": "v1-draft",
  "generated_at_utc": "2026-11-16T00:00:00Z",
  "generator": "Member E deterministic document generator (Python, standard library only: hashlib, unicodedata, re, datetime). No live data, no network, no external packages.",
@@ -61,8 +61,8 @@
  "hashes": {
   "fixture_sha256": "4b6699eca6a8958779479dabd2063cdf31ce31807ebaeb2e2f047462ae14f1f0",
   "expected_sha256": "42e1c0fb5e1d7d42adbe19b3f780a1a8a7b92fe3a6895c6807b9434da49d1bc6",
-  "handoff_sha256": "fb6d306f42be6fdad049613612f4ce5a525146e28b2130795d8ccc514756990a",
-  "manifest_sha256_note": "manifest cannot contain its own hash; the final digest is recorded in README.md, which this manifest does not hash"
+  "handoff_sha256": "ab419ec5eb27970e32068b8bd94ec5d15e7e6ad82ee537410ab54103fd8fd805",
+  "manifest_sha256_note": "manifest cannot contain its own hash; the final digest is recorded in README.md and the plans reference it there. Manifest does not hash README."
  },
  "files": [
   {
@@ -82,13 +82,14 @@
   },
   {
    "path": "O5-T17-F-Handoff-v1-DRAFT.md",
-   "sha256": "fb6d306f42be6fdad049613612f4ce5a525146e28b2130795d8ccc514756990a",
+   "sha256": "ab419ec5eb27970e32068b8bd94ec5d15e7e6ad82ee537410ab54103fd8fd805",
    "role": "F handoff (contract, loader, timing boundary)"
   }
  ],
  "implementation_status": "No O5 selector implementation exists in the repository (tradingagents/dataflows/macro_news_filter.py absent; src/ only .gitkeep). No runnable entry point exists.",
  "result_provenance": "Expected results derived from the frozen rules by document arithmetic - not copied from any implementation run.",
  "one_way_integrity": "manifest -> fixture/expected/handoff; handoff -> manifest by filename only; README/plans -> manifest digest; nothing hashes README",
- "package_revision": "v1.3",
- "rules_version_note": "blocks A1: rules_version literal is not resolved; fixture metadata and development_contract say 'o5-rules-v1.1-draft' while REQ-O5-01.statement says 'o5-rules-v1.1'. E proposes 'o5-rules-v1.1'. Unapproved."
+ "package_revision": "v1.4",
+ "rules_version_note": "blocks A1: rules_version literal is not resolved; fixture metadata and development_contract say 'o5-rules-v1.1-draft' while REQ-O5-01.statement says 'o5-rules-v1.1'. E proposes 'o5-rules-v1.1'. Unapproved.",
+ "runner_and_acceptance": "registry REQ-O5-10: ubuntu-latest / Python 3.11; 5 warmups + 30 measured calls; nearest-rank p95 (29th smallest) <= 100 ms; any incorrect result or unexpected exception in a measured call fails T17 overall and the sample is not discarded. Runner realization and measurements unverified."
 }

@@ -2,9 +2,9 @@
 
 **Owner:** Member E (O5). **Execution-plan reviewer:** Member A (registry `approval_roles.coding_agent_execution_plan`: "A reviews each scoped plan before first code edit").
 **Companion:** [`O5-Test-Plan-precode-v1.1-DRAFT.md`](./O5-Test-Plan-precode-v1.1-DRAFT.md) — **F** reviews that one.
-**Status:** DRAFT (revision **v1.3**). **NOT approved.** **No code written; no project tests or benchmarks run; no commands run beyond the inspections in §1.**
-> **v1.3 review-revision note (supersedes the v1.2 note).** This file keeps its v1.1 filename so it replaces the same path in PR #3 and keeps stable links; **v1.3 is the active document revision**.
-> v1.3 responds to A's review of commit `27c8e4be0f0e8b1af4611ae29a86ac106fd00967` and changes: **ownership** (§3.2 — E implements the O5 private integration in `news.py`), the **evidence lifecycle** (§3.4, replacing the loop-`finally` emission), the **`rules_version` blocking decision** (§7), and **T17 digest references** (§8). The merged baseline `4f87e29f7a52842dba8272071d2a4a1b527def10` and v1.2's collection findings are unchanged.
+**Status:** DRAFT (revision **v1.4**). **NOT approved.** **No code written; no project tests or benchmarks run; no commands run beyond the inspections in §1.**
+> **v1.4 review-revision note (supersedes the v1.3 note; v1.1-v1.3 notes are historical).** This file keeps its v1.1 filename for stable PR links; **v1.4 is the active document revision**.
+> v1.4 responds to F's and A's review of commit `2b85ec3fd2150176b8ed9aa929b8ddd7c5502aa0`. Changes: **seam owners and step 10 reconciled** to E-owned `news.py` (A2); **`news.py` added to planned ruff coverage** (A3); **explicit dependency-boundary table** (A4); **A's latest `rules_version` proposal recorded without approval** (A1); **I9-b restored / I13 introduced** in the test plan (F3) with the corresponding test-file note; **T17 handoff and digest chain refreshed** (F2).
 
 ---
 
@@ -104,7 +104,7 @@ Registry `development_contract.o5.evidence_path` = "same O2 run directory/o5_evi
 1. `tradingagents/dataflows/macro_news_filter.py` — selector.
 2. `test/offline/test_o5_macro_news_filter.py` — S cases.
 3. `test/offline/test_o5_evidence_builder.py` — B cases (I9-a etc.).
-4. `test/offline/test_o5_macro_news_integration.py` — A cases (T13*, T15).
+4. `test/offline/test_o5_macro_news_integration.py` — A cases (T13*, T15, **I9-b**, **I13**).
 5. `test/offline/test_o5_invariants.py` — I cases.
 6. `test/offline/test_o5_regression.py` — RT cases.
 7. `test/offline/test_o5_macro_news_perf.py` — **T17 harness** (see §6; must have an implementation step, not just a command).
@@ -121,17 +121,37 @@ Registry `development_contract.o5.evidence_path` = "same O2 run directory/o5_evi
 
 ---
 
-## 5. Required seams (identified, not silently expanded)
+## 5. Required seams and their owners (v1.4, A2)
 
-| Seam | Needed for | Owner |
-|---|---|---|
-| Pre-fetch request validation + K=0 zero-fetch short-circuit before `yf.Search` | T10f/T10g/T10h/T10i/T10j, **T03a-A** | C (hook A) |
-| Retrieval-loop wrapper (try/except/finally) | T13a–T13d, V-PARTIAL/V-VENDOR evidence | C (hook B) |
-| Invariant check + suppression + "filter-unavailable" | I1–I3, I11 | C/D |
-| Evidence sink invocation on every exit path | I5, T13*, T03a-A | C |
-| O2 run-directory context | evidence path | C (Q3) |
+E implements the O5 private integration in `news.py`; C confirms the O2 `run_dir` handoff and handles C-owned shared files where applicable. **No seam below is assigned to C except the O2 handoff and C-owned shared files.**
 
-If any seam is missing, the affected cases are **blocked**, not dropped; the allowed-file list is not expanded without re-approval.
+| Seam | Where | Needed for | Owner |
+|---|---|---|---|
+| Pre-fetch request validation + K=0 zero-fetch | region 1 in `news.py` | T10f-T10j, **T03a-A** | **E** |
+| Retrieval-loop failure handling + single failure event | region 2 in `news.py` | T13a-T13d, **I9-b**, **I13** | **E** |
+| Invariant check + suppression + "filter-unavailable" | region 4 in `news.py` | I1, I2, I3, I11 | **E** (wording from **D**) |
+| Post-selection terminal evidence | region 4 in `news.py` | T01/T02/T04/T05/T06/T19/T20, I13 | **E** |
+| Evidence sink invocation on each exit path | adapter call sites | I5, I5b, all T13 | **E** |
+| **O2 `run_dir` handoff** | sink path construction | evidence persistence | **C confirms** (unconfirmed interface) |
+| `o5_*` config keys in `default_config.py` | config | rules_version/limit/topics | **C** if adopted |
+| Any `cli/run.py` / graph wiring | shared files | only if needed | **C** |
+
+If a seam is missing the affected cases are **blocked**, not dropped; the allowed-file list is not expanded without re-approval.
+
+---
+
+## 5a. Dependency boundaries per stage (v1.4, A4)
+
+| Stage | Files / cases | Required decisions | Separately approvable? |
+|---|---|---|---|
+| **S1 Pure selector** (validation, classification, allocation, result object) | `tradingagents/dataflows/macro_news_filter.py`; T01-T12, T14, T19, T20, I6-I10 schema cases | `rules_version` literal (A1 blocker) still blocks *any* labelled measurement or fixture-locked assertion; otherwise independent of C/D | **Only if** the A1 literal is settled and F approves its case set. It touches no `news.py`, no sink, no wording |
+| **S2 Evidence builder** | `test/offline/test_o5_evidence_builder.py`; I9-a | needs the Interface §4 schema (fixed) | approvable with S1 only if its cases are pure builder tests |
+| **S3 Adapter regions 1-2** (`news.py`: validation, K=0, retrieval failure) | `news.py`; T03a-A, T10f-T10j, T13a-T13d, I9-b, I13 | **C's `run_dir` interface only for persistence**, not for construction; **D** wording not needed here | blockable on C if evidence must persist; construction-only is independent |
+| **S4 Adapter regions 3-4** (selection, invariant, terminal evidence) | `news.py`; T01/T02/T04/T05/T06/T19/T20, I1-I3, I11 | **D**'s exact "filter-unavailable" wording and negation-flag name; **C**'s `run_dir` for persistence | blocked on D wording for the invariant-failure path |
+| **S5 Sink / persistence** | sink call sites, `<run_dir>/o5_evidence.jsonl` | **C confirms O2 `run_dir`** | blocked on C |
+| **S6 T17 harness** | `test/offline/test_o5_macro_news_perf.py` | runner realization (F), A1 literal | blocked until S1 exists |
+
+**Important:** these are dependency boundaries, **not** permission to start an unapproved subset. Every stage still needs F's test-plan approval and A's execution-plan approval, and the A1 `rules_version` blocker applies to all of them before code.
 
 ---
 
@@ -146,14 +166,14 @@ If any seam is missing, the affected cases are **blocked**, not dropped; the all
 7. **Regression** (`test_o5_regression.py`): RT-1..RT-4; adapt inherited macro-news tests only where owner review agrees.
 8. **Fixtures:** copy DEV20 (`a6f65bf2…`) and the four T17 artifacts (hashes in the test plan §7) into `test/offline/fixtures/o5/`.
 9. **T17 harness:** implement `test_o5_macro_news_perf.py` with the boundary in test plan §7 (load outside; selector inside; assertions outside); runner ubuntu-latest/Py3.11 per the registry; 100 ms unverified.
-10. **Hand to C/F:** C integrates the shared `news.py` regions; F confirms the existing CI collection covers the new O5 modules (collection is already configured; F only verifies the new files are picked up).
+10. **Hand to C/F:** **C confirms the O2 `run_dir` handoff** and makes any C-owned shared-file change (config keys, CLI/graph wiring) only if adopted; **F** confirms the existing CI collection picks up the new O5 modules (collection is already configured). **`news.py` itself is E's, not C's** — E has already made those edits in step 6; C does not re-own them.
 11. **PR review.**
 
 ---
 
-## 7. Blocking decisions and review questions (v1.3)
+## 7. Blocking decisions and review questions (v1.4)
 
-**BLOCKING (A1) — canonical `rules_version`.** `requirements.yaml` carries both `o5-rules-v1.1` (inside `REQ-O5-01.statement`) and `o5-rules-v1.1-draft` (`development_contract.o5.rules_version`); the DEV20 fixture repeats `-draft`. Verified at `4f87e29` **and** the PR head `27c8e4b`; no A/B resolution exists. A/B must select one literal and update: `requirements.yaml` statement, `development_contract.o5.rules_version`, the DEV20 fixture's `rules_version` (bytes → `dev20_fixture_sha256` change), the `o5_rules_version` config value, and every active plan/evidence example. **E proposes `o5-rules-v1.1`**; it is not approved, and this package changes no requirement text and no fixture byte.
+**BLOCKING (A1) — canonical `rules_version`.** `requirements.yaml` carries both `o5-rules-v1.1` (inside `REQ-O5-01.statement`) and `o5-rules-v1.1-draft` (`development_contract.o5.rules_version`); the DEV20 fixture repeats `-draft`. Verified at `4f87e29` **and** the PR head `2b85ec3`; no A/B resolution exists in any inspected revision. A/B must select one literal and update: `requirements.yaml` statement, `development_contract.o5.rules_version`, the DEV20 fixture's `rules_version` (bytes → `dev20_fixture_sha256` change), the `o5_rules_version` config value, and every active plan/evidence example. **A's latest proposal is to retain `o5-rules-v1.1-draft`** and ask B to reconcile the registry; **E's earlier non-draft recommendation is withdrawn from active text**. Neither is approval, and this package changes no requirement text and no fixture byte.
 
 Other open questions:
 
@@ -175,10 +195,10 @@ pytest -q test/offline/test_o5_invariants.py
 pytest -q test/offline/test_o5_regression.py
 pytest -q test/offline/test_o5_macro_news_perf.py
 pytest -q
-ruff check test/offline tradingagents/dataflows/macro_news_filter.py
+ruff check test/offline tradingagents/dataflows/macro_news_filter.py tradingagents/dataflows/vendors/yahoo/news.py
 ```
 
-Every module named above is in the §4 create-list, so each command has a corresponding implementation step (§6 steps 4–9). At the time of this plan **none of these modules exists**, so none is runnable as an O5 check. I did not run them.
+The lint command names both E-owned Python changes (selector + `news.py` integration), so it covers the actual proposed code without adding scope. Every module named above is in the §4 list, so each command has a corresponding implementation step (§6 steps 4–9). At the time of this plan **none of these modules exists**, so none is runnable as an O5 check. I did not run them.
 
 ---
 
@@ -192,7 +212,7 @@ Every module named above is in the §4 create-list, so each command has a corres
 
 Approved cases pass with the T17 correctness gate; no added retrieval/LLM calls; public `str` and ticker output unchanged; evidence JSONL emitted per schema for every exercised path; sink failure does not corrupt results; approval record filled with real times; applicable CI gates block on failure.
 
-## 9a. T17 digest references (v1.3, A4)
+## 9a. T17 digest references (v1.4)
 
 This plan does not hard-code manifest/handoff digests. The authoritative values are in [`README.md`](./README.md) and are computed from actual bytes:
 
@@ -205,7 +225,9 @@ This plan does not hard-code manifest/handoff digests. The authoritative values 
 
 **One-way:** manifest → {fixture, expected, handoff}; handoff → manifest by filename; README/plans → manifest digest. No cycle.
 
-## 10a. A/F review-comment mapping (v1.2 + v1.3)
+**v1.4 (F2):** the handoff text changed, so the handoff and manifest digests changed; F's v1.3 hash-consistency confirmation applies to v1.3 only. The new values are in `README.md`, computed from actual bytes.
+
+## 10a. A/F review-comment mapping (v1.2, v1.3, v1.4)
 
 | Comment | Revised section |
 |---|---|
@@ -223,7 +245,16 @@ This plan does not hard-code manifest/handoff digests. The authoritative values 
 | **A2 (v1.3)** ownership of `news.py` | Execution §3.2, §4 item 9; Test Plan §0a |
 | **A3 (v1.3)** evidence lifecycle | Test Plan §4.6, §9b; Execution §3.4 |
 | **A4 (v1.3)** T17 hashes | Test Plan §7; Execution §9a; `README.md` |
+| **F1 (v1.4)** invariant mapping sync | Test Plan §3, §4.5 (cases I1, I3, I11) |
+| **F2 (v1.4)** T17 handoff wording + digest chain | handoff §5; manifest; README; Test Plan §7; Execution §9a (T17) |
+| **F3 (v1.4)** I9-b restored, V-PARTIAL → I13 | Test Plan §4.2, §4.3, §4.3a, §6 (I9-b, I13) |
+| **A1 (v1.4)** A's retain-`-draft` proposal | Test Plan §0a, §8 D-02, §9 Q3; Execution §7 |
+| **A2 (v1.4)** seam owners + step 10 | Execution §5, §6 step 10; Test Plan §0a |
+| **A3 (v1.4)** ruff covers `news.py` | Execution §8; Test Plan §4.4a |
+| **A4 (v1.4)** dependency-boundary table | Execution §5a (new) |
 
-## 11. Status
+## 11. Status (v1.4)
 
-**DRAFT v1.1. Not approved. No code, no tests, no commands executed.** All proposed interfaces are unimplemented and pending C. **F reviews the test plan; A reviews this execution plan.**
+**DRAFT v1.4 (active; v1.1-v1.3 are historical). Not approved. No code, no tests, no commands executed.** All proposed interfaces are unimplemented. **E** implements the O5 private integration in `tradingagents/dataflows/vendors/yahoo/news.py`; **C** confirms the O2 `run_dir` handoff and C-owned shared files only; **D** owns the wording decisions. **F reviews the test plan; A reviews this execution plan.** All software tests and benchmarks remain **Not run**.
+
+**Preserved prior confirmations (not whole-plan approval):** A acknowledged the v1.3 corrected evidence timing and the ownership direction; F confirmed the v1.3 hashes were consistent. v1.4 changes content, so those digests no longer apply and the F2 handoff change needs review.
