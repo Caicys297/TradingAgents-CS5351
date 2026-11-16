@@ -2,7 +2,7 @@
 
 Status: Draft for F review. Owner: C. Test execution and pre-code approval are pending.
 
-Basis: merged PR #2, `docs/req/requirements.yaml` (O3-FR-01–09 and O3-NFR-01–06).
+Basis: merged PR #2 at `4f87e29`, `docs/req/requirements.yaml` (O3-FR-01–09 and O3-NFR-01–06).
 Use network-disabled fixtures and a fake model for node-level checks. Use the actual source
 shapes for news, StockTwits and Reddit. Test configured defaults of 24,000 total and
 12,000 / 6,000 / 6,000 characters. Count separators and markers. No redistribution.
@@ -69,10 +69,25 @@ synthetic values for privacy tests.
 | O3-FR-09 | T-E5, T-E7 |
 | O3-NFR-01 | T-R4, T-N3, T-R2 |
 | O3-NFR-02 | FC-14: log non-negative elapsed time and peak memory on a 200,000-character fixture with fixture fingerprint and machine identifier. |
-| O3-NFR-03 | T-R1: run `pytest -q tests test/offline -m "not integration"` and verify default `pytest -q` collection with F. |
+| O3-NFR-03 | T-R1: follow the offline execution sequence below. |
 | O3-NFR-04 | T-B4, T-E3. Check unchanged source block, recorded budget exception where applicable and exclusion from budget-pass counts. |
 | O3-NFR-05 | T-E8 |
 | O3-NFR-06 | T-R1, T-R2 |
+
+## Offline execution sequence (T-R1)
+
+From the repository root, using the project test environment:
+
+```sh
+pytest --collect-only -q
+pytest -q
+pytest -q tests test/offline -m "not integration"
+```
+
+Check that default collection includes the O3 offline test nodes in
+`test/offline/test_input_condensation.py`. Compare collected IDs with the approved cases
+and investigate missing or unexpectedly skipped deterministic cases with F. Keep the
+manual T-R3 live observation outside the offline run.
 
 Record the tested commit, commands, collected case IDs, expected/actual outputs, and failures.
 T-R3 is a manual diagnostic when provider usage is available. Record F's test-plan approval
