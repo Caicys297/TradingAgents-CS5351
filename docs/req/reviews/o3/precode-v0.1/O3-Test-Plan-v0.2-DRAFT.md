@@ -1,11 +1,11 @@
-# O3 Test Plan v0.1 — Input Condensation
+# O3 Test Plan v0.2 — Input Condensation
 
-Status: Draft for F review. Owner: C. Test execution and pre-code approval are pending.
+Status: Draft v0.2 for F review. Supersedes v0.1. Owner: C. Test execution and pre-code approval are pending.
 
-Basis: merged PR #2 at `4f87e29`, `docs/req/requirements.yaml` (O3-FR-01–09 and O3-NFR-01–06).
+Basis: requirements baseline `4f87e29`, inspected from `a0f2933`, `docs/req/requirements.yaml` (O3-FR-01–09 and O3-NFR-01–06).
 Use network-disabled fixtures and a fake model for node-level checks. Use the actual source
 shapes for news, StockTwits and Reddit. Test configured defaults of 24,000 total and
-12,000 / 6,000 / 6,000 characters. Count separators and markers. No redistribution.
+12,000 / 6,000 / 6,000 characters. Count separators and markers. No redistribution. The audit footer has a separate 240-character cap.
 Capture the final node prompt and compare protected text verbatim. Capture logs and use
 synthetic values for privacy tests.
 
@@ -18,17 +18,17 @@ synthetic values for privacy tests.
 | T-N4 | News + StockTwits with the same headline | Both kept (FC-3) |
 | T-N5 | Node-level test with fake LLM capturing messages | Captured prompt contains condensed blocks plus unchanged instrument identity, date and safety text |
 | T-N6 | 3× duplication fixture | Length reduction ≥ 30 % (FC-10), figure labelled "chars" |
-| T-N7 | Invalid allocation or a block over its cap while total input fits | Reject invalid cap allocation with `ValueError`; condense a valid oversized block to its source cap. |
-| T-N8 | Three known source shapes and a changed formatter shape | Three fixtures parse as expected; the format contract test fails for the changed shape. |
+| T-N7 | Invalid cap allocation, or a block over its cap while the total fits | A non-positive cap, or caps summing above input_budget_chars, raises ValueError. A valid over-cap block is condensed to its own cap; unused capacity is not redistributed. |
+| T-N8 | Three known source shapes, plus formatter-drift and prologue cases | News, StockTwits and Reddit fixtures parse as expected; a changed formatter shape fails the contract test. The StockTwits summary line and each Reddit group header are preserved verbatim, are never in items_in, and are counted inside their source cap. When all Reddit posts of a group are dropped, the group header plus [all posts omitted by input budget] remains (proposed, pending A confirmation). After any StockTwits trim, the original Bullish/Bearish/Total line is unchanged and the audit footer states the listed messages are a subset. |
 
 ### Boundary
 | ID | Scenario | Expected |
 | --- | --- | --- |
 | T-B1 | Empty input (`""`) | Returns input unchanged, all counts 0, no exception |
-| T-B2 | Exactly at budget (`chars == budget`) | No truncation applied |
+| T-B2 | Exactly at cap (chars == cap) | No truncation; the block, its prologue and separators exactly fill the cap. |
 | T-B3 | Budget + 1 char | Output fits the cap including the marker, or the ordinary item is dropped |
 | T-B4 | Protected placeholder longer than its source cap | Raise, fall back to original block, record exception and fail FC-5 |
-| T-B5 | Single ordinary item longer than its source cap | Truncate if it fits including the marker, otherwise drop; preserve protected text |
+| T-B5 | Single ordinary item longer than its source cap | Truncated at a word boundary including …[truncated] when it fits, otherwise dropped; prologue and protected text preserved. |
 | T-B6 | Two items, Jaccard exactly 0.8 | Treated as duplicates (inclusive threshold) |
 | T-B7 | Two items, Jaccard 0.79 | Not merged |
 | T-B8 | Article with no link and empty title | Not merged with another empty-title article; retained or dropped by rank only |
@@ -37,22 +37,26 @@ synthetic values for privacy tests.
 ### Exception
 | ID | Scenario | Expected |
 | --- | --- | --- |
-| T-E1 | `None` input | `CondensationError`; node falls back, logs warning, returns report |
+| T-E1 | None input | CondensationError; the node uses the original block, logs a warning, completes the run; budget_exception is not set. |
 | T-E2 | Fetcher returns `<Yahoo Finance news unavailable…>` placeholder | Placeholder retained verbatim, never counted as duplicate (FC-6) |
-| T-E3 | Condenser raises | Node catches, uses uncondensed prompt, run still completes (FC-13) |
+| T-E3 | Condenser raises an internal fault | Node catches it, uses the uncondensed block, run completes; the record names a parse/input error, not a budget result. |
 | T-E4 | Unknown/invalid config value (e.g. `input_budget_chars = -1`) | `ValueError` at config validation, not silent mid-run |
 | T-E5 | Tokenizer absent | `tokens_after is None`; no token claim (FC-11) |
-| T-E6 | Unknown block shape with sufficient budget | Preserve the whole block as one item and record `parse_fallbacks > 0`. |
+| T-E6 | Unknown block shape with sufficient budget | The whole block enters budgeting as one item and parse_fallbacks > 0. |
 | T-E7 | Optional tokenizer available | On the duplicate-heavy fixture record before/after estimates from the same tokenizer, `after < before`, explicitly labelled estimated. T-E5 covers absence. |
 | T-E8 | Audit privacy | Inject synthetic raw titles, URLs, body text, endpoints and credentials. Capture INFO and any audit serialization used by O3 and assert none of those values appear there. Verify stable safe IDs and counts. |
+| T-E9 | Protected prologue longer than its source cap | CondensationError; original block used; budget_exception = True; the source is excluded from budget-pass accounting. **Proposed, pending A/F review.** |
+| T-E10 | StockTwits messages trimmed | Summary line bytes unchanged; footer states the listed messages are a subset; stocktwits_items_dropped / _truncated reported. **Proposed, overlaps T-N8.** |
 
-### Regression / integration
+### Regression and manual observations
 | ID | Scenario | Expected |
 | --- | --- | --- |
-| T-R1 | Explicit offline collection and execution | All pre-existing tests pass (FC-15) |
+| T-R1 | Explicit offline collection and execution | Collection contains at least one node for every approved automated case; all pre-existing suites pass. Includes sub-check T-R5. |
 | T-R2 | `input_condensation_enabled=False` golden | Output byte-identical to baseline (FC-12) |
-| T-R3 | `test/live/` (manual, recorded in `transcripts/`) | Record provider input-token usage where available as a diagnostic observation |
+| T-R3 | Manual live diagnostic | Run once by a human after the offline suite; record provider usage in transcripts/o3/. Diagnostic only; not a pass criterion; not in CI. |
 | T-R4 | Repeat and re-condense | Two runs on identical input/config return byte-identical output and equal reports. Re-condense the first output with the same config. Assert identical text and zero further duplicates, drops or truncations. |
+| T-R5 | No-network counting probe (sub-check of T-R1) | Installed before the condenser call on socket.connect, socket.connect_ex, getaddrinfo, curl_cffi Session.request, AsyncSession.request and urllib.request.urlopen; assert probe.attempts == 0 after the call. Any recorded attempt fails, even if the implementation caught the exception. |
+| T-P1 | Manual performance record (FC-14) | Record elapsed time, peak memory, fixture SHA-256 and machine ID on a 200,000-character fixture. No threshold. Diagnostic only; not in CI. |
 
 ## Traceability
 
@@ -68,8 +72,8 @@ synthetic values for privacy tests.
 | O3-FR-08 | T-R2, T-E4. Check enabled and footer defaults and negative or oversubscribed caps. |
 | O3-FR-09 | T-E5, T-E7 |
 | O3-NFR-01 | T-R4, T-N3, T-R2 |
-| O3-NFR-02 | FC-14: log non-negative elapsed time and peak memory on a 200,000-character fixture with fixture fingerprint and machine identifier. |
-| O3-NFR-03 | T-R1: follow the offline execution sequence below. |
+| O3-NFR-02 | FC-14 (manual record T-P1): log non-negative elapsed time and peak memory on a 200,000-character fixture with fixture fingerprint and machine identifier. |
+| O3-NFR-03 | T-R1, including the T-R5 counting probe and the offline execution sequence. |
 | O3-NFR-04 | T-B4, T-E3. Check unchanged source block, recorded budget exception where applicable and exclusion from budget-pass counts. |
 | O3-NFR-05 | T-E8 |
 | O3-NFR-06 | T-R1, T-R2 |
@@ -85,10 +89,14 @@ pytest -q tests test/offline -m "not integration"
 ```
 
 Check that default collection includes the O3 offline test nodes in
-`test/offline/test_input_condensation.py`. Compare collected IDs with the approved cases
+`test/offline/test_input_condensation.py`. Map collected nodes to each approved automated case ID, allowing multiple parameterized nodes per case,
 and investigate missing or unexpectedly skipped deterministic cases with F. Keep the
-manual T-R3 live observation outside the offline run.
+manual T-R3 live observation and FC-14 / T-P1 record outside the offline run.
 
 Record the tested commit, commands, collected case IDs, expected/actual outputs, and failures.
 T-R3 is a manual diagnostic when provider usage is available. Record F's test-plan approval
 against this version and case IDs using `docs/test-approvals/TEMPLATE.md`.
+
+## Pending review
+
+A and F should confirm the proposed over-budget prologue behavior and whether T-E9/T-E10 should remain separate cases or be folded into T-B4/T-N8. The registry mappings remain the baseline until any change is agreed.
