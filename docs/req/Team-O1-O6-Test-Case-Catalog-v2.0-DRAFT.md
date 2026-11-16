@@ -606,8 +606,8 @@ Separate O6 draft: more precise setup and additional 07b, 09…14. Resolve TC-07
 
 **TC-O6-11 [proposed] (O6-FR-01) — real-subgraph out-of-scope exclusion**
 - Setup: real subgraph; a **demonstrably out-of-scope** call (e.g. Research Manager/Trader/risk/PM, carrying no analyst scope).
-- Assert: excluded from **named rows**. **`unattributed_calls` treatment left open** — not asserted unless requirements explicitly define it.
-- Depends: A's binding scope + labeling semantics.
+- Assert: the call changes **neither any named Analyst row nor `unattributed_calls`**. Compare both before and after the call.
+- Status: **Proposed**. The Analyst binding boundary and the meaning of the scope label still require A's confirmation before this case is approved.
 
 **TC-O6-12 [proposed] (O6-FR-01) — CLI disclosure**
 - Setup: CLI path with controlled model.

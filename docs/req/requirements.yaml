@@ -79,7 +79,7 @@ development_contract:
   o6:
     selected_scope: "ordinary and wrap_up calls of selected Analysts; first structured call deferred and disclosed"
     identity: "Graph Config metadata scope=analyst and agent_key=spec.key at Analyst subgraph boundary; never infer identity from callback order or node name"
-    unattributed: "in-scope calls with missing/invalid key count as unattributed; out-of-scope calls excluded from named rows"
+    unattributed: "in-scope calls with missing/invalid key count as unattributed; known out-of-scope calls change neither named Analyst rows nor unattributed_calls; Analyst binding scope and scope-label semantics await A confirmation"
     legacy_api: "get_stats returns exactly the existing four keys and semantics"
 requirements:
   - id: "REQ-O1-01"
@@ -860,7 +860,7 @@ requirements:
     type: "functional_behavior"
     priority: "Must"
     statement: "Exactly one decision per input position with matched topics, rule reason, specific reason_code; selected records keep supplied business fields verbatim."
-    fit_criterion: "T12; I11."
+    fit_criterion: "The number of decisions equals the number of supplied input positions, with exactly one decision per position and a matched-topics list, rule reason and specific reason_code for each. Every selected record retains its supplied business fields unchanged."
     tradeoff: "Without this, selected news may be irrelevant, incomplete, unreproducible or unsafe to present."
     status: "selected_for_development"
     source_review: "sources-v2.0/O5-Requirements-v0.5.3-DRAFT.md#L83"
@@ -870,17 +870,17 @@ requirements:
     type: "functional_behavior"
     priority: "Must"
     statement: "Validate request; validate records per §6.2; map time window per R9; isolate/count damaged records; express upstream failure at adapter boundary."
-    fit_criterion: "T10/T11."
+    fit_criterion: "Invalid requests produce INVALID_REQUEST without selected news. Each damaged candidate receives its specified invalid-record, invalid-title or invalid-timestamp decision and is counted without discarding valid candidates. UTC start and end boundary records are included, later records are OUT_OF_WINDOW, and upstream vendor failure is reported as unavailable rather than selected news."
     tradeoff: "Without this, selected news may be irrelevant, incomplete, unreproducible or unsafe to present."
     status: "selected_for_development"
     source_review: "sources-v2.0/O5-Requirements-v0.5.3-DRAFT.md#L84"
-    verification: ["T10", "T11"]
+    verification: ["T10", "T11", "T13"]
     source_code: ["tradingagents/dataflows/vendors/yahoo/news.py"]
   - id: "REQ-O5-06"
     type: "invariant"
     priority: "Must"
     statement: "100× identical ⇒ full equality; unique-ID permutations equal (input_index differs); conflicting duplicate IDs not permutation-invariant; no wall-clock in selector."
-    fit_criterion: "T14"
+    fit_criterion: "Running the same fixture 100 times produces identical decisions, selected IDs and audit output. Permuting records with unique IDs preserves the selected ID set and rule results apart from input_index; conflicting duplicate-ID inputs are excluded from that permutation assertion. The selector reads no wall clock."
     metric: "Violations of the stated invariant in mapped acceptance cases"
     threshold: "0"
     tradeoff: "Without this, selected news may be irrelevant, incomplete, unreproducible or unsafe to present."
@@ -904,13 +904,13 @@ requirements:
     type: "cost"
     priority: "Must"
     statement: "0 added requests, 0 LLM calls, 0 input mutations; offline no keys."
-    fit_criterion: "T10/T14/T16"
+    fit_criterion: "The selector adds zero vendor or network requests and zero LLM calls, leaves caller input deeply unchanged, and its offline tests complete without credentials or recorded network attempts."
     metric: "Added requests, LLM calls and input mutations"
     threshold: "0 each"
     tradeoff: "Without this, selected news may be irrelevant, incomplete, unreproducible or unsafe to present."
     status: "selected_for_development"
     source_review: "sources-v2.0/O5-Requirements-v0.5.3-DRAFT.md#L94"
-    verification: ["T10", "T14", "T16"]
+    verification: ["T07", "T10", "T14", "T16"]
     source_code: ["tradingagents/dataflows/vendors/yahoo/news.py"]
   - id: "REQ-O5-09"
     type: "invariant"
@@ -975,12 +975,12 @@ requirements:
   - id: "O6-FR-01"
     type: "functional_behavior"
     priority: "Must"
-    statement: "Report per-selected-Analyst ordinary and wrap_up model-call counts, input/output usage, cumulative model-call duration and unattributed in-scope calls; count each invocation once, exclude out-of-scope calls from named rows and disclose deferred first structured-call attribution."
-    fit_criterion: "Two Market calls (one ordinary call and one wrap_up) with 100/20 and 50/10 input/output tokens and durations of 1.0 s and 0.5 s yield 2 calls, 150/30 tokens, 1.5 s. One News call with 80/15 tokens and a duration of 0.8 s yields 1 call, 80/15 tokens, 0.8 s. Repeating a notification for an existing invocation leaves these values unchanged. One call without a verified analyst ID appears in unattributed_calls=1 and no named row. An offline test through the real Analyst subgraph verifies that ordinary and wrap_up calls reach the callback with the expected selected Analyst key and that a known out-of-scope call contributes nothing to the named rows. The CLI integration test verifies exact counts, token attribution, and a visible statement that first structured-call attribution is deferred and named rows cover only verified in-scope calls. Real-subgraph ordinary and wrap_up callbacks must carry spec.key, and two simultaneous selected Analysts must have no cross-attribution; handler-only synthetic events do not satisfy this criterion."
+    statement: "Report per-selected-Analyst ordinary and wrap_up model-call counts, input/output usage, cumulative model-call duration and unattributed in-scope calls; count each invocation once, exclude known out-of-scope calls from both named rows and unattributed_calls, and disclose deferred first structured-call attribution."
+    fit_criterion: "Two Market calls (one ordinary call and one wrap_up) with 100/20 and 50/10 input/output tokens and durations of 1.0 s and 0.5 s yield 2 calls, 150/30 tokens, 1.5 s. One News call with 80/15 tokens and a duration of 0.8 s yields 1 call, 80/15 tokens, 0.8 s. Repeating a notification for an existing invocation leaves these values unchanged. One in-scope call without a verified analyst ID increments unattributed_calls by 1 and changes no named row. A known out-of-scope call changes neither named Analyst rows nor unattributed_calls. An offline test through the real Analyst subgraph verifies that ordinary and wrap_up calls reach the callback with the expected selected Analyst key. The CLI integration test verifies exact counts, token attribution, and a visible statement that first structured-call attribution is deferred and named rows cover only verified in-scope calls. Real-subgraph ordinary and wrap_up callbacks must carry spec.key, and two simultaneous selected Analysts must have no cross-attribution; handler-only synthetic events do not satisfy this criterion."
     tradeoff: "Without this, usage is missing, misleading or incomplete."
     status: "selected_for_development"
     source_review: "sources-v2.0/O6_Requirements_Review-组内审查后.md#L17"
-    verification: ["TC-O6-01", "TC-O6-04", "TC-O6-07", "TC-O6-07b", "TC-O6-08", "TC-O6-11", "TC-O6-12", "TC-O6-13"]
+    verification: ["TC-O6-01", "TC-O6-04", "TC-O6-07", "TC-O6-07b", "TC-O6-08", "TC-O6-10", "TC-O6-11", "TC-O6-12", "TC-O6-13"]
     source_code: ["cli/stats_handler.py", "tradingagents/graph/setup.py"]
   - id: "O6-FR-02"
     type: "functional_behavior"
