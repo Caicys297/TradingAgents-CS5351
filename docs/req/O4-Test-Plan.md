@@ -3,14 +3,14 @@
 | Field | Value |
 |---|---|
 | Plan ID | O4-TEST-v0.5 |
-| Status | Draft / Approval Pending |
+| Status | Stage 1 implemented (plan v0.5 unchanged); Stage 2 not started |
 | Owner | Member D (Safety and Reliability Lead) |
 | Prepared for | Member F (test coordination, CI integration, verification) |
-| Approval | **Formal Approval Pending** — Member F approved the **O4-T-07 test design** only; Member F has **NOT** formally approved this revised test plan for implementation. |
-| Approval history | Member A (PR #7, commit `60f1496…`) approved **only the O4-EXEC-v0.1 Stage 1 execution scope**; Member A did **not** approve this revised test plan as a whole. Member F test-plan approval is **pending**. Shared Stage 2 integration is **unapproved**. |
+| Approval | **Member F formally APPROVED O4-TEST-v0.5 Stage 1** (review `5934877146`, `2026-11-17T08:02:32Z`). Stage 2 not approved. |
+| Approval history | Member A (PR #7) approved the **Stage 1 execution scope** (reconfirmed for O4-EXEC-v0.2 at `2026-11-17T07:19:19Z`) and did **not** approve the plan as a whole. Member F formally approved the **O4-TEST-v0.5 Stage 1 test plan** at reviewed commit `27f244a`. Shared Stage 2 integration is **unapproved**. |
 | **Authoritative requirements baseline** | `docs/req/requirements.yaml` — Caicys297/TradingAgents-CS5351, PR #2 merged into `main`; PR #2 merge commit `4f87e29f7a52842dba8272071d2a4a1b527def10` |
 | Historical review snapshot | `main` `5afb24cf1b48e15e5000ee1365826eebb30d01ae` — **historical review snapshot only**, not the implementation baseline |
-| Implementation baseline | **Pending** — record the verified `main` SHA after the local repository is synchronised (Member A noted O1 PR #10 merged into `main` at `7fc104e`; not yet synced here). Not claimed as merged or synced. |
+| Implementation baseline | Verified `main` `ef1e6a362def6bb24275e6fd3678e4f10d4b1f07` merged into `feature/o4-evidence-gate` (merge commit `c83e7379e417ede2e99c777cd2f04c80b33d5fa3`). Stage 1 first code commit `fefd884`; reviewed Stage 1 HEAD `b1982c4`. |
 | O4 Draft PR | PR #7 (`feature/o4-evidence-gate`); previously reviewed commit `0b6840426a0492aa33061911d7ee4bd8f539dfc4` |
 | **CI provenance** | Unified pytest collection + `test/offline/` network-blocking fixture originate from **CI PR #1** (`pyproject.toml`, `test/offline/conftest.py`), NOT PR #2 |
 | Superseded draft reference | `O4-requirements.md` (workspace draft revision **O4-REQ-r3**) — a working draft, NOT the approved baseline |

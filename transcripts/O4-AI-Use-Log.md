@@ -64,6 +64,27 @@ links to genuine agent-session evidence." Raw session transcripts are preserved 
 
 These results are supported by the preserved OpenCode session; exact raw output is not fabricated here.
 
+## Stage 1 follow-up fix — rating-parse fail-closed boundary (committed `38dad9b`)
+
+- **Trigger:** Member F review of reviewed HEAD `b1982c4` identified that
+  `_resolve_original_rating(state)` ran outside the production fail-closed `try`,
+  so a recoverable rating-resolution exception could propagate instead of returning REVIEW.
+- **Fix:** moved original-rating resolution *inside* the recoverable internal-computation
+  `try` in `check_evidence` (config validation still precedes it). No API/contract change;
+  input state and `final_trade_decision` remain unmutated.
+- **New tests:** `test_t07_rating_parse_failure_fails_closed` (injects RuntimeError into the
+  real `_resolve_original_rating`; asserts review/REVIEW/reason/checker_failure + state
+  unchanged) and `test_t18_config_error_beats_rating_failure` (config ValueError still
+  propagates when the rating helper is patched to fail).
+- **Verification (local, not CI):** O4 offline file 53 passed; root default suite 1494 passed,
+  1 skipped (`langchain_aws`), 1 deselected; `ruff check` and `ruff format --check` clean.
+  T-07 evidence-classification failure injection, T-07 rating-parse failure injection, and T-18
+  configuration ValueError propagation all passed.
+- **Follow-up commit:** `38dad9b965e47b129eb2b6e49730477d713ef459` — committed
+  `2026-11-17T22:52:46+08:00` (`2026-11-17T14:52:46Z` UTC), subject
+  `fix(o4): fail closed on rating-resolution errors`. **Awaiting Member F review of the fix**;
+  this is not yet represented as approved.
+
 ## Provenance of approvals referenced by O4
 
 See `docs/test-approvals/O4-Evidence-Gate.md` for the verified Member A / Member F approval evidence

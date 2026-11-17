@@ -3,17 +3,17 @@
 | Field | Value |
 |---|---|
 | Plan ID | O4-EXEC-v0.2-DRAFT |
-| Status | **DRAFT — NOT approved** |
+| Status | Stage 1 implemented (plan text unchanged); Stage 2 not started |
 | Prepared by | Member D |
 | Prepared for | Member A (pre-coding review); Member F (test-plan approval) |
-| Companion test plan | `O4-Test-Plan.md` (O4-TEST-v0.5, Draft / Formal Approval Pending) |
+| Companion test plan | `O4-Test-Plan.md` (O4-TEST-v0.5; Stage 1 test plan formally APPROVED by Member F) |
 | Authoritative requirements | `docs/req/requirements.yaml` — Caicys297/TradingAgents-CS5351, PR #2 merged into `main` |
 | Historical review snapshot | `main` `5afb24cf1b48e15e5000ee1365826eebb30d01ae` — **historical review snapshot only**, not the implementation baseline |
-| Implementation baseline | **Pending** — record the verified `main` SHA after the local repository is synchronised (Member A noted O1 PR #10 merged into `main` at `7fc104e`; not yet synced here). Not claimed as merged or synced. |
+| Implementation baseline | Verified `main` `ef1e6a362def6bb24275e6fd3678e4f10d4b1f07` merged into `feature/o4-evidence-gate` (merge commit `c83e737`). Stage 1 first code commit `fefd884`; reviewed Stage 1 HEAD `b1982c4`. |
 | PR #2 merge commit | `4f87e29f7a52842dba8272071d2a4a1b527def10` |
 | O4 Draft PR | PR #7 (`feature/o4-evidence-gate`) |
 | CI provenance | Unified collection + `test/offline/` fixture from **CI PR #1** (merged) |
-| Approval | **Stage 1 scope approved by Member A in PR #7. Member F test-plan approval PENDING. Shared Stage 2 integration NOT approved. No code may begin before the relevant approvals and governance prerequisites are recorded.** |
+| Approval | **Member A approved the Stage 1 execution scope; Member F formally approved the O4-TEST-v0.5 Stage 1 test plan. Stage 1 implementation committed (`fefd884`, reviewed HEAD `b1982c4`, CI 6/6). Stage 1 follow-up fix committed at `38dad9b`, awaiting Member F review. Shared Stage 2 integration NOT approved.** |
 | Approval history | Member A (PR #7) approved **only the O4-EXEC-v0.1 Stage 1** D-owned scope and fixed G1/S2/B1; Member A **reconfirmed the Stage 1 execution scope** for this plan. This revised **v0.2** document is **not** approved as a whole; the T-07 production-entry clarification does not broaden the approved scope. Member F approved the **T-07 test design** only, not the overall revised test plan. |
 
 > **Version history.** O4-EXEC-v0.1 (prior draft) → **O4-EXEC-v0.2-DRAFT** (this revision: G1/S2/B1 adopted, two-stage scope, NFR-06 v1 durability not required, CI PR #1 provenance, T-16 formal-vs-supplementary). Test IDs remain O4-T-01…T-25.
