@@ -14,6 +14,50 @@ from tradingagents.dataflows.vendors.yahoo.ohlcv import _assert_ohlcv_not_stale,
 
 logger = logging.getLogger(__name__)
 
+# O1: the two SMA windows whose partial-window value must be suppressed. Only
+# these names are guarded; every other Yahoo indicator keeps its stockstats path.
+_SMA_WINDOWS = {"close_50_sma": 50, "close_200_sma": 200}
+
+_INSUFFICIENT = "N/A: insufficient history (needs {w} sessions, have {n})"
+_DUPLICATE_DATE = "N/A: invalid price history (duplicate trading date)"
+
+
+def _sma_values(data: pd.DataFrame, as_of_date: str, window: int) -> dict:
+    """Per-date SMA value (or a labelled unavailable value) for one SMA window.
+
+    Works on cleaned, dated closes. Rows after ``as_of_date`` are excluded from
+    the O1 SMA calculation; duplicate trading dates among the eligible rows make
+    the input invalid and every eligible date reports the duplicate text rather
+    than a numeric SMA (no silent deduplication); otherwise the eligible rows are
+    sorted by date and each reported date gets the latest-``window`` mean only
+    when at least ``window`` usable closes exist through it.
+    """
+    eligible = data.copy()
+    eligible["Date"] = pd.to_datetime(eligible["Date"], errors="coerce")
+    eligible = eligible.dropna(subset=["Date"])
+    eligible = eligible[eligible["Date"] <= pd.to_datetime(as_of_date)]
+
+    dates = eligible["Date"].dt.strftime("%Y-%m-%d")
+
+    if dates.duplicated().any():
+        return dict.fromkeys(dates, _DUPLICATE_DATE)
+
+    order = eligible.sort_values("Date")
+    ordered_dates = order["Date"].dt.strftime("%Y-%m-%d").tolist()
+    closes = pd.to_numeric(order["Close"], errors="coerce")
+
+    result: dict[str, str] = {}
+    count = 0
+    for date_str, close in zip(ordered_dates, closes, strict=True):
+        if pd.notna(close):
+            count += 1
+        if count >= window:
+            window_closes = closes[closes.notna()].iloc[count - window:count]
+            result[date_str] = str(window_closes.mean())
+        else:
+            result[date_str] = _INSUFFICIENT.format(w=window, n=count)
+    return result
+
 
 def get_YFin_data_online(
     symbol: Annotated[str, "ticker symbol of the company"],
@@ -220,6 +264,11 @@ def _get_stock_stats_bulk(
 
     df[indicator]  # This triggers stockstats to calculate the indicator
 
+    if indicator in _SMA_WINDOWS:
+        # O1 guard: the partial-window value stockstats would return is replaced
+        # with the exact insufficient-history / duplicate-date text.
+        return _sma_values(data, as_of_date, _SMA_WINDOWS[indicator])
+
     result_dict = {}
     for _, row in df.iterrows():
         date_str = row["Date"]
@@ -286,6 +335,14 @@ def get_stock_stats(
 
     df[indicator]  # trigger stockstats to calculate the indicator
     matching_rows = df[df["Date"].str.startswith(as_of_str)]
+
+    if indicator in _SMA_WINDOWS:
+        # O1 guard for the per-day fallback: apply the same rule to one date so
+        # this path cannot bypass the bulk guard.
+        guarded = _sma_values(data, as_of_date, _SMA_WINDOWS[indicator])
+        if as_of_str in guarded:
+            return guarded[as_of_str]
+        return "N/A: Not a trading day (weekend or holiday)"
 
     if not matching_rows.empty:
         indicator_value = matching_rows[indicator].values[0]
