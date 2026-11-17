@@ -18,6 +18,7 @@ from stockstats import wrap
 from tradingagents.dataflows.errors import NoMarketDataError
 from tradingagents.dataflows.symbols import normalize_symbol
 from tradingagents.dataflows.vendors.yahoo.common import price_text
+from tradingagents.dataflows.vendors.yahoo.market import _SMA_WINDOWS, _sma_values
 from tradingagents.dataflows.vendors.yahoo.ohlcv import load_ohlcv
 
 # A fixed, common indicator set so the snapshot is the same shape every run.
@@ -80,6 +81,20 @@ def build_verified_market_snapshot(
     selected = tuple(indicators or DEFAULT_SNAPSHOT_INDICATORS)
     indicator_values: dict[str, str] = {}
     for name in selected:
+        if name in _SMA_WINDOWS:
+            # O1 guard: replace the latest-row value with the exact unavailable
+            # text when history is short or a trading date is duplicated. Valid
+            # values keep the snapshot's price_text display rule.
+            guarded = _sma_values(df, as_of_date, _SMA_WINDOWS[name])
+            latest_key = df.iloc[-1]["Date"].strftime("%Y-%m-%d")
+            value = guarded.get(latest_key) if guarded else None
+            if value is None:
+                indicator_values[name] = "N/A"
+            elif value.startswith("N/A"):
+                indicator_values[name] = value
+            else:
+                indicator_values[name] = price_text(float(value))
+            continue
         try:
             stock_df[name]  # triggers stockstats calculation
             indicator_values[name] = _fmt(stock_df.iloc[-1][name])
