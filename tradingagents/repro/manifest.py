@@ -71,8 +71,12 @@ _RUNTIME_KEYS = frozenset({"package_version", "python_version", "platform", "git
 _GIT_KEYS = frozenset({"status", "commit", "dirty"})
 _FINGERPRINT_KEYS = frozenset({"algorithm", "scope", "value"})
 _ARTIFACT_KEYS = frozenset({"name", "path", "stability"})
-_SECRET_KEY_RE = re.compile(
-    r"(api[_-]?key|access[_-]?token|token|secret|password|passwd|authorization|credential)",
+_SECRET_NAME_PATTERN = (
+    r"(?:api[_-]?key|access[_-]?token|token|secret|password|passwd|authorization|credential)"
+)
+_SECRET_KEY_RE = re.compile(rf"({_SECRET_NAME_PATTERN})", re.IGNORECASE)
+_SECRET_QUERY_RE = re.compile(
+    rf"([?&]{_SECRET_NAME_PATTERN}=)([^&#]*)",
     re.IGNORECASE,
 )
 _CREDENTIAL_URL_RE = re.compile(r"(?P<scheme>[A-Za-z][A-Za-z0-9+.-]*://)[^/@\s]+@")
@@ -110,7 +114,8 @@ def _sanitize(value: Any) -> Any:
     if isinstance(value, (list, tuple)):
         return [_sanitize(item) for item in value]
     if isinstance(value, str):
-        return _CREDENTIAL_URL_RE.sub(r"\g<scheme>***@", value)
+        redacted = _CREDENTIAL_URL_RE.sub(r"\g<scheme>***@", value)
+        return _SECRET_QUERY_RE.sub(r"\1***", redacted)
     return value
 
 

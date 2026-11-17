@@ -226,6 +226,42 @@ def test_o2_tc_16_nested_secret_and_credential_url_are_redacted():
     assert manifest["config"]["data_vendors"]["api_key"] == "***"
 
 
+def test_o2_tc_16_credential_in_url_query_is_redacted_from_manifest_and_fingerprint():
+    first = _manifest(
+        config={
+            **CONFIG,
+            "data_vendors": {
+                "relay": "https://example.test/data?api_key=private-value"
+            },
+        }
+    )
+    second = _manifest(
+        config={
+            **CONFIG,
+            "data_vendors": {
+                "relay": "https://example.test/data?api_key=other-private-value"
+            },
+        }
+    )
+
+    first_serialized = json.dumps(first, ensure_ascii=False)
+    second_serialized = json.dumps(second, ensure_ascii=False)
+    assert "private-value" not in first_serialized
+    assert "other-private-value" not in second_serialized
+    assert first["config"]["data_vendors"]["relay"] == (
+        "https://example.test/data?api_key=***"
+    )
+    assert second["config"]["data_vendors"]["relay"] == (
+        "https://example.test/data?api_key=***"
+    )
+    assert first["fingerprint"] == second["fingerprint"]
+
+    fingerprint_input = manifest_module.canonical_json(
+        {"identity": first["identity"], "config": first["config"]}
+    )
+    assert "private-value" not in fingerprint_input
+
+
 def test_o2_tc_17_git_lookup_error_is_explicit():
     runtime = manifest_module.collect_runtime_metadata(
         git_metadata={"status": "error", "commit": None, "dirty": None}
