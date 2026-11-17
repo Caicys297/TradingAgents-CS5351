@@ -25,6 +25,61 @@ from tradingagents.agents.analysts.condensation import (
     parse_source,
     render_audit_footer,
 )
+from tradingagents.dataflows.vendors.reddit import CRYPTO_SUBREDDITS, DEFAULT_SUBREDDITS
+
+PRE_O3_TEMPLATE = """You are a financial market sentiment analyst. Your task is to produce a comprehensive sentiment report for {ticker} covering the period from {start_date} to {end_date}, drawing on three complementary data sources that have already been collected for you.
+
+## Data sources (pre-fetched, in this prompt)
+
+### News headlines — Yahoo Finance, past 7 days
+Institutional framing. Fact-driven, slower-moving signal.
+
+<start_of_news>
+{news_block}
+<end_of_news>
+
+### StockTwits messages — retail-trader social platform indexed by cashtag
+Fast-moving signal. Each message carries a user-labeled sentiment tag (Bullish / Bearish / no-label) plus the message body.
+
+<start_of_stocktwits>
+{stocktwits_block}
+<end_of_stocktwits>
+
+### Reddit posts — {reddit_subs} (past 7 days)
+Community discussion, without vote or comment counts. Subreddit character matters ({character}).
+
+<start_of_reddit>
+{reddit_block}
+<end_of_reddit>
+
+## How to analyze this data (best practices)
+
+1. **Read the StockTwits Bullish/Bearish ratio as a leading retail-sentiment signal.** A 70/30 bullish/bearish split is moderately bullish; ≥90/10 may indicate over-extension and contrarian risk; 50/50 is uncertainty. Sample size matters — base rates on the actual message count, not percentages alone. A block headed "Screened by Jev" has had off-topic posts removed; its stance count is a classifier's read of every on-topic post fetched, labelled or not, of which the posts listed are a sample. Read it alongside the user tags.
+
+2. **Look for cross-source divergences.** If news framing is bearish but StockTwits is overwhelmingly bullish, that mismatch is itself a signal — it can mean retail is leaning into a thesis the news flow hasn't caught up to (or vice versa, that retail is chasing while institutions are cautious).
+
+3. **Read Reddit posts for substance.** The feed carries no vote or comment counts, so judge a post by its body excerpt, not its title alone, and do not infer engagement.
+
+4. **Distinguish opinion from event.** A news headline ("Nvidia announces $500M Corning deal") is an event; a StockTwits post ("buying NVDA, this is going to moon") is opinion. Both are inputs but should be weighted differently in your conclusions.
+
+5. **Identify recurring narrative themes.** What topic keeps coming up across sources? That's the dominant narrative driving current sentiment.
+
+6. **Be honest about data limits.** If StockTwits returned only a handful of messages, or one or more sources returned an "<unavailable>" placeholder, the sentiment read is less robust — flag this explicitly in the `confidence` field and the narrative. If the sources are silent on a given subreddit, say so.
+
+7. **Identify catalysts and risks** that emerge across sources — news of upcoming earnings, product launches, competitive threats, macro headlines, etc.
+
+8. **Past sentiment is not predictive.** Frame your conclusions as signal for the trader to weigh alongside fundamentals and technicals, not as a price call.
+
+## Output fields
+
+Fill the following fields:
+
+- **overall_band**: Exactly one of Bullish / Mildly Bullish / Neutral / Mixed / Mildly Bearish / Bearish. Use Mixed when sources point in clearly different directions; Neutral only when all sources are genuinely silent.
+- **overall_score**: A number from 0 (maximally bearish) to 10 (maximally bullish); 5 is neutral. Keep it consistent with overall_band.
+- **confidence**: low / medium / high, based on data quality and sample size.
+- **narrative**: Full source-by-source breakdown, divergences, dominant narrative themes, catalysts and risks, and a markdown summary table of key sentiment signals (direction, source, supporting evidence).
+
+"""
 
 NEWS = "news"
 STOCKTWITS = "stocktwits"
@@ -856,3 +911,316 @@ def _make_analyst_with_calls(monkeypatch, calls):
 def _make_analyst(monkeypatch):
     analyst, captured = _make_analyst_with_calls(monkeypatch, {"order": []})
     return analyst, captured
+
+
+# ===========================================================================
+# PR #14 review regressions
+# ===========================================================================
+
+
+def _pre_o3_baseline_message(**kwargs):
+    """The complete system message the pre-O3 node sent to the model.
+
+    The body comes from ``5abb246^:tradingagents/agents/analysts/sentiment_analyst.py``;
+    the wrapper prefix is the node's system template, which O3 does not change.
+    """
+    ticker = kwargs["ticker"]
+    start_date = kwargs["start_date"]
+    end_date = kwargs["end_date"]
+    instrument_context = kwargs.get("instrument_context", "")
+    news_block = kwargs["news_block"]
+    stocktwits_block = kwargs["stocktwits_block"]
+    reddit_block = kwargs["reddit_block"]
+    subreddits = kwargs.get("subreddits", DEFAULT_SUBREDDITS)
+    if subreddits == DEFAULT_SUBREDDITS:
+        character = (
+            "r/wallstreetbets is often contrarian/exuberant; r/stocks more measured; "
+            "r/investing longer-term"
+        )
+    elif len(subreddits) > len(CRYPTO_SUBREDDITS):
+        character = (
+            f"r/{subreddits[0]} leans toward the coin's holders; r/CryptoCurrency and "
+            f"r/CryptoMarkets are broader"
+        )
+    else:
+        character = "r/CryptoCurrency and r/CryptoMarkets are broad crypto communities"
+    body = PRE_O3_TEMPLATE.format(
+        ticker=ticker,
+        start_date=start_date,
+        end_date=end_date,
+        character=character,
+        reddit_subs=", ".join(f"r/{sub}" for sub in subreddits),
+        news_block=news_block,
+        stocktwits_block=stocktwits_block,
+        reddit_block=reddit_block,
+        audit_footer="",
+    )
+    from tradingagents.agents.structured import NO_EXTERNAL_TOOLS
+
+    prefix = (
+        "You are a helpful AI assistant, collaborating with other assistants."
+        " Report what your tools support; another agent decides the trade."
+        f" Today's date is {end_date}; treat it as 'now' for all analysis. {instrument_context}"
+        " " + NO_EXTERNAL_TOOLS +
+        "\n"
+    )
+    return prefix + body
+
+
+def _spy_fetchers(monkeypatch, calls):
+    """Wire fake fetchers that record ``(name, args, kwargs)`` in call order."""
+    from tradingagents.agents.analysts import sentiment_analyst as node_mod
+
+    news_block_text = news_block([make_article(1)])
+    st_text = stocktwits_block([("2026-05-01", "u", "Bullish", "NVDA up")])
+    rd_text = reddit_block([("stocks", [("2026-05-01", "NVDA", "body")])])
+    screen_marker = object()
+
+    def news(*args, **kwargs):
+        calls["log"].append(("news", args, kwargs))
+        return news_block_text
+
+    def st(*args, **kwargs):
+        calls["log"].append(("stocktwits", args, kwargs))
+        return st_text
+
+    def rd(*args, **kwargs):
+        calls["log"].append(("reddit", args, kwargs))
+        return rd_text
+
+    monkeypatch.setattr(node_mod.get_news, "func", news, raising=False)
+    monkeypatch.setattr(node_mod, "fetch_stocktwits_messages", st, raising=False)
+    monkeypatch.setattr(node_mod, "fetch_reddit_posts", rd, raising=False)
+    monkeypatch.setattr(node_mod, "jev_screen", lambda ticker: screen_marker, raising=False)
+    monkeypatch.setattr(
+        node_mod, "subreddits_for", lambda ticker: DEFAULT_SUBREDDITS, raising=False
+    )
+    return {
+        "news": news_block_text,
+        "stocktwits": st_text,
+        "reddit": rd_text,
+        "screen": screen_marker,
+    }
+
+
+def _fake_llm_named(_label=""):
+    """A fake LLM that records the exact prompt the node sends to the model."""
+    from tradingagents.agents.schemas import SentimentBand, SentimentReport
+
+    captured: dict = {"sent": ""}
+
+    class _Structured:
+        def invoke(self, prompt):
+            captured["sent"] = _prompt_text(prompt)
+            return SentimentReport(
+                overall_band=SentimentBand.NEUTRAL,
+                overall_score=5.0,
+                confidence="medium",
+                narrative="captured",
+            )
+
+    class _LLM:
+        def with_structured_output(self, schema):
+            return _Structured()
+
+        def invoke(self, prompt):  # pragma: no cover - structured path wins
+            captured["sent"] = _prompt_text(prompt)
+
+            class _R:
+                content = "free text"
+
+            return _R()
+
+    captured["llm"] = _LLM()
+    return captured
+
+
+def _prompt_text(prompt):
+    """The chat message content the fake model was handed."""
+    messages = prompt if isinstance(prompt, list) else [prompt]
+    parts = []
+    for message in messages:
+        parts.append(str(getattr(message, "content", message)))
+    return "\n".join(parts)
+
+
+def test_PR14_1_disabled_matches_pre_o3_golden_byte_for_byte(monkeypatch):
+    """Review 1: the real node's captured prompt equals the pre-O3 prompt.
+
+    The node runs with condensation disabled; the prompt it actually sends to
+    the model is compared byte-for-byte with an independent pre-O3 golden.
+    """
+    from tradingagents.agents.analysts import sentiment_analyst as node_mod
+
+    calls = {"log": []}
+    blocks = _spy_fetchers(monkeypatch, calls)
+    captured = _fake_llm_named("_sentiment_state_only")
+    analyst = node_mod.create_sentiment_analyst(captured["llm"])
+    baseline_config = node_mod.get_config()
+    monkeypatch.setattr(
+        node_mod,
+        "get_config",
+        lambda: {**baseline_config, "input_condensation_enabled": False},
+    )
+
+    state = _sentiment_state()
+    state["instrument_context"] = "The instrument to analyze is `NVDA`."
+    analyst(state)
+
+    # The prompt the model received, exactly as the node assembled it.
+    sent = captured["sent"]
+    assert sent, "the fake LLM must have been invoked"
+
+    golden = _pre_o3_baseline_message(
+        ticker="NVDA",
+        start_date="2026-04-24",
+        end_date="2026-05-01",
+        instrument_context="The instrument to analyze is `NVDA`.",
+        news_block=blocks["news"],
+        stocktwits_block=blocks["stocktwits"],
+        reddit_block=blocks["reddit"],
+    )
+    assert sent == golden, "disabled prompt must equal the pre-O3 prompt exactly"
+
+
+def test_PR14_1_fetchers_keep_pre_o3_calls(monkeypatch):
+    """Review 1: each fetcher is called once, in pre-O3 order, with pre-O3 args."""
+    from tradingagents.agents.analysts import sentiment_analyst as node_mod
+
+    calls = {"log": []}
+    blocks = _spy_fetchers(monkeypatch, calls)
+    captured = _fake_llm_named("_sentiment_state_only")
+    analyst = node_mod.create_sentiment_analyst(captured["llm"])
+    baseline_config = node_mod.get_config()
+    monkeypatch.setattr(
+        node_mod,
+        "get_config",
+        lambda: {**baseline_config, "input_condensation_enabled": False},
+    )
+
+    state = _sentiment_state()
+    state["instrument_context"] = "The instrument to analyze is `NVDA`."
+    analyst(state)
+
+    names = [entry[0] for entry in calls["log"]]
+    assert names == ["news", "stocktwits", "reddit"], "pre-O3 call order"
+    assert len(names) == len(set(names)), "each fetcher is called exactly once"
+
+    screen = blocks["screen"]
+    expected = {
+        "news": (("NVDA", "2026-04-24", "2026-05-01"), {}),
+        "stocktwits": (
+            ("NVDA",),
+            {
+                "limit": 30,
+                "start_date": "2026-04-24",
+                "end_date": "2026-05-01",
+                "screen": screen,
+            },
+        ),
+        "reddit": (
+            ("NVDA", DEFAULT_SUBREDDITS),
+            {
+                "start_date": "2026-04-24",
+                "end_date": "2026-05-01",
+                "screen": screen,
+            },
+        ),
+    }
+    for name, args, kwargs in calls["log"]:
+        exp_args, exp_kwargs = expected[name]
+        assert args == exp_args, f"{name} positional arguments changed: {args!r}"
+        assert kwargs == exp_kwargs, f"{name} keyword arguments changed: {kwargs!r}"
+
+
+def test_PR14_2_node_rejects_caps_summing_over_total(monkeypatch):
+    """Review 2: the node validates the cap allocation before condensing."""
+
+    blocks = {
+        "news": news_block([make_article(1)]),
+        "stocktwits": stocktwits_block([("2026-05-01", "u", "Bullish", "NVDA up")]),
+        "reddit": reddit_block([("stocks", [("2026-05-01", "NVDA", "body")])]),
+    }
+    over = {"input_budget_chars": 20000, "input_news_cap_chars": 12000}
+    analyst, _captured = _node_with_blocks(monkeypatch, blocks, over)
+
+    with pytest.raises(ValueError, match="exceeds input_budget_chars"):
+        analyst(_sentiment_state())
+
+
+def test_PR14_2_disabled_path_ignores_invalid_caps(monkeypatch):
+    """Review 2: disabling condensation stays compatible with any cap values."""
+
+    blocks = {
+        "news": news_block([make_article(1)]),
+        "stocktwits": stocktwits_block([("2026-05-01", "u", "Bullish", "NVDA up")]),
+        "reddit": reddit_block([("stocks", [("2026-05-01", "NVDA", "body")])]),
+    }
+    over = {
+        "input_budget_chars": 20000,
+        "input_news_cap_chars": 12000,
+        "input_condensation_enabled": False,
+    }
+    analyst, _captured = _node_with_blocks(monkeypatch, blocks, over)
+
+    result = analyst(_sentiment_state())
+    assert result["sentiment_report"]
+
+
+def test_PR14_3_reddit_empty_first_group_renders_headers_once():
+    """Review 3: an originally empty first group keeps its own empty state."""
+    groups = [
+        ("wallstreetbets", None),  # the fetcher reported no posts
+        ("stocks", [("2026-05-01", "NVDA earnings", "margins")]),
+    ]
+    text = reddit_block(groups)
+    out, report = condense(text, source=REDDIT, cap=12000)
+
+    assert out.count("r/wallstreetbets") == 1, "a header must render exactly once"
+    assert out.count("r/stocks") == 1
+    assert "<no posts found mentioning NVDA>" in out
+    assert "[all posts omitted by input budget]" not in out
+    assert report.items_dropped == 0
+
+
+def test_PR14_3_reddit_empty_group_keeps_state_under_tight_budget():
+    """Review 3: a tight budget never turns an empty group into an omitted one."""
+    groups = [
+        ("wallstreetbets", None),
+        ("stocks", [("2026-05-01", "NVDA earnings", "margins")]),
+    ]
+    text = reddit_block(groups)
+    # A cap the whole block fits in: the empty group is not a budget casualty.
+    out, _report = condense(text, source=REDDIT, cap=12000)
+
+    assert out.count("r/wallstreetbets") == 1
+    assert "<no posts found mentioning NVDA>" in out
+    assert "[all posts omitted by input budget]" not in out
+
+
+def test_PR14_4_news_truncation_keeps_title_and_link_intact():
+    """Review 4: only the summary is shortened; heading and Link line survive."""
+    summary = " ".join(f"word{i}" for i in range(200))
+    text = news_block([("Headline kept intact", "Reuters", summary, "https://x.test/keep")])
+
+    out, report = condense(text, cap=300)
+
+    assert report.items_truncated == 1
+    assert "### Headline kept intact (source: Reuters)" in out
+    assert "Link: https://x.test/keep" in out
+    assert "…[truncated]" in out
+    assert len(out) <= 300
+    # No half-written Link line or heading.
+    assert out.count("Link: ") == 1
+    assert not out.rstrip("\n").endswith("Link:")
+
+
+def test_PR14_4_news_item_dropped_when_structure_cannot_fit():
+    """Review 4: if heading + link + a safe snippet cannot fit, drop the item."""
+    text = news_block([("A headline", "Reuters", "body text here", "https://x.test/a")])
+    # Room for the heading alone, not for heading + link + marker.
+    out, report = condense(text, cap=45)
+
+    assert report.items_truncated == 0
+    assert report.items_dropped == 1
+    assert out == "" or "Link: " not in out

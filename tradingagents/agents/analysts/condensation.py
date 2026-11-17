@@ -66,6 +66,7 @@ class Item:
     link: str = ""
     rank: int = 0
     group: str = ""
+    source_kind: str = ""
 
     @property
     def identity_key(self):
@@ -188,6 +189,7 @@ def _finish_news(current):
         title=current["title"],
         publisher=current["publisher"],
         link=current.get("link", ""),
+        source_kind=NEWS,
     )
 
 
@@ -208,6 +210,7 @@ def _parse_stocktwits(text):
                     # the summary line reports the fetched counts and must not be
                     # mistaken for an item
                     publisher="stocktwits",
+                    source_kind=STOCKTWITS,
                 )
             )
         else:
@@ -216,6 +219,7 @@ def _parse_stocktwits(text):
                     text=items[-1].text + "\n" + line,
                     title=items[-1].title,
                     publisher=items[-1].publisher,
+                    source_kind=items[-1].source_kind,
                 )
             else:
                 prologue.append(line)
@@ -236,7 +240,13 @@ def _parse_reddit(text):
         item = _REDDIT_ITEM_RE.match(line)
         if item and current is not None:
             current["items"].append(
-                Item(text=line, title=item.group("title"), publisher="reddit", group=header_sub(current))
+                Item(
+                    text=line,
+                    title=item.group("title"),
+                    publisher="reddit",
+                    group=header_sub(current),
+                    source_kind=REDDIT,
+                )
             )
             continue
         if current is None or not current["items"]:
@@ -252,9 +262,12 @@ def _parse_reddit(text):
             title=last.title,
             publisher=last.publisher,
             group=last.group,
+            source_kind=last.source_kind,
         )
-    prologue = "\n".join(groups[0]["header"]) if groups and not groups[0]["items"] else ""
-    return prologue, groups
+    # Every parsed group owns its header, including a group the fetcher
+    # reported as having no posts: that header renders once, in place. It is
+    # never promoted to a prologue, which would render it a second time.
+    return "", groups
 
 
 def header_sub(group):
@@ -356,59 +369,6 @@ def _truncate(text, cap):
     if " " in cut:
         cut = cut[: cut.rfind(" ")]
     return (cut.rstrip() + TRUNCATION_MARKER)[:cap]
-
-
-def _render_news(prologue, items, cap):
-    parts = [prologue] if prologue else []
-    rendered = ["\n".join(parts)] if parts else [""]
-    head = rendered[0]
-    out = head
-    for item in items:
-        candidate = item.text if not out else "\n" + item.text
-        if len(out) + len(candidate) <= cap:
-            out += candidate
-        else:
-            break
-    return out
-
-
-def _render_items_with_groups(prologue, items, cap, group_of):
-    out = prologue
-    for item in items:
-        candidate = item.text if not out else "\n" + item.text
-        if len(out) + len(candidate) <= cap:
-            out += candidate
-        else:
-            break
-    return out
-
-
-def _render_reddit(groups, cap):
-    rendered = []
-    for group in groups:
-        header = "\n".join(group["header"])
-        body = [Item(text=item.text, title=item.title, publisher=item.publisher) for item in group["items"]]
-        block = header
-        if block and body:
-            block += "\n" + "\n".join(i.text for i in body)
-        rendered.append((group, block))
-    return rendered
-
-
-def _rebuild_reddit(groups, dropped_by_group, cap):
-    out = ""
-    for group in groups:
-        header = "\n".join(group["header"])
-        if dropped_by_group.get(id(group)) == "all":
-            block = f"{header}\n{OMITTED_MARKER}"
-        else:
-            block = header
-            for item in group["items"]:
-                if dropped_by_group.get((id(group), item.text)) is None:
-                    block += "\n" + item.text
-        candidate = block if not out else "\n\n" + block
-        out += candidate
-    return out
 
 
 # --- the entry point -------------------------------------------------------
@@ -527,6 +487,42 @@ def condense_source(
     return out, report
 
 
+def _truncate_news(item, room):
+    """Shorten a news item's summary, keeping its heading and Link line whole.
+
+    Returns ``""`` when the heading, the summary marker and the Link line cannot
+    all fit: a half-written heading or a severed ``Link:`` line is worse than
+    dropping the item, because the reader cannot tell what was lost.
+
+    The result never exceeds ``room`` characters, including its trailing newline.
+    """
+    lines = item.text.split("\n")
+    link_idx = None
+    for index, line in enumerate(lines):
+        if line.startswith("Link: "):
+            link_idx = index
+            break
+    if link_idx is None:
+        return ""
+    heading = lines[0]
+    link_line = lines[link_idx]
+    summary = " ".join(ln for ln in lines[1:link_idx] if ln.strip()).strip()
+
+    # heading + newline + summary + newline + link + newline
+    fixed = len(heading) + 1 + len(link_line) + 2
+    if fixed > room:
+        return ""
+    available = room - fixed
+    if available < len(TRUNCATION_MARKER):
+        return ""
+    if len(summary) <= available:
+        return f"{heading}\n{summary}\n{link_line}\n"
+    cut = summary[: available - len(TRUNCATION_MARKER)]
+    if " " in cut:
+        cut = cut[: cut.rfind(" ")]
+    return f"{heading}\n{cut.rstrip()}{TRUNCATION_MARKER}\n{link_line}\n"
+
+
 def _fit_flat(prologue, kept, cap):
     """Keep whole items while they fit, then shorten at most one summary.
 
@@ -550,7 +546,10 @@ def _fit_flat(prologue, kept, cap):
             continue
         if not truncated_already:
             room = cap - len(out) - len(separator)
-            shortened = _truncate(item.text, room)
+            if item.source_kind == NEWS:
+                shortened = _truncate_news(item, room)
+            else:
+                shortened = _truncate(item.text, room)
             if shortened:
                 out += separator + shortened
                 truncated = 1
@@ -565,8 +564,10 @@ def _fit_flat(prologue, kept, cap):
 def _fit_reddit(prologue, groups, kept, cap):
     """Budget Reddit group by group, keeping every header in place.
 
-    Groups render in their original order.  A group whose posts all fell away
-    keeps its header plus an omission marker, so a subject never disappears.
+    Groups render in their original order.  A group that had posts but lost
+    them all keeps its header plus an omission marker, so a subject never
+    disappears.  A group the fetcher already reported as empty keeps its own
+    empty state and is never given an omission marker.
     """
     keep_ids = {id(item) for item in kept}
     out = prologue
@@ -585,8 +586,15 @@ def _fit_reddit(prologue, groups, kept, cap):
             else:
                 dropped += 1
                 notes.append((item, "over_budget"))
-        block = header if kept_here else f"{header}\n{OMITTED_MARKER}"
-        block = block + body
+        had_posts = bool(group["items"])
+        if kept_here:
+            block = header + body
+        elif had_posts:
+            # Posts existed and the budget removed them: say so.
+            block = f"{header}\n{OMITTED_MARKER}"
+        else:
+            # The fetcher reported this group as having no posts at all.
+            block = header
         separator = "\n\n" if out else ""
         if len(out) + len(separator) + len(block) > cap:
             raise CondensationError(
@@ -625,7 +633,10 @@ def render_audit_footer(reports):
         tail = "\n</input_condensation>"
         room = FOOTER_MAX_CHARS - len(head) - len(tail)
         text = head + body[: max(0, room - 1)].rstrip() + "…" + tail
-    return text
+    # The footer sits on its own line between the closing tag of the last data
+    # block and the analysis heading; the blank line before the heading is
+    # supplied here so an empty footer leaves the prompt byte-identical.
+    return text + "\n"
 
 
 def report_as_dict(report):

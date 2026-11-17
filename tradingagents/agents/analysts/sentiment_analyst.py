@@ -29,6 +29,7 @@ from tradingagents.agents.analysts.condensation import (
     CondensationReport,
     condense_source,
     render_audit_footer,
+    validate_caps,
 )
 from tradingagents.agents.context import get_instrument_context_from_state, get_language_instruction
 from tradingagents.agents.post_screen import jev_screen
@@ -109,6 +110,9 @@ def create_sentiment_analyst(llm):
         audit_footer = ""
         budget_exception = False
         if config.get("input_condensation_enabled", True):
+            # Validate the whole allocation once, before any source is touched:
+            # a misconfigured run must fail loudly, not half-condense.
+            validate_caps(config)
             identity_terms = _identity_terms(ticker, instrument_context)
             reports = []
             condensed = {}
@@ -256,9 +260,7 @@ Community discussion, without vote or comment counts. Subreddit character matter
 <start_of_reddit>
 {reddit_block}
 <end_of_reddit>
-
 {audit_footer}
-
 ## How to analyze this data (best practices)
 
 1. **Read the StockTwits Bullish/Bearish ratio as a leading retail-sentiment signal.** A 70/30 bullish/bearish split is moderately bullish; ≥90/10 may indicate over-extension and contrarian risk; 50/50 is uncertainty. Sample size matters — base rates on the actual message count, not percentages alone. A block headed "Screened by Jev" has had off-topic posts removed; its stance count is a classifier's read of every on-topic post fetched, labelled or not, of which the posts listed are a sample. Read it alongside the user tags.
