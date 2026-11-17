@@ -2,14 +2,16 @@
 
 | Field | Value |
 |---|---|
-| Plan ID | O4-TEST-v0.4 |
+| Plan ID | O4-TEST-v0.5 |
 | Status | Draft / Approval Pending |
 | Owner | Member D (Safety and Reliability Lead) |
 | Prepared for | Member F (test coordination, CI integration, verification) |
-| Approval | Pending — Member F has **NOT** formally approved this version |
+| Approval | **Formal Approval Pending** — Member F approved the **O4-T-07 test design** only; Member F has **NOT** formally approved this revised test plan for implementation. |
 | Approval history | Member A (PR #7, commit `60f1496…`) approved **only the O4-EXEC-v0.1 Stage 1 execution scope**; Member A did **not** approve this revised test plan as a whole. Member F test-plan approval is **pending**. Shared Stage 2 integration is **unapproved**. |
-| **Authoritative requirements baseline** | `docs/req/requirements.yaml` — Caicys297/TradingAgents-CS5351, PR #2 merged into `main`; current `main` commit **`5afb24cf1b48e15e5000ee1365826eebb30d01ae`**; PR #2 merge commit `4f87e29f7a52842dba8272071d2a4a1b527def10` |
-| O4 Draft PR | PR #7 (`feature/o4-evidence-gate`, base `main` @ `5afb24cf…`) — Member A reviewed; Member F test-plan approval pending |
+| **Authoritative requirements baseline** | `docs/req/requirements.yaml` — Caicys297/TradingAgents-CS5351, PR #2 merged into `main`; PR #2 merge commit `4f87e29f7a52842dba8272071d2a4a1b527def10` |
+| Historical review snapshot | `main` `5afb24cf1b48e15e5000ee1365826eebb30d01ae` — **historical review snapshot only**, not the implementation baseline |
+| Implementation baseline | **Pending** — record the verified `main` SHA after the local repository is synchronised (Member A noted O1 PR #10 merged into `main` at `7fc104e`; not yet synced here). Not claimed as merged or synced. |
+| O4 Draft PR | PR #7 (`feature/o4-evidence-gate`); previously reviewed commit `0b6840426a0492aa33061911d7ee4bd8f539dfc4` |
 | **CI provenance** | Unified pytest collection + `test/offline/` network-blocking fixture originate from **CI PR #1** (`pyproject.toml`, `test/offline/conftest.py`), NOT PR #2 |
 | Superseded draft reference | `O4-requirements.md` (workspace draft revision **O4-REQ-r3**) — a working draft, NOT the approved baseline |
 | Source CI plan | `F_CI_Gate_Plan_for_Team_Review_Revised.md` |
@@ -27,11 +29,11 @@
 
 ## 1. Document metadata and conventions
 
-- **Plan ID:** O4-TEST-v0.4 (versioned; increments on each reviewed revision). Prior reviewed version was O4-TEST-v0.3; this revision changes reviewed scope and acceptance details, so earlier approvals do **not** automatically cover it.
+- **Plan ID:** O4-TEST-v0.5 (versioned; increments on each reviewed revision). Prior reviewed versions were O4-TEST-v0.4 and O4-TEST-v0.3; this revision changes reviewed scope and acceptance details, so earlier approvals do **not** automatically cover it.
 - **Owner:** Member D.
 - **Status:** Draft.
 - **Approval:** Pending. Approval record completed in Section 11 only by the authorised reviewer(s).
-- **Authoritative requirements baseline:** `docs/req/requirements.yaml` at `main` `5afb24cf1b48e15e5000ee1365826eebb30d01ae` (PR #2 merged at `4f87e29f…`). FR-04 = `Won't`; NFR-03 = `Should`, p95 `<= 10 ms`; INV-05 maps to O4-T-25.
+- **Authoritative requirements baseline:** `docs/req/requirements.yaml` (PR #2 merged at `4f87e29f…`). FR-04 = `Won't`; NFR-03 = `Should`, p95 `<= 10 ms`; INV-05 maps to O4-T-25. The implementation baseline (post-sync `main` SHA) is pending — see the metadata table.
 - **Superseded draft:** `O4-requirements.md` O4-REQ-r3 (working draft; its FR-04/NFR-03 values are not the approved baseline).
 - **Requirement IDs** (`O4-FR-01…16`, `O4-NFR-01…08`, `O4-INV-01…05`) and **test IDs** (`O4-T-01`…`O4-T-25`) are preserved/extended as in `O4-requirements.md`.
 
@@ -72,7 +74,7 @@
 **Stage 1 — approved for Member D's own files (pure checker + offline unit tests):**
 - Files D may create/modify: `tradingagents/agents/evidence_gate.py`, `test/offline/test_evidence_gate.py`.
 - Stage 1 test IDs: **O4-T-01…T-07, T-09…T-15, T-17…T-19, T-24, T-25**.
-- For **O4-T-07, T-18, T-19**, Stage 1 covers **only their unit-test portions**; their integration portions are Stage 2.
+- For **O4-T-07, T-18, T-19**, Stage 1 covers **only their checker-level unit portions** (calling the real `check_evidence()` entry point); their Graph/CLI integration portions are Stage 2. T-07 remains Stage 1: the recoverable exception is handled by production checker logic, not a test wrapper.
 - Stage 1 **must NOT** modify shared Graph, CLI, reporting, logging, state, or runtime integration files.
 - Stage 1 approved-in-scope tests are **NOT yet implemented** and **NOT** a complete O4 safety approval.
 
@@ -210,20 +212,23 @@ Each entry gives objective, input/setup, execution approach, expected outcome, p
 - **Type:** Offline unit (negative/safety-critical). **[S1]**
 - **Dependencies:** Checker module.
 
-### O4-T-07 — Recoverable checker failure fails closed (Stage 1 unit / Stage 2 integration)
+### O4-T-07 — Recoverable checker failure fails closed (Stage 1 checker-level / Stage 2 integration)
 - **Covers:** O4-FR-09, O4-INV-04, O4-NFR-04
-- **Objective:** A recoverable checker failure yields `REVIEW` with a diagnostic reason and never publishes an ungated rating.
-- **Stage 1 (offline unit / pure module):**
-  - **Input/setup:** A pure-checker input that triggers an internal (recoverable) failure, or a test-local wrapper around the pure checker that converts an exception into a fail-closed result.
-  - **Expected outcome:** the pure module (or its approved thin wrapper) produces `verdict="review"`, `effective_rating="REVIEW"`, and a non-empty `reason`.
-  - **Pass/fail assertion:** `verdict=="review" and effective=="REVIEW" and reason`.
-  - **Interface ambiguity (flagged, not assumed solved):** the current proposed pure-checker interface (`check_evidence → GateResult`) does not by itself define exception handling. If a failing internal exception cannot be observed at the pure-module boundary without a wrapper, this must be **resolved by A/C in Stage 2**; Stage 1 must not claim the shared fail-closed wiring is verified, and must not introduce a shared-integration dependency.
+- **Objective:** A recoverable internal evidence-processing failure must be handled **by production checker logic**, yielding `REVIEW` with a diagnostic reason; it never publishes an ungated rating.
+- **T-07 production-entry test contract (Member F, resolved):** T-07 **remains Stage 1** and verifies actual production-module fail-closed behaviour. There is **no** Stage 1-versus-Stage 2 choice for how the exception is handled — the production checker itself catches it.
+- **Stage 1 (checker-level, real production entry point):**
+  - **Invocation:** the test calls the real production `check_evidence()` entry point.
+  - **Failure injection:** the test injects a representative recoverable exception (e.g. `RuntimeError`) at a **real evidence-processing computation point** that `check_evidence()` calls. This may be a production internal helper defined as part of the planned checker architecture (e.g. a per-item status/classification helper). The test monkeypatches **that real production helper** to raise.
+  - **Handling requirement:** the exception **MUST** be handled by production checker logic. A test-only wrapper that catches the exception and independently constructs a `REVIEW` result is **not acceptable** and must not be used.
+  - **Expected outcome (production checker returns):** `verdict == "review"`, `effective_rating == "REVIEW"`, and a **non-empty** diagnostic `reason`.
+  - **Pass/fail assertion:** `result.verdict=="review" and result.effective_rating=="REVIEW" and result.reason`.
 - **Stage 2 (Graph/CLI integration):**
-  - **Input/setup:** the same recoverable failure injected in the offline Graph/CLI publication path with fixtures.
-  - **Expected outcome:** no ungated rating published; all enabled surfaces show `REVIEW`, `reason` preserved, publication safety held.
+  - **Input/setup:** the same recoverable failure surfaces through the offline Graph/CLI publication path with fixtures.
+  - **Expected outcome:** no ungated authoritative Buy/Sell output; all enabled surfaces show `REVIEW`; `reason` preserved; cross-surface rating consistency held.
   - **Pass/fail assertion:** `effective=="REVIEW" and reason and not ungated_published and all(enabled_surfaces=="REVIEW")`.
-- **Type:** Stage 1 offline unit **[S1]**; Stage 2 offline integration **[S2]** (checker failure / safety-critical).
-- **Dependencies:** Stage 2 half depends on the integration point (Q4) and A/C confirmation.
+- **Implementation status:** the real production module does **not** exist yet. This entry specifies the proposed implementation and test contract; it does **not** claim the module or test has been implemented or verified.
+- **Type:** Stage 1 checker-level offline unit **[S1]**; Stage 2 offline integration **[S2]** (checker failure / safety-critical).
+- **Dependencies:** Stage 2 half depends on the integration point (Q4) and A/C confirmation; Stage 1 depends only on `tradingagents/agents/evidence_gate.py`.
 
 ### O4-T-08 — Cross-surface consistency (unit + real-path integration)
 - **Covers:** O4-FR-07, O4-FR-09, O4-INV-01, O4-INV-03, O4-INV-04, O4-NFR-08
@@ -358,27 +363,30 @@ Each entry gives objective, input/setup, execution approach, expected outcome, p
 - **Type:** Offline unit (negative). **[S1]**
 - **Dependencies:** Checker module; `.get`-style handling.
 
-### O4-T-18 — Unknown analyst configuration aborts publication (Stage 1 unit / Stage 2 integration)
+### O4-T-18 — Unknown analyst configuration aborts publication (Stage 1 checker-level / Stage 2 integration)
 - **Covers:** O4-FR-11, O4-FR-15
-- **Objective:** An unknown analyst key / unrecognizable configuration is a contract error that aborts publication; it is never silently `not_required` and never a normal `REVIEW`.
-- **Stage 1 (offline unit / pure module):**
-  - **Input/setup:** `selected_analysts` includes an unknown key (e.g. `"options"`).
-  - **Expected outcome:** raises the required `ValueError` (or documented contract error); never returns a normal `GateResult` with the unknown analyst classified `not_required`.
-  - **Pass/fail assertion:** `pytest.raises(ValueError)` and no normal result is produced.
+- **Objective:** An unknown analyst key / unrecognizable configuration is a **contract error** that raises `ValueError`; it is never silently `not_required` and never a normal `REVIEW`. The recoverable-error handling added for T-07 **MUST NOT** swallow configuration errors and convert them into `REVIEW`.
+- **Separation of concerns (must hold in the production checker):**
+  - **Unknown Analyst configuration** → contract error → `ValueError` **propagates** out of `check_evidence()`.
+  - **Recoverable internal evidence-processing exception** (T-07) → the checker returns `verdict="review"`, `effective_rating="REVIEW"`, diagnostic `reason`.
+- **Stage 1 (checker-level, real production entry point):**
+  - **Input/setup:** call the real `check_evidence()` with `selected_analysts` containing an unknown key (e.g. `"options"`).
+  - **Expected outcome:** `ValueError` is raised (contract error); it is **not** converted to a `REVIEW` result; no normal `GateResult` classifies the unknown analyst as `not_required`.
+  - **Pass/fail assertion:** `pytest.raises(ValueError)` and no normal result produced; explicitly assert the unknown-config path is **not** caught by the recoverable-failure handler.
 - **Stage 2 (Graph/CLI integration):**
   - **Input/setup:** the same unknown configuration through the wired publication path.
-  - **Expected outcome:** authoritative publication is aborted; the run is not reported as a normal `REVIEW`.
+  - **Expected outcome:** the publication path aborts **without producing an authoritative rating**; the run is not reported as a normal `REVIEW`.
   - **Pass/fail assertion:** `not authoritative_published and not reported_as_normal_review`.
-- **Type:** Stage 1 offline unit **[S1]**; Stage 2 offline integration **[S2]** (negative).
+- **Type:** Stage 1 checker-level offline unit **[S1]**; Stage 2 offline integration **[S2]** (negative).
 - **Dependencies:** `analyst_execution.py:55–56` precedent; integration point (Q4) for Stage 2.
 
-### O4-T-19 — Buy body not presented as approved (Stage 1 unit / Stage 2 integration)
+### O4-T-19 — Buy body not presented as approved (Stage 1 checker-level / Stage 2 integration)
 - **Covers:** O4-FR-07, O4-FR-12, O4-FR-13, O4-INV-01
 - **Objective:** Missing evidence yields effective `REVIEW`; the original decision body is preserved; on enabled surfaces the Buy is never presented as approved.
-- **Stage 1 (offline unit / pure module):**
-  - **Input/setup:** original body contains `Buy`; a required report is missing/empty.
-  - **Expected outcome:** `effective=="REVIEW"`; the original decision body is unchanged (byte-identical).
-  - **Pass/fail assertion:** `effective=="REVIEW" and body_unchanged`.
+- **Stage 1 (checker-level, real production entry point):**
+  - **Input/setup:** call the real `check_evidence()`; the original `final_trade_decision` body contains `Buy`; a required report is missing/empty.
+  - **Expected outcome:** `effective_rating=="REVIEW"`; the original decision text is unchanged (byte-identical).
+  - **Pass/fail assertion:** `effective=="REVIEW" and out_decision==in_decision`.
   - **Note:** Stage 1 does not observe Graph/CLI rendering; it must not pretend to.
 - **Stage 2 (Graph/CLI integration):**
   - **Input/setup:** the same state through the real Graph/CLI path with fixtures.
@@ -476,7 +484,7 @@ Each entry gives objective, input/setup, execution approach, expected outcome, p
 ## 6. Test separation by category
 
 ### 6.1 Offline unit tests (deterministic, no network/LLM) — Stage 1 scope
-O4-T-01, T-02, T-03, T-04, T-05, T-06, **T-07 (unit portion)**, T-09, T-10, T-11, T-12, T-13, T-14, T-15, T-17, **T-18 (unit portion)**, **T-19 (unit portion)**, T-24, T-25. (O4-T-04 is an executable v1 negative test — unavailable-source text in a non-empty report stays structurally `present`; no sentinel convention is required. The unit portions of T-07/T-18/T-19 are pure-module tests and do not observe Graph/CLI behaviour.)
+O4-T-01, T-02, T-03, T-04, T-05, T-06, **T-07 (checker-level unit portion)**, T-09, T-10, T-11, T-12, T-13, T-14, T-15, T-17, **T-18 (checker-level unit portion)**, **T-19 (checker-level unit portion)**, T-24, T-25. (O4-T-04 is an executable v1 negative test — unavailable-source text in a non-empty report stays structurally `present`; no sentinel convention is required. The checker-level unit portions of T-07/T-18/T-19 call the real `check_evidence()` production entry point and do not observe Graph/CLI behaviour.)
 
 ### 6.2 Offline integration tests (real Graph/CLI publication path, fixtures, network blocked) — Stage 2 scope
 **T-07 (integration portion)**, T-08, **T-18 (integration portion)**, **T-19 (integration portion)**, T-23. Only the integration portions of the mixed-stage tests appear here.
@@ -510,7 +518,7 @@ Each test keeps its unique ID; mandatory status is applied per **parameterized s
 - **O4-T-14:** single-select `{market}` with `market_report=""`; multi-select `{market, news, fundamentals}` with `news_report=""`.
 - **O4-T-17:** each of the four required report keys removed entirely from the state.
 
-**Stage 1 execution scope (Member A approved in PR #7 — tests only, not yet implemented):** Stage 1 IDs are O4-T-01…T-07, T-09…T-15, T-17…T-19, T-24, T-25. For **T-07, T-18, T-19 only their unit portions** are Stage 1. Stage 1 mandatory-cases (unit portions only): T-02, T-03, T-06, T-07 (unit), T-14, T-17, T-18 (unit), T-19 (unit), T-25, with all their parameterized subcases. Passing Stage 1 alone does **NOT** constitute full O4 safety approval — T-08, T-23, T-16, T-20, T-21 and the integration portions of T-07/T-18/T-19 are Stage 2 and still required before final merge.
+**Stage 1 execution scope (Member A approved in PR #7 — tests only, not yet implemented):** Stage 1 IDs are O4-T-01…T-07, T-09…T-15, T-17…T-19, T-24, T-25. For **T-07, T-18, T-19 only their checker-level unit portions** are Stage 1. Stage 1 mandatory-cases (checker-level unit portions): T-02, T-03, T-06, T-07 (checker-level), T-14, T-17, T-18 (checker-level), T-19 (checker-level), T-25, with all their parameterized subcases. Passing Stage 1 alone does **NOT** constitute full O4 safety approval — T-08, T-23, T-16, T-20, T-21 and the integration portions of T-07/T-18/T-19 are Stage 2 and still required before final merge.
 
 **Full-O4 mandatory pass rule (final merge gate):** the canonical set above, plus all parameterized subcases, must be **collected**, **actually executed**, **passed**, **not skipped**, **not xfailed**, **not errored**, and **not missing from the collection manifest**. Stage 1 satisfies only the Stage 1 subset; the full set is discharged only after Stage 2. Any violation blocks merge under the proposed Safety CI Gate.
 
@@ -671,6 +679,9 @@ Owner: Member D
 Reviewer: Pending
 Review date: Pending
 Approval evidence: Not yet available
-Plan version: O4-TEST-v0.4
-Authoritative requirements baseline: docs/req/requirements.yaml @ main 5afb24cf1b48e15e5000ee1365826eebb30d01ae (PR #2 merged)
+Plan version: O4-TEST-v0.5
+Formal approval: Pending (Member F approved the T-07 test design only)
+Authoritative requirements baseline: docs/req/requirements.yaml (PR #2 merged at 4f87e29f)
+Historical review snapshot: main 5afb24cf1b48e15e5000ee1365826eebb30d01ae
+Implementation baseline: Pending (verified main SHA after local sync)
 Superseded draft reference: O4-requirements.md O4-REQ-r3 (working draft, not the approved baseline)
