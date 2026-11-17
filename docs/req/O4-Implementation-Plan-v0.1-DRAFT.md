@@ -6,18 +6,19 @@
 | Status | **DRAFT — NOT approved** |
 | Prepared by | Member D |
 | Prepared for | Member A (pre-coding review); Member F (test-plan approval) |
-| Companion test plan | `O4-Test-Plan.md` (O4-TEST-v0.4, Draft / Approval Pending) |
+| Companion test plan | `O4-Test-Plan.md` (O4-TEST-v0.5, Draft / Formal Approval Pending) |
 | Authoritative requirements | `docs/req/requirements.yaml` — Caicys297/TradingAgents-CS5351, PR #2 merged into `main` |
-| Baseline commit (verified) | `main` @ `5afb24cf1b48e15e5000ee1365826eebb30d01ae` |
+| Historical review snapshot | `main` `5afb24cf1b48e15e5000ee1365826eebb30d01ae` — **historical review snapshot only**, not the implementation baseline |
+| Implementation baseline | **Pending** — record the verified `main` SHA after the local repository is synchronised (Member A noted O1 PR #10 merged into `main` at `7fc104e`; not yet synced here). Not claimed as merged or synced. |
 | PR #2 merge commit | `4f87e29f7a52842dba8272071d2a4a1b527def10` |
 | O4 Draft PR | PR #7 (`feature/o4-evidence-gate`) |
 | CI provenance | Unified collection + `test/offline/` fixture from **CI PR #1** (merged) |
 | Approval | **Stage 1 scope approved by Member A in PR #7. Member F test-plan approval PENDING. Shared Stage 2 integration NOT approved. No code may begin before the relevant approvals and governance prerequisites are recorded.** |
-| Approval history | Member A (PR #7, commit `60f1496…`) approved **only the O4-EXEC-v0.1 Stage 1** D-owned scope and fixed G1/S2/B1. This revised **v0.2** plan is **not** approved as a whole; prior approval does not automatically extend to it. |
+| Approval history | Member A (PR #7) approved **only the O4-EXEC-v0.1 Stage 1** D-owned scope and fixed G1/S2/B1; Member A **reconfirmed the Stage 1 execution scope** for this plan. This revised **v0.2** document is **not** approved as a whole; the T-07 production-entry clarification does not broaden the approved scope. Member F approved the **T-07 test design** only, not the overall revised test plan. |
 
 > **Version history.** O4-EXEC-v0.1 (prior draft) → **O4-EXEC-v0.2-DRAFT** (this revision: G1/S2/B1 adopted, two-stage scope, NFR-06 v1 durability not required, CI PR #1 provenance, T-16 formal-vs-supplementary). Test IDs remain O4-T-01…T-25.
 
-> **Verification status (read-only).** GitHub API confirms PR #7 open (head `60f1496…`, base `main`); `main` head `5afb24cf1b48e15e5000ee1365826eebb30d01ae`; PR #2 merged (`4f87e29f…`); CI PR #1 merged (files: `pyproject.toml`, `test/offline/conftest.py`). Member A's PR #7 comment (2026-11-16) approved **Stage 1 only** and fixed **G1/S2/B1**. The local workspace is a pre-merge snapshot; line numbers must be re-confirmed on `main` @ `5afb24cf…`.
+> **Verification status (read-only).** GitHub API confirms PR #7 open (head `60f1496…`, base `main`); `main` head `5afb24cf1b48e15e5000ee1365826eebb30d01ae`; PR #2 merged (`4f87e29f…`); CI PR #1 merged (files: `pyproject.toml`, `test/offline/conftest.py`). Member A's PR #7 comment (2026-11-16) approved **Stage 1 only** and fixed **G1/S2/B1**. The local workspace is a pre-merge snapshot; line numbers must be re-confirmed on the synchronised implementation baseline. `5afb24cf…` is the historical review snapshot; the implementation baseline SHA is pending local sync.
 
 ---
 
@@ -27,7 +28,7 @@ Documentation-only. No implementation, test code, CI, registry, Git, or GitHub w
 
 **Stage 1 — D-owned, Member A approved (scope only; not yet implemented):**
 - Create `tradingagents/agents/evidence_gate.py` (pure checker) and `test/offline/test_evidence_gate.py` (offline unit tests).
-- Stage 1 tests: O4-T-01…T-07, T-09…T-15, T-17…T-19, T-24, T-25. For **T-07, T-18, T-19 only their unit portions**.
+- Stage 1 tests: O4-T-01…T-07, T-09…T-15, T-17…T-19, T-24, T-25. For **T-07, T-18, T-19 only their checker-level unit portions** (real `check_evidence()` entry point).
 - Must NOT modify shared Graph, CLI, reporting, logging, state, or runtime integration files.
 - Passing Stage 1 is **NOT** complete O4 safety approval.
 
@@ -41,7 +42,7 @@ O4 v1 boundary: report presence/non-emptiness + rating consistency; not content 
 
 ---
 
-## A. Architecture and source-code call chain (CONFIRMED from workspace snapshot; re-confirm on main @ 5afb24cf)
+## A. Architecture and source-code call chain (CONFIRMED from workspace snapshot; re-confirm on the synchronised implementation baseline; `5afb24cf…` is the historical review snapshot)
 
 **Rating generation:** `portfolio_manager_node` (`tradingagents/agents/managers/portfolio_manager.py:23–104`): structured → `final_rating = decision.rating.value`, `final_trade_decision = render_pm_decision(...)` (`:80–83`); fallback → `parse_rating(...)` (`:85–86`); returns both (`:100–104`). `rating.py`: `extract_rating` (`:55`), `parse_rating` (`:96–103`), `run_rating` = `final_rating or parse_rating(final_trade_decision)` (`:106–112`), `is_review` (`:115–117`). `state.py:69–70`.
 
@@ -79,6 +80,8 @@ GateResult:
 - Unknown analyst/config → raise `ValueError`; abort publication (FR-15). Recoverable failure → `review` + reason (FR-09).
 
 The checker is **Stage 1**; it computes on inputs and returns a `GateResult`. It does **not** mutate state.
+
+**T-07 production-entry fail-closed contract (Member F, resolved):** the production checker itself handles a recoverable internal evidence-processing failure. The future Stage 1 test calls the real `check_evidence()` entry point and injects a representative recoverable exception (e.g. `RuntimeError`) at a **real internal evidence-processing computation point** (a production helper defined as part of the checked architecture, monkeypatched to raise). Production logic returns `verdict="review"`, `effective_rating="REVIEW"`, and a non-empty `reason`. A test-only wrapper that catches the exception and builds `REVIEW` is **not acceptable**. Configuration errors (T-18) are a separate contract: they raise `ValueError` and are **not** swallowed by the recoverable handler. The module does not yet exist; this is a proposed contract, not an implementation claim.
 
 **Requirement priorities (authoritative registry, verified @ main 5afb24cf):** O4-FR-10 **Must**, O4-FR-11 **Must**, O4-NFR-01 **Must**, O4-NFR-02 **Must**; O4-FR-04 **Won't (v1)**; O4-NFR-03 **Should** (p95 <= 10 ms); O4-INV-05 → **O4-T-25**. No "Should"/"Must (proposed)" labels are used for FR-10/11 or NFR-01/02.
 
@@ -124,8 +127,8 @@ Buffer PM text (report section `cli/run.py:330–334` and message stream `:241�
 | Missing/empty required report | `REVIEW`; exact failing set; `error_kind=evidence` | FR-03 |
 | Non-empty report with `N/A`/unavailable note | `present`; no downgrade from that text | FR-04 (`Won't`) |
 | Pre-existing REVIEW | Never upgraded | FR-05 |
-| Recoverable checker failure | `REVIEW`, reason preserved, all enabled surfaces agree; distinct from config error | FR-09, INV-04 |
-| Unknown analyst / unrecognizable config | Raise `ValueError`; abort publication; not a normal `REVIEW` | FR-15 |
+| Recoverable internal evidence-processing failure | Handled by production checker logic → `REVIEW`, reason preserved; Stage 1 verifies checker return; surfaces agree in Stage 2 | FR-09, INV-04 |
+| Unknown analyst / unrecognizable config | Contract error → `ValueError` **propagates** (not swallowed into REVIEW); abort publication; not a normal `REVIEW` | FR-15 |
 | Rating conflict (original sources) | Downgrade to `REVIEW` with conflict reason | FR-16 |
 | Decision body | Bytes unchanged; labelled unapproved when REVIEW | FR-12/13 |
 
@@ -168,7 +171,7 @@ All 25 IDs preserved. Canonical mandatory set: T-02, T-03, T-06, T-07, T-08, T-1
 | T-04 | S1 | unit negative | `N/A`/unavailable text stays present |
 | T-05 | S1 | unit | unselected `not_required` |
 | T-06 | S1/S2 | unit (+cross-surface S2) | REVIEW never upgraded (**mandatory**) |
-| T-07 | S1/S2 | unit (S1) + Graph integration (S2) | checker failure fail-closed (**mandatory**) |
+| T-07 | S1/S2 | checker-level unit (S1, production entry) + Graph integration (S2) | recoverable failure handled by production checker → REVIEW+reason (**mandatory**) |
 | T-08 | S2 | Graph/CLI integration | enabled-surface equality (**mandatory**) |
 | T-09 | S1 | unit | keep Sell |
 | T-10 | S1 | unit | decision bytes preserved |
@@ -179,8 +182,8 @@ All 25 IDs preserved. Canonical mandatory set: T-02, T-03, T-06, T-07, T-08, T-1
 | T-15 | S1 | unit collection | offline import |
 | T-16 | S2 | benchmark | registry formal acceptance p95 <= 10 ms |
 | T-17 | S1 | unit param | each key absent (**mandatory**) |
-| T-18 | S1/S2 | unit (S1) + Graph integration (S2) | unknown key aborts publication (**mandatory**) |
-| T-19 | S1/S2 | unit (S1) + CLI/Graph integration (S2) | Buy not approved; labelled (**mandatory**) |
+| T-18 | S1/S2 | checker-level unit (S1, real `check_evidence()`) + Graph integration (S2) | unknown key → `ValueError` propagated (not REVIEW); publication aborts (**mandatory**) |
+| T-19 | S1/S2 | checker-level unit (S1) + CLI/Graph integration (S2) | REVIEW + body unchanged (S1); labelled non-authoritative, no leak (S2) (**mandatory**) |
 | T-20 | S2 | regression | baseline unchanged |
 | T-21 | S2 | artefact inspection | runtime result; durability not required v1 |
 | T-22 | S2/manual | manual | scope review |
@@ -188,7 +191,7 @@ All 25 IDs preserved. Canonical mandatory set: T-02, T-03, T-06, T-07, T-08, T-1
 | T-24 | S1 | unit boundary | O5 filtered-empty no downgrade; missing news → REVIEW |
 | T-25 | S1 | unit | precedence/conflict (**mandatory**) |
 
-Stage 1 mandatory-cases (unit portions): T-02, T-03, T-06, T-07, T-14, T-17, T-18, T-19, T-25. Stage 1 passing alone is **not** full O4 safety approval.
+Stage 1 mandatory-cases (checker-level unit portions): T-02, T-03, T-06, T-07, T-14, T-17, T-18, T-19, T-25. Stage 1 passing alone is **not** full O4 safety approval.
 
 ---
 
@@ -231,7 +234,7 @@ Stage 1 mandatory-cases (unit portions): T-02, T-03, T-06, T-07, T-14, T-17, T-1
 
 **Resolved:** durable persistence of the complete structured Gate verdict is **not required in v1** (Member A decision); enabled authoritative rating outputs must still remain consistent. Shared logging/`memory` implementation details for persisting the effective rating remain open under Stage 2 while the v1 contract above stands.
 
-**Unresolved (owner):** original-rating storage field name/interface (A/C — not invented); exact G1/B1 insertion line scope (A/C); T-16 Gate invocation/timing boundary (A/C, Stage 2); SE-06 (F/team); invariant schema representation (B); rebase onto `main` @ 5afb24cf (D/A).
+**Unresolved (owner):** original-rating storage field name/interface (A/C — not invented); exact G1/B1 insertion line scope (A/C); T-16 Gate invocation/timing boundary (A/C, Stage 2); SE-06 (F/team); invariant schema representation (B); synchronise to the pending implementation baseline (D/A); `5afb24cf…` is the historical review snapshot only.
 
 ---
 
@@ -247,7 +250,7 @@ Stage 1 mandatory-cases (unit portions): T-02, T-03, T-06, T-07, T-14, T-17, T-1
 
 ## Appendix — Unverified assumptions
 
-- Line numbers from pre-merge snapshot; re-confirm on `main` @ `5afb24cf…`.
+- Line numbers from pre-merge snapshot; re-confirm on the synchronised implementation baseline. `5afb24cf…` is the historical review snapshot, not the implementation baseline.
 - G1/S2/B1 adopted from Member A's PR #7 comment (architecture direction, not code-level scope).
 - CI PR #1 provenance verified via API (files `pyproject.toml`, `test/offline/conftest.py`).
 - O4-NFR-03 target is a requirement value, not a measured result.
