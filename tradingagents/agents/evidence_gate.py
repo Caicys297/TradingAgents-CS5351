@@ -222,14 +222,17 @@ def check_evidence(
     # ValueError (O4-FR-15, O4-T-18); it is a contract error that must abort
     # rather than be converted to a normal REVIEW.
     required = _select_required_reports(selected_analysts)
-    original_rating, rating_error_kind, rating_reason = _resolve_original_rating(state)
 
-    # ---- Recoverable evidence processing: fail closed on internal failure. ----
-    # Any unexpected error *while classifying evidence* (a recoverable internal
-    # computation failure, not a configuration error already handled above) is
-    # caught here and fails closed to REVIEW with a diagnostic reason
-    # (O4-FR-09, O4-INV-04, O4-T-07).
+    # ---- Recoverable internal computation: fail closed on internal failure. ----
+    # Both the original-rating resolution and the evidence classification are
+    # recoverable internal computations. Any unexpected error in either (a
+    # recoverable internal computation failure, not a configuration error
+    # already handled above) is caught here and fails closed to REVIEW with a
+    # diagnostic reason (O4-FR-09, O4-INV-04, O4-T-07). ``final_trade_decision``
+    # is only read via ``state.get`` and never mutated.
     try:
+        original_rating, rating_error_kind, rating_reason = _resolve_original_rating(state)
+
         items: list[EvidenceItem] = []
         for key in REQUIRED_REPORT_KEYS:
             if not required[key]:
@@ -242,7 +245,7 @@ def check_evidence(
             verdict=VERDICT_REVIEW,
             effective_rating=RATING_REVIEW,
             items=(),
-            reason=f"checker recovered from evidence-processing failure: {exc}",
+            reason=f"checker recovered from internal computation failure: {exc}",
             error_kind=ERROR_CHECKER_FAILURE,
         )
 

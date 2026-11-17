@@ -169,6 +169,34 @@ def test_t07_recoverable_failure_fails_closed(monkeypatch):
     assert result.error_kind == ERROR_CHECKER_FAILURE
 
 
+def test_t07_rating_parse_failure_fails_closed(monkeypatch):
+    """A recoverable failure during original-rating resolution fails closed.
+
+    Rating resolution is an internal computation inside the production entry
+    point. We patch the real ``_resolve_original_rating`` helper (used by
+    ``check_evidence``) to raise, and require the production checker itself to
+    return REVIEW with a non-empty reason. The input state and
+    ``final_trade_decision`` must be unchanged. No test-only wrapper.
+    """
+    body = "**Rating**: Buy\n\nWe are bullish."
+    state = _complete_state("Buy", body=body)
+    import copy
+
+    snapshot = copy.deepcopy(state)
+
+    def boom(_state):
+        raise RuntimeError("injected rating-resolution failure")
+
+    monkeypatch.setattr(eg, "_resolve_original_rating", boom)
+    result = check_evidence(state, ALL_ANALYSTS)
+    assert result.verdict == VERDICT_REVIEW
+    assert result.effective_rating == "REVIEW"
+    assert result.reason
+    assert result.error_kind == ERROR_CHECKER_FAILURE
+    assert state == snapshot
+    assert state["final_trade_decision"] == body
+
+
 # ---------------------------------------------------------------------------
 # O4-T-09 — Complete evidence keeps Sell
 # ---------------------------------------------------------------------------
@@ -305,6 +333,22 @@ def test_t18_unknown_config_not_converted_to_review(monkeypatch):
 def test_t18_empty_selection_raises():
     with pytest.raises(ValueError):
         check_evidence(_complete_state("Buy"), [])
+
+
+def test_t18_config_error_beats_rating_failure(monkeypatch):
+    """Unknown config must raise ValueError even when rating resolution fails.
+
+    Configuration validation precedes the recoverable rating/evidence
+    computation, so an invalid analyst key must surface as ValueError and must
+    not be swallowed into a REVIEW by the recoverable handler.
+    """
+
+    def boom(_state):
+        raise RuntimeError("should not be reached for config errors")
+
+    monkeypatch.setattr(eg, "_resolve_original_rating", boom)
+    with pytest.raises(ValueError):
+        check_evidence(_complete_state("Buy"), ["market", "bogus"])
 
 
 # ---------------------------------------------------------------------------
