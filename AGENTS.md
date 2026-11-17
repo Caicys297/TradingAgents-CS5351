@@ -17,7 +17,7 @@ If the registry, approved plan, code, or interface contract disagree, report the
 
 ## Code and permission boundaries
 
-- Default to reading. Before the first edit, give the human reviewer an execution plan using the single task prompt in `Prompt.md`; wait for approval of its version, requirement IDs, tests, and file scope. A test file is still code and needs the same pre-code approval.
+- Default to reading. Before the first edit, the feature's designated test reviewer must approve the versioned test plan and case scope. Then give A an OpenCode execution plan using the single task prompt in `Prompt.md`; wait for A's approval of its version, requirement IDs, tests, and file scope. Record both decisions before changing production code, test code, or configuration. A test file is still code.
 - Edit only files in the approved execution plan. Do not change a shared CLI, Graph, configuration, CI, or other feature's file merely because it seems convenient. Obtain a recorded scope/owner decision before such an edit. C coordinates shared application integration; F coordinates shared test and CI changes; A reviews execution plans and coordinates cross-feature scope.
 - Keep O1–O6 changes traceable to requirement IDs, test case IDs, and the implementation PR. Use a separate feature branch. Do not rewrite the imported baseline or unrelated indicators and behavior.
 - Never read, print, commit, or send secrets, local environment files, credentials, private data, or unredacted transcripts. Use offline fixtures for deterministic tests. Do not run live provider calls or paid services unless the human explicitly approves that scope.
@@ -25,6 +25,6 @@ If the registry, approved plan, code, or interface contract disagree, report the
 
 ## Verification and evidence
 
-For an approved change, first run the relevant offline tests, then the required regression checks. The current `pyproject.toml` collects `tests/` and `test/offline/` with `pytest -q` and excludes tests marked `integration` by default; check the current branch before relying on that setting. CI also runs `ruff check .`. Record actual commands, outputs, failures, fixes, and CI links. A green existing CI run does not prove a new feature's acceptance tests passed.
+`pyproject.toml` sets default pytest collection for `tests/` and `test/offline/` and excludes tests marked `integration` by default. The actual CI commands are in the current `.github/workflows/ci.yml`; check that file instead of assuming a fixed command. Authorized, non-editing checks such as test collection or an offline callback probe may be run while planning; record their actual commands and results. They do not authorize code edits. After approval, run the relevant offline tests and required regression checks. Record actual commands, outputs, failures, fixes, and CI links. A green existing CI run does not prove a new feature's acceptance tests passed.
 
 Keep the original agent session, human interventions, approval links and times, and the final PR/CI evidence. Redact secrets and personal data before committing any transcript or AI-use log. Do not invent, backdate, or infer approvals or test results.
