@@ -829,7 +829,7 @@ requirements:
   - id: "REQ-O5-01"
     type: "functional_behavior"
     priority: "Must"
-    statement: "Classify fetched English global-news candidates using O5 rules version o5-rules-v1.1 and the versioned rule catalog in development_contract; retrieval query text is context only and never classification evidence."
+    statement: "Classify fetched English global-news candidates using O5 rules version o5-rules-v1.1-draft and the versioned rule catalog in development_contract; retrieval query text is context only and never classification evidence."
     fit_criterion: "DEV20 fixed rule fixture yields the selected/rejected IDs and matched rule IDs in the v0.5.3 expected arrays; ticker/company focus alone never excludes a candidate with same-field anchor+context evidence."
     tradeoff: "Without this, selected news may be irrelevant, incomplete, unreproducible or unsafe to present."
     status: "selected_for_development"
