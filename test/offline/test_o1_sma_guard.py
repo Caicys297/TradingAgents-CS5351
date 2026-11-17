@@ -236,9 +236,18 @@ def test_t_o1_07_non_sma_unchanged(monkeypatch):
     else:
         assert abs(float(bulk) - float(expected)) <= 1e-6
 
+    def _force_fallback(*args, **kwargs):
+        raise RuntimeError("force per-day fallback")
+
+    monkeypatch.setattr(market, "_get_stock_stats_bulk", _force_fallback)
+    fallback = market.get_stock_stats_indicators_window("X", "rsi", d, 0)
+    fallback_line = next(line for line in fallback.splitlines() if line.startswith(f"{d}:"))
+    fallback_value = fallback_line.split(":", 1)[1].strip()
+    assert abs(float(fallback_value) - float(expected)) <= 1e-6
+
     _mock_loader(monkeypatch, frame, module=snapshot)
     snap = snapshot.build_verified_market_snapshot("X", d)
-    assert "rsi" in snap  # still rendered; not blanked by the SMA guard
+    assert _snapshot_cell(snap, "rsi") == snapshot.price_text(float(expected))
 
 
 # --- T-O1-08: insufficient vs non-trading-day -----------------------------
@@ -325,15 +334,22 @@ def test_t_o1_10_all_closes_missing(monkeypatch, tmp_path):
     with pytest.raises(NoMarketDataError, match="no bar in range has a closing price"):
         _run_load(monkeypatch, tmp_path, frame, curr_date)
 
-    # Routed tool: the snapshot tool converts the loader error to NO_DATA_AVAILABLE.
+    # Routed tool: use the same cache and real loader, not an injected error.
     from tradingagents.agents.tools import get_verified_market_snapshot
 
-    def _raise(s, d, fill_gaps=True):
-        raise NoMarketDataError("AAPL", "AAPL", "no bar in range has a closing price")
+    real_loader = snapshot.load_ohlcv
+    calls = []
 
-    monkeypatch.setattr(snapshot, "load_ohlcv", _raise)
+    def _spy_loader(symbol, as_of_date, fill_gaps=True):
+        calls.append((symbol, as_of_date, fill_gaps))
+        return real_loader(symbol, as_of_date, fill_gaps=fill_gaps)
+
+    monkeypatch.setattr(snapshot, "load_ohlcv", _spy_loader)
     out = get_verified_market_snapshot.invoke({"symbol": "AAPL", "curr_date": curr_date})
-    assert "NO_DATA_AVAILABLE" in out
+    assert calls == [("AAPL", curr_date, False)]
+    assert out.startswith("NO_DATA_AVAILABLE:")
+    assert "no bar in range has a closing price" in out
+    assert "sma" not in out.lower()
     assert "have 0" not in out
 
 
@@ -396,6 +412,7 @@ def test_t_o1_12_duplicate_date_rejected(monkeypatch):
     assert market._get_stock_stats_bulk("X", "close_50_sma", d)[d] == DUPLICATE
     assert market._get_stock_stats_bulk("X", "close_200_sma", d)[d] == DUPLICATE
     assert market.get_stock_stats("X", "close_50_sma", d) == DUPLICATE
+    assert market.get_stock_stats("X", "close_200_sma", d) == DUPLICATE
 
     _mock_loader(monkeypatch, repeated, module=snapshot)
     snap = snapshot.build_verified_market_snapshot("X", d)
