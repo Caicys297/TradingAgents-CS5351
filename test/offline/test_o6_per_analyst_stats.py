@@ -9,6 +9,7 @@ Scope: handler behavior only. Real subgraph attribution and shared CLI/Graph
 wiring are intentionally out of this batch.
 """
 
+import copy
 import socket
 
 import pytest
@@ -304,6 +305,41 @@ def test_tc_o6_10_empty_and_unknown_keys():
     stats = handler.get_agent_stats()
     assert stats["unattributed_calls"] == 3
     assert stats["analysts"] == {}
+
+
+# -- TC-O6-10b: duplicate start before terminal (in-scope missing/invalid key)
+@pytest.mark.parametrize(
+    "agent_key",
+    [None, "fundamentals"],
+    ids=["missing-key", "unknown-key"],
+)
+def test_tc_o6_10b_duplicate_start_before_terminal_unattributed(agent_key):
+    handler, clock = _handler()
+    # Seed one completed, valid Market call so "unchanged" is meaningful.
+    _start(handler, clock, "m1", agent_key=MARKET, t=0.0)
+    _end(handler, clock, "m1", input_tokens=100, output_tokens=20, t=1.0)
+    before = copy.deepcopy(handler.get_agent_stats()["analysts"])
+    assert handler.get_agent_stats()["unattributed_calls"] == 0
+    llm_baseline = handler.get_stats()["llm_calls"]
+
+    # Two starts for the same run_id, before any terminal callback.
+    _start(handler, clock, "u1", scope="analyst", agent_key=agent_key, t=1.0)
+    _start(handler, clock, "u1", scope="analyst", agent_key=agent_key, t=1.5)
+
+    # Before terminal: counted once, named rows unchanged, legacy counted both.
+    before_terminal = handler.get_agent_stats()
+    assert before_terminal["unattributed_calls"] == 1
+    assert before_terminal["analysts"] == before
+    assert handler.get_stats()["llm_calls"] == llm_baseline + 2
+
+    # Terminal callback for the same run_id.
+    _end(handler, clock, "u1", input_tokens=10, output_tokens=5, t=2.0)
+
+    # After terminal: still exactly one, named rows still unchanged.
+    after_terminal = handler.get_agent_stats()
+    assert after_terminal["unattributed_calls"] == 1
+    assert after_terminal["analysts"] == before
+    assert handler.get_stats()["llm_calls"] == llm_baseline + 2
 
 
 # -- Known out-of-scope calls are excluded from both new statistics --------
