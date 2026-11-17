@@ -57,8 +57,10 @@ links to genuine agent-session evidence." Raw session transcripts are preserved 
     `test/offline/conftest.py`); passed with only the pre-existing optional-dependency skip
     (`langchain_aws` absent).
   - `ruff check` and `ruff format --check` passed on both files.
-- **First implementation-code commit SHA and time: pending** — no implementation commit exists yet.
-  This remains unrecorded until the commit is actually created (do not back-fill).
+- **First implementation-code commit SHA and time:** `fefd8848c64c6e444d233e7ddfa957fe7f85b05a`
+  — committed `2026-11-17T20:44:36+08:00` (`2026-11-17T12:44:36Z` UTC), subject
+  `feat(o4): implement Stage 1 evidence gate and offline tests`. This records the actual Git
+  metadata of the implementation commit (not an estimate).
 
 These results are supported by the preserved OpenCode session; exact raw output is not fabricated here.
 
