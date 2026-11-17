@@ -2,50 +2,56 @@
 
 | Field | Value |
 |---|---|
-| Plan ID | O4-EXEC-v0.1 |
+| Plan ID | O4-EXEC-v0.2-DRAFT |
 | Status | **DRAFT — NOT approved** |
 | Prepared by | Member D |
 | Prepared for | Member A (pre-coding review); Member F (test-plan approval) |
-| Companion test plan | `O4-Test-Plan.md` (O4-TEST-v0.3, Draft / Approval Pending) |
+| Companion test plan | `O4-Test-Plan.md` (O4-TEST-v0.4, Draft / Approval Pending) |
 | Authoritative requirements | `docs/req/requirements.yaml` — Caicys297/TradingAgents-CS5351, PR #2 merged into `main` |
-| Merge commit (verified) | `4f87e29f7a52842dba8272071d2a4a1b527def10` |
-| PR #2 head commit | `f411763c3d080bddde425c60a7a06d1797913328` |
-| Approval | **None claimed.** Member A and Member F have NOT approved any plan. |
+| Baseline commit (verified) | `main` @ `5afb24cf1b48e15e5000ee1365826eebb30d01ae` |
+| PR #2 merge commit | `4f87e29f7a52842dba8272071d2a4a1b527def10` |
+| O4 Draft PR | PR #7 (`feature/o4-evidence-gate`) |
+| CI provenance | Unified collection + `test/offline/` fixture from **CI PR #1** (merged) |
+| Approval | **Stage 1 scope approved by Member A in PR #7. Member F test-plan approval PENDING. Shared Stage 2 integration NOT approved. No code may begin before the relevant approvals and governance prerequisites are recorded.** |
+| Approval history | Member A (PR #7, commit `60f1496…`) approved **only the O4-EXEC-v0.1 Stage 1** D-owned scope and fixed G1/S2/B1. This revised **v0.2** plan is **not** approved as a whole; prior approval does not automatically extend to it. |
 
-> **Verification status.** GitHub API (read-only) confirms PR #2 `state=closed`, `merged=true`, `merge_commit_sha=4f87e29f7a52842dba8272071d2a4a1b527def10`, base `main` (`f3983d68…`), head `f411763…`; `main` head at `4f87e29f…` (2026-11-16). The **local workspace is a pre-merge snapshot**: it is not a Git repository, has no `docs/` or `test/`, and has no `evidence_gate.py`. Line numbers below are from that workspace snapshot and must be re-confirmed on the merged `main` before coding. Where the merged baseline differs, the merged `main` wins.
+> **Version history.** O4-EXEC-v0.1 (prior draft) → **O4-EXEC-v0.2-DRAFT** (this revision: G1/S2/B1 adopted, two-stage scope, NFR-06 v1 durability not required, CI PR #1 provenance, T-16 formal-vs-supplementary). Test IDs remain O4-T-01…T-25.
 
----
-
-## 0. Scope and constraints
-
-- Documentation-only Draft PR input. **No implementation, no test code, no CI changes, no Git writes** are performed by this plan.
-- D-owned files only: `tradingagents/agents/evidence_gate.py` (new), `test/offline/test_evidence_gate*.py` (new).
-- Shared files require **A/C approval** before any edit (Section C).
-- O4 v1 boundary: presence/non-emptiness of required analyst reports + rating consistency. It does **not** certify report content truth.
-- **O4-FR-04 is `Won't` for v1**: no whole-report sentinel recognition. The checker interface therefore has **no** `unavailable_convention` parameter (see Section B).
+> **Verification status (read-only).** GitHub API confirms PR #7 open (head `60f1496…`, base `main`); `main` head `5afb24cf1b48e15e5000ee1365826eebb30d01ae`; PR #2 merged (`4f87e29f…`); CI PR #1 merged (files: `pyproject.toml`, `test/offline/conftest.py`). Member A's PR #7 comment (2026-11-16) approved **Stage 1 only** and fixed **G1/S2/B1**. The local workspace is a pre-merge snapshot; line numbers must be re-confirmed on `main` @ `5afb24cf…`.
 
 ---
 
-## A. Architecture and source-code call chain (CONFIRMED from workspace source)
+## 0. Scope, constraints, and two-stage model
 
-**Rating generation**
-- `portfolio_manager_node` (`tradingagents/agents/managers/portfolio_manager.py:23–104`): structured output → `final_rating = decision.rating.value`, `final_trade_decision = render_pm_decision(decision)` (`:80–83`); free-text fallback → `parse_rating(final_trade_decision)` (`:85–86`). Node returns both (`:100–104`).
-- `rating.py`: `extract_rating` (`:55`), `parse_rating` (`:96–103`), `run_rating` = `final_rating or parse_rating(final_trade_decision)` (`:106–112`), `is_review` (`:115–117`).
-- `state.py:69–70`: `final_trade_decision`, `final_rating`.
+Documentation-only. No implementation, test code, CI, registry, Git, or GitHub writes are performed by this plan.
 
-**Programmatic return & persistence**
-- `_run_graph` (`trading_graph.py:373–405`): `record_decision(...)` (`:400`) → `return final_state, run_rating(final_state)` (`:405`).
-- `record_decision` (`:359–371`): `_log_state` (`:362`), then `memory_log.store_decision(..., rating=run_rating(final_state))` (`:368–371`).
-- `_log_state` writes `"final_rating": run_rating(final_state)` (`:464`).
-- `store_decision` tag `[date | ticker | rating | pending]` (`memory/log.py:56–58`).
+**Stage 1 — D-owned, Member A approved (scope only; not yet implemented):**
+- Create `tradingagents/agents/evidence_gate.py` (pure checker) and `test/offline/test_evidence_gate.py` (offline unit tests).
+- Stage 1 tests: O4-T-01…T-07, T-09…T-15, T-17…T-19, T-24, T-25. For **T-07, T-18, T-19 only their unit portions**.
+- Must NOT modify shared Graph, CLI, reporting, logging, state, or runtime integration files.
+- Passing Stage 1 is **NOT** complete O4 safety approval.
 
-**CLI path (buffering-relevant)**
-- `run_analysis` (`cli/run.py:99`) streams via `graph.stream_run` (`:241`). **PM text is published pre-gate** into the report section at `:330–334` (`update_report_section("final_trade_decision", "### Portfolio Manager Decision\n{judge}")`) and via the message stream (`:241–300`), **before** `record_decision` (`:353`).
-- Post-run review message at `:380–385`; `run_rating(final_state)` used there.
+**Stage 2 — shared integration, coordinated by Member C, separate A/C approval:**
+- Shared files (Graph, CLI, state, reporting, log); integration portions of T-07/18/19; plus T-08, T-16, T-20, T-21, T-23 and cross-surface parts of T-02/T-06/T-14/T-17/T-25.
+- Member A: shared-file changes must be aligned with A first.
 
-**Other readers:** `reporting.py:25–26`, `report_html.py:251`, `cli/run.py:380`.
+**Full O4 safety CI obligation before final merge:** canonical mandatory set (O4-TEST-v0.4 §6.6) + all parameterized subcases collected, executed, passed.
 
-**Selection source (not on AgentState):** `TradingAgentsGraph.selected_analysts` (`trading_graph.py:109`); mapping `ANALYST_NODE_SPECS` (`analyst_execution.py:20–46`); unknown key raises `ValueError` (`:55–56`).
+O4 v1 boundary: report presence/non-emptiness + rating consistency; not content truth. O4-FR-04 is `Won't` (no sentinel).
+
+---
+
+## A. Architecture and source-code call chain (CONFIRMED from workspace snapshot; re-confirm on main @ 5afb24cf)
+
+**Rating generation:** `portfolio_manager_node` (`tradingagents/agents/managers/portfolio_manager.py:23–104`): structured → `final_rating = decision.rating.value`, `final_trade_decision = render_pm_decision(...)` (`:80–83`); fallback → `parse_rating(...)` (`:85–86`); returns both (`:100–104`). `rating.py`: `extract_rating` (`:55`), `parse_rating` (`:96–103`), `run_rating` = `final_rating or parse_rating(final_trade_decision)` (`:106–112`), `is_review` (`:115–117`). `state.py:69–70`.
+
+**Programmatic path:** `_run_graph` (`trading_graph.py:373–405`): `record_decision(...)` (`:400`), `return final_state, run_rating(final_state)` (`:405`). `record_decision` (`:359–371`): `_log_state` (`:362`) + `memory_log.store_decision(..., rating=run_rating(final_state))` (`:368–371`). `_log_state` writes `"final_rating"` (`:464`).
+
+**CLI path:** `run_analysis` (`cli/run.py:99`) streams via `stream_run` (`:241`); **PM text published pre-gate** into report section at `:330–334` and message stream (`:241–300`), before `record_decision` (`:353`). Review message `:380–385`.
+
+**Other readers:** `reporting.py:25–26`, `report_html.py:251`, `cli/run.py:380`, `memory/log.py:56`.
+
+**Selection (not on AgentState):** `TradingAgentsGraph.selected_analysts` (`trading_graph.py:109`); `ANALYST_NODE_SPECS` (`analyst_execution.py:20–46`); unknown key → `ValueError` (`:55–56`).
 
 **Rating read sites:** `trading_graph.py:370,405,464`; `reporting.py:26`; `report_html.py:251`; `cli/run.py:380`; `memory/log.py:56`.
 
@@ -53,79 +59,61 @@
 
 ## B. Proposed O4 Evidence Gate module and interface
 
-**New module:** `tradingagents/agents/evidence_gate.py` (D authors; no shared edits).
+**New module (Stage 1):** `tradingagents/agents/evidence_gate.py`.
 
 ```text
 check_evidence(state, selected_analysts) -> GateResult
 GateResult:
-  verdict        : "valid" | "review"
+  verdict         : "valid" | "review"
   effective_rating: str                      # original rating when valid; "REVIEW" otherwise
-  items          : [{key, status}]            # status ∈ present | missing | not_required
-  reason         : str                        # "" when valid; else diagnostic
-  error_kind     : "none" | "evidence" | "checker_failure" | "rating_conflict"
+  items           : [{key, status}]          # present | missing | not_required
+  reason          : str                      # "" when valid; else diagnostic
+  error_kind      : "none" | "evidence" | "checker_failure" | "rating_conflict"
 ```
 
-- **Pure function** — no I/O, no LLM, no clock (O4-NFR-01/02).
-- **Inputs read:** `market_report`, `sentiment_report`, `news_report`, `fundamentals_report`, `final_rating`, `final_trade_decision`.
-- **Required set:** derived from `selected_analysts` via `ANALYST_NODE_SPECS`.
-- **Status rules (v1 structural):** `present` = non-empty text (including text containing `N/A`/unavailable-source notes — FR-04 `Won't`); `missing` = absent key / empty / whitespace-only; `not_required` = unselected.
-- **No `unavailable_convention` parameter.** Sentinel recognition is out of v1 scope; any future sentinel is a separate requirement-change review. `unavailable` is retained only as a schema-allowed status value for forward compatibility, but v1 never emits it.
-- **Config error:** unknown analyst key / unrecognizable configuration → raise `ValueError` (consistent with `analyst_execution.py:55–56`); publication aborts (FR-15). Not returned as a normal `REVIEW`.
-- **Recoverable internal failure:** return `verdict="review"`, `error_kind="checker_failure"`, reason preserved (FR-09).
-- **Rating conflict:** original rating = `final_rating` if present, else parsed body; if both clear and disagree → `REVIEW`, `error_kind="rating_conflict"` (FR-16). Original `REVIEW` never upgraded (FR-05).
+- **Pure** (no I/O/LLM/clock) — O4-NFR-01/02 (**Must**).
+- Reads `market_report`, `sentiment_report`, `news_report`, `fundamentals_report`, `final_rating`, `final_trade_decision`.
+- Required set from `selected_analysts` via `ANALYST_NODE_SPECS`.
+- **No `unavailable_convention` parameter** (FR-04 `Won't`). `unavailable` is schema-legal but never emitted in v1.
+- **Rating precedence uses the ORIGINAL pre-Gate source values** (before any final-state update): `final_rating` if present, else parsed `final_trade_decision`. If both clearly present and disagree → conflict → `REVIEW` (FR-16). Original `REVIEW` never upgraded (FR-05).
+- Unknown analyst/config → raise `ValueError`; abort publication (FR-15). Recoverable failure → `review` + reason (FR-09).
 
-Alignment: matches registry `o4` policy block (`requirements.yaml` @ main: required_reports / report_presence / rating_source / checker_failure / publication / state_rule / policy_version `o4-structural-v1`).
+The checker is **Stage 1**; it computes on inputs and returns a `GateResult`. It does **not** mutate state.
+
+**Requirement priorities (authoritative registry, verified @ main 5afb24cf):** O4-FR-10 **Must**, O4-FR-11 **Must**, O4-NFR-01 **Must**, O4-NFR-02 **Must**; O4-FR-04 **Won't (v1)**; O4-NFR-03 **Should** (p95 <= 10 ms); O4-INV-05 → **O4-T-25**. No "Should"/"Must (proposed)" labels are used for FR-10/11 or NFR-01/02.
 
 ---
 
-## C. Integration points and shared files (A/C DECISION REQUIRED — options presented, no decision taken)
+## C. Integration policy — G1 / S2 / B1 (ADOPTED by Member A, PR #7)
 
-The gate must (a) run after the Portfolio Manager and before any authoritative publication, (b) make `effective_rating` the single authoritative value for return, state log, memory log, markdown, HTML and CLI, and (c) not let the raw PM rating reach a surface first.
+### C.1 Graph integration point — **G1 (ADOPTED)**
+The same Gate is invoked on the **Graph completion path** and the **CLI path**, before `record_decision` / external publication. Exact line-level insertion scope is confirmed by A/C in Stage 2 (shared files). Recommendation history: G1 chosen over G2 (`run_rating` purity loss) and G3 (graph redesign).
 
-### C.1 Graph integration point — OPTIONS (pending A/C)
+### C.2 `effective_rating` state representation — **S2 (ADOPTED)**
+Final-state behavior:
+- `final_rating` = Gate-adjusted effective rating.
+- `effective_rating` = the same Gate-adjusted effective rating.
+- The **original pre-Gate rating is preserved separately** for diagnosis.
+- `final_trade_decision` bytes **unchanged**.
 
-| Option | Where | Pros | Cons |
-|---|---|---|---|
-| **G1 (recommended minimal)** | In `_run_graph` after graph invoke, before `record_decision` and the return (`trading_graph.py:398–405`); also apply in the CLI path before its `record_decision` (`cli/run.py:353`) | One shared pre-persist gate point; small diff; covers return/log/memory | Requires the same call in the CLI stream merge path; state field needed |
-| G2 | Inside `run_rating` (`rating.py:106–112`) so all readers gate by construction | Single choke point for all readers | `run_rating` becomes impure/needs selection config; changes a widely-used pure helper; regressions risk |
-| G3 | A dedicated LangGraph node after Portfolio Manager | Graph-native ordering | Larger graph change; violates "no LangGraph redesign" preference (`NFR-07`) |
+Consequence: after Gate application, `final_rating` is **NOT** the original unmodified rating.
 
-**Recommendation: G1** (single shared pre-persist gate applied at both programmatic and CLI completion points). **This is a recommendation only; A/C must confirm.**
-
-### C.2 `effective_rating` state representation — OPTIONS (pending A/C)
-
-| Option | Representation | Note |
-|---|---|---|
-| **S1 (recommended)** | Add `effective_rating` to `AgentState` (`state.py`); keep `final_rating` as the **original** PM rating; keep `final_trade_decision` bytes unchanged | Matches registry `state_rule` ("set final_rating and effective_rating to effective value … retain original separately") — needs A/C to reconcile the registry's exact wording ("set final_rating … to effective value; retain original separately") |
-| S2 | Overwrite `final_rating` with the effective value; store original elsewhere (e.g. `original_rating`) | Single value everywhere; loses "original" name; more consumers change |
-| S3 | No new field; only mutate what `run_rating` returns | Insufficient: `_log_state` and reports read `final_rating` directly |
-
-**Recommendation: S1** (add `effective_rating`; preserve `final_rating` as original; keep decision bytes). **A/C must confirm and reconcile with the registry `state_rule` wording**, which appears to say `final_rating` itself becomes effective — the two must be made consistent.
+**A/C confirmation required:** the exact **original-rating storage field name/interface** (the approved contract does not fix a name) — do not invent it. Consolidated here with the registry `development_contract.o4.state_rule` ("preserve final_trade_decision bytes; set final_rating and effective_rating to effective value on finalized state; retain original rating separately for diagnosis"), which matches S2.
 
 ### C.3 Original-rating preservation
+Never mutated by the checker. Retained in the S2 diagnostic field (name pending A/C). `final_trade_decision` untouched (FR-12). Precedence/conflict use the original values (Section B).
 
-`final_trade_decision` MUST be preserved byte-for-byte (`FR-12`). Original rating retained for diagnosis (in a field per S1/S2 choice); never mutated by the checker.
+### C.4 CLI buffering — **B1 (ADOPTED)**
+Buffer PM text (report section `cli/run.py:330–334` and message stream `:241–300`); display only after the Gate; then publish `effective_rating`. If `REVIEW`, any preserved body is labelled **unapproved original content**, never an approved recommendation. Exact insertion points confirmed by A/C in Stage 2.
 
-### C.4 CLI buffering mechanism — OPTIONS (pending A/C)
-
-| Option | Mechanism | Pros | Cons |
-|---|---|---|---|
-| **B1 (recommended)** | Hold PM report-section/message writes (`cli/run.py:330–334`, `:241–300`) in a buffer; flush as "unapproved original content" only after gating; print effective rating | No raw Buy/Sell shown as approved pre-gate | Touches CLI streaming; needs careful ordering |
-| B2 | Label each PM message "provisional — unapproved" inline, then re-label after gate | Smaller code change | Still displays a direction pre-gate; weaker for INV-03 |
-| B3 | Suppress PM text until post-gate entirely | Simplest safety | Loses progress context; may slow perceived UX |
-
-**Recommendation: B1** (buffer, then publish effective rating; label preserved body unapproved when REVIEW). **A/C must confirm** the exact insertion points and whether buffering lives in `cli/run.py` or a shared sink.
-
-### C.5 Shared files requiring A/C approval (D does NOT edit these)
-
-| File | Change | Requirements |
-|---|---|---|
-| `tradingagents/graph/trading_graph.py` | Apply gate at G1 before `record_decision`/return | FR-07/09/16, INV-03, NFR-08 |
-| `tradingagents/agents/state.py` | Add `effective_rating` (S1) or equivalent | FR-12, NFR-06 |
-| `cli/run.py` | Buffering (B1) + cause-neutral review message (`:380–385`) | FR-07/13, INV-03 |
-| `tradingagents/reporting.py`, `tradingagents/report_html.py` | Read `effective_rating` | FR-07, INV-03 |
-| `tradingagents/agents/rating.py` | Only if G2 chosen — otherwise unchanged | (option) |
-| `tradingagents/memory/log.py` | Persist effective rating; durable verdict field **pending** (NFR-06) | NFR-06 (pending) |
+### C.5 Shared files (Stage 2; C coordinates; A aligned first; D does NOT edit)
+| File | Change |
+|---|---|
+| `tradingagents/graph/trading_graph.py` | Apply Gate (G1) before `record_decision`/return; populate S2 state |
+| `tradingagents/agents/state.py` | Add `effective_rating` + original-rating diagnostic field (name pending A/C) |
+| `cli/run.py` | Buffering (B1) + cause-neutral review message |
+| `tradingagents/reporting.py`, `tradingagents/report_html.py` | Read effective rating |
+| `tradingagents/memory/log.py` | Persist effective rating (durable verdict field not required in v1) |
 
 ---
 
@@ -133,135 +121,133 @@ The gate must (a) run after the Portfolio Manager and before any authoritative p
 
 | Case | Behavior | Requirement |
 |---|---|---|
-| Missing/empty required report | `effective_rating=REVIEW`; exact failing set; `error_kind=evidence` | FR-03 |
-| Text mentions `N/A`/unavailable but report non-empty | Status `present`; no downgrade from that text alone | FR-04 (`Won't`) |
+| Missing/empty required report | `REVIEW`; exact failing set; `error_kind=evidence` | FR-03 |
+| Non-empty report with `N/A`/unavailable note | `present`; no downgrade from that text | FR-04 (`Won't`) |
 | Pre-existing REVIEW | Never upgraded | FR-05 |
-| Recoverable checker failure | Fail-closed `REVIEW`, reason preserved, all enabled surfaces agree; distinct from config error | FR-09, INV-04 |
-| Unknown analyst / unrecognizable config | Raise `ValueError`; **abort** authoritative publication; not a normal `REVIEW` | FR-15 |
-| Rating conflict (`final_rating` vs parsed body) | Downgrade to `REVIEW` with conflict reason | FR-16 |
+| Recoverable checker failure | `REVIEW`, reason preserved, all enabled surfaces agree; distinct from config error | FR-09, INV-04 |
+| Unknown analyst / unrecognizable config | Raise `ValueError`; abort publication; not a normal `REVIEW` | FR-15 |
+| Rating conflict (original sources) | Downgrade to `REVIEW` with conflict reason | FR-16 |
 | Decision body | Bytes unchanged; labelled unapproved when REVIEW | FR-12/13 |
 
 ---
 
 ## E. CLI buffering and authoritative publication
 
-- No PM Buy/Sell may appear as an approved/tradeable rating before the gate completes (INV-03, FR-07).
-- After gating, each enabled surface publishes `effective_rating`; if `REVIEW`, preserved raw body is labelled unapproved original content (FR-13).
-- Mechanism and exact insertion points: **pending A/C** (Options B1/B2/B3 in C.4).
-- Only **enabled** surfaces are compared (HTML only when `html=True`; memory log only when `memory_log_path` set; etc.) — NFR-08.
+- No PM Buy/Sell appears approved/tradeable before the Gate (INV-03, FR-07).
+- After the Gate, each enabled surface publishes `effective_rating`; preserved body labelled unapproved when `REVIEW` (FR-13).
+- Only enabled surfaces compared (NFR-08). Mechanism B1, exact points pending A/C (Stage 2).
 
 ---
 
 ## F. Implementation steps (dependency order)
 
-1. **A/C confirm** G1 (integration point), S1/registry `state_rule` reconciliation, and B1 (buffering).
-2. Implement `evidence_gate.py` (pure checker + `GateResult`) — D.
-3. Unit tests — `test/offline/test_evidence_gate.py` (see Section G).
-4. Integrate gate at G1 in `trading_graph.py`; add `effective_rating` (A/C).
-5. CLI buffering + cause-neutral message (A/C).
-6. Reporting/HTML read effective rating (A/C).
-7. Offline Graph/CLI integration tests (network-blocked) — Section G/H.
-8. Regression (T-20); T-16 instrumentation after A/C timing boundary.
-9. CI wiring and evidence capture (F) — Section I.
+**Stage 1 (D-owned; after F approves the test plan):**
+1. Implement `evidence_gate.py` (pure checker + `GateResult`).
+2. Write `test/offline/test_evidence_gate.py` for Stage 1 unit tests (Section G).
+3. Pass Stage 1 mandatory unit portions.
+
+**Stage 2 (after separate A/C approval; C coordinates):**
+4. Apply G1 in `trading_graph.py` and the CLI path; implement S2 state (field name A/C).
+5. CLI buffering B1 + cause-neutral message.
+6. Reporting/HTML read effective rating; memory persistence.
+7. Integration tests (T-07/18/19 integration halves; T-08, T-21, T-23).
+8. Regression T-20; T-16 (after A/C timing boundary).
+9. CI wiring + evidence capture (F).
 
 ---
 
-## G. Test implementation mapping — complete O4-T-01 … O4-T-25
+## G. Test mapping — full O4-T-01 … O4-T-25 (Stage tags)
 
-All 25 IDs preserved. Mandatory safety set (canonical, per O4-TEST-v0.3 §6.6): **T-02, T-03, T-06, T-07, T-08, T-14, T-17, T-18, T-19, T-23, T-25** including all mandatory parameterized subcases.
+All 25 IDs preserved. Canonical mandatory set: T-02, T-03, T-06, T-07, T-08, T-14, T-17, T-18, T-19, T-23, T-25 (+ all parameterized subcases).
 
-| Test | Type | File | Notes |
+| Test | Stage | Type | Notes |
 |---|---|---|---|
-| T-01 | Offline unit | `test_evidence_gate.py` | complete evidence preserves rating |
-| T-02 | Offline unit (param, **mandatory**) | `test_evidence_gate.py` | each of 4 reports empty + multi-missing; exact failing set |
-| T-03 | Offline unit (param, **mandatory**) | `test_evidence_gate.py` | whitespace-only (4) + empty+whitespace multi-missing |
-| T-04 | Offline unit (negative/boundary) | `test_evidence_gate.py` | `N/A`/unavailable-source text stays `present`; no downgrade |
-| T-05 | Offline unit | `test_evidence_gate.py` | unselected → `not_required` |
-| T-06 | Offline unit (**mandatory**) | `test_evidence_gate.py` | REVIEW never upgraded |
-| T-07 | Unit + offline Graph integration (**mandatory**) | split | checker failure fails closed across enabled surfaces |
-| T-08 | Offline Graph/CLI integration (**mandatory**) | `test_evidence_gate_integration.py` | expected-enabled-surface-set equality, then all `REVIEW` |
-| T-09 | Offline unit | `test_evidence_gate.py` | keep `Sell` |
-| T-10 | Offline unit | `test_evidence_gate.py` | decision bytes preserved (rendered label proven by T-19/T-23) |
-| **T-11** | Offline unit (boundary) | `test_evidence_gate.py` | determinism ×100, no I/O |
-| T-12 | Offline unit | `test_evidence_gate.py` | structured result + reason on non-pass |
-| T-13 | Offline unit | `test_evidence_gate.py` | single-analyst valid |
-| **T-14** | Offline unit (param, **mandatory**) | `test_evidence_gate.py` | single-select missing; multi-select one missing; unselected not flagged |
-| **T-15** | Offline unit (collection) | `test_evidence_gate.py` | direct import, no graph/LLM/network |
-| T-16 | Benchmark (F) | F harness | p95 <= 10 ms target; see Section J |
-| T-17 | Offline unit (param, **mandatory**) | `test_evidence_gate.py` | each key absent; exact failing set |
-| T-18 | Unit + offline Graph integration (**mandatory**) | split | unknown key → `ValueError`, publication aborted (not normal REVIEW) |
-| T-19 | Unit + offline Graph/CLI integration (**mandatory**) | split | Buy body not approved; preserved + labelled |
-| T-20 | Regression (F) | existing suite | gate not wired → unchanged behavior |
-| T-21 | Artefact inspection | integration | runtime result; durability documented pending |
-| T-22 | Manual scope review | review | not automated |
-| T-23 | Offline CLI integration (**mandatory**) | `test_evidence_gate_integration.py` | no pre-gate published Buy; post-gate REVIEW |
-| T-24 | Offline unit (boundary) | `test_evidence_gate.py` | O5 filtered-empty alone → `valid`/original; missing selected `news_report` → `REVIEW` with exact failing set `{news_report}` |
-| T-25 | Offline unit (**mandatory**) | `test_evidence_gate.py` | precedence (a/b/c/d); conflict → REVIEW with reason |
+| T-01 | S1 | unit | complete evidence preserves rating |
+| T-02 | S1/S2 | unit (+cross-surface in S2) | each of 4 reports empty + multi-missing (**mandatory**) |
+| T-03 | S1 | unit param | whitespace (4) + empty+whitespace (**mandatory**) |
+| T-04 | S1 | unit negative | `N/A`/unavailable text stays present |
+| T-05 | S1 | unit | unselected `not_required` |
+| T-06 | S1/S2 | unit (+cross-surface S2) | REVIEW never upgraded (**mandatory**) |
+| T-07 | S1/S2 | unit (S1) + Graph integration (S2) | checker failure fail-closed (**mandatory**) |
+| T-08 | S2 | Graph/CLI integration | enabled-surface equality (**mandatory**) |
+| T-09 | S1 | unit | keep Sell |
+| T-10 | S1 | unit | decision bytes preserved |
+| T-11 | S1 | unit | determinism ×100 |
+| T-12 | S1 | unit | structured result + reason |
+| T-13 | S1 | unit | single-analyst valid |
+| T-14 | S1/S2 | unit (+cross-surface S2) | single/multi missing; unselected not flagged (**mandatory**) |
+| T-15 | S1 | unit collection | offline import |
+| T-16 | S2 | benchmark | registry formal acceptance p95 <= 10 ms |
+| T-17 | S1 | unit param | each key absent (**mandatory**) |
+| T-18 | S1/S2 | unit (S1) + Graph integration (S2) | unknown key aborts publication (**mandatory**) |
+| T-19 | S1/S2 | unit (S1) + CLI/Graph integration (S2) | Buy not approved; labelled (**mandatory**) |
+| T-20 | S2 | regression | baseline unchanged |
+| T-21 | S2 | artefact inspection | runtime result; durability not required v1 |
+| T-22 | S2/manual | manual | scope review |
+| T-23 | S2 | CLI integration | no pre-gate published Buy (**mandatory**) |
+| T-24 | S1 | unit boundary | O5 filtered-empty no downgrade; missing news → REVIEW |
+| T-25 | S1 | unit | precedence/conflict (**mandatory**) |
 
-Every mandatory node ID **and** every required parameterized subcase must be collected, executed, passed; no skip/xfail/error/missing (O4-TEST-v0.3 §6.6/§8/§9).
+Stage 1 mandatory-cases (unit portions): T-02, T-03, T-06, T-07, T-14, T-17, T-18, T-19, T-25. Stage 1 passing alone is **not** full O4 safety approval.
 
 ---
 
-## H. Default `pytest -q` collection and offline network protection
+## H. Default `pytest -q` collection and offline network protection (CI PR #1)
 
-- **Unified policy (Member A):** deterministic offline unit + Graph/CLI tests run under **default `pytest -q`**; `integration` marker reserved for real external services; mocked-dependency Graph/CLI paths are **not** integration-marked.
-- **PR #2 config (CONFIRMED from merged baseline):** `testpaths = ["tests", "test/offline"]`; `addopts = '-ra --strict-markers -m "not integration"'`; CI runs `pytest -q`.
-- **Network protection (CONFIRMED from PR snapshot, not executed):** `test/offline/conftest.py` `_no_network` is directory-scoped; returns early **only** for integration-marked tests, so it is active for O4 non-integration tests. Must be re-verified on merged `main`.
-- **No collection/execution evidence exists yet**; all commands and node IDs are proposed, not run.
+- Unified policy: deterministic offline unit + Graph/CLI tests run under default `pytest -q`; `integration` marker reserved for real external services; mocked-dependency Graph/CLI paths are not integration-marked.
+- **Provenance (CI PR #1, merged):** `pyproject.toml` `testpaths = ["tests", "test/offline"]`; `test/offline/conftest.py` `_no_network` (directory-scoped, active for non-integration tests).
+- No collection/execution evidence exists yet; all commands/node IDs are proposed.
 
 ---
 
 ## I. Safety CI verification and evidence capture
 
 - Mandatory = canonical set + parameterized subcases; collected, executed, passed; none skipped/xfailed/errored/missing.
-- **Safety Escape Count == 0** (SE-01…SE-06); missing execution is not a pass.
-- Evidence: actual node IDs (incl. parameterized subcase IDs), expected-vs-collected manifest, per-case results, network-guard proof, CI job/command/saved-result location.
-- Enforcement is **proposed**, pending F/team; SE-06 pending confirmation.
+- Safety Escape Count == 0 (SE-01…SE-06); missing execution is not a pass.
+- Stage 1 discharges only the Stage 1 subset; full set required before final merge.
+- Evidence: actual node IDs (incl. parameterized), expected-vs-collected manifest, per-case results, network-guard proof, CI job/command.
 
 ---
 
-## J. T-16 performance boundary (registry `Should`, p95 <= 10 ms)
+## J. T-16 performance boundary (Should, p95 <= 10 ms)
 
-- **Target (registry, CONFIRMED):** nearest-rank **p95 added latency <= 10 ms** — fixed four-report fixture, 5 warmups, 30 measured calls, `ubuntu-latest`/Python 3.11; priority **Should** (non-blocking; does not override safety gates).
-- **Methodology:** F's `O4_T16_Performance_Verification_Plan.md` v0.1 paired A/B (Path A harness-bypass; Path B real checker). **Sampling-protocol reconciliation (compact registry vs extended A/B) pending F.**
-- **Boundary:** start = entry into rating-processing; end = `effective_rating` ready; `time.perf_counter_ns()`; exclude graph/LLM/IO/render. **Actual Gate invocation point + timing wrapper PENDING A/C.**
-- No measurement executed; no passing result claimed.
+- **Formal acceptance (registry):** fixed four-report fixture, **5 warm-up calls, 30 measured calls**, single process, `ubuntu-latest`/Python 3.11, nearest-rank **p95 added latency <= 10 ms (inclusive)**; priority **Should** (non-blocking; never overrides safety).
+- **Member F's extended paired A/B plan** (`O4_T16_Performance_Verification_Plan.md` v0.1): **supplementary diagnostic only**, not a replacement for formal acceptance.
+- **Boundary:** start = entry into rating processing; end = `effective_rating` ready; `time.perf_counter_ns()`; exclude graph/LLM/IO/render. **Actual Gate invocation point + timing wrapper PENDING A/C (Stage 2).**
+- No benchmark executed; no passing result claimed.
 
 ---
 
 ## K. Risks, rollback, unresolved decisions
 
-### K.1 Risks
-Pre-gate CLI leak (T-23); multi-reader inconsistency; unknown-config silently downgraded to REVIEW; buffering UX regressions; conflict path masking otherwise-valid ratings; divergence between workspace snapshot and merged `main`.
+**Risks:** pre-gate CLI leak (T-23); multi-reader inconsistency; unknown-config silently downgraded; buffering UX; conflict masking valid ratings; snapshot-vs-main drift.
 
-### K.2 Rollback and containment (safety-critical)
+**Rollback and containment (safety-critical):**
+1. Gate is **fail-closed**; no production switch bypasses it.
+2. **Pre-merge rollback** = revert the integration commit (removes the change and its gate together during review); recorded in the PR.
+3. **Any post-merge rollback/disable affecting the Gate** MUST follow an **A/C-approved containment strategy** + ADR preventing silent ungated publication (keep affected runs non-authoritative, or halt publication).
+4. No rollback may publish a tradeable rating the Gate would have downgraded; if containment cannot guarantee this, publication is halted.
+5. Rollback/containment events must be logged and reported.
 
-A naive "disable the gate" toggle would **silently restore unsafe authoritative rating publication** and is **prohibited**. Rollback rules:
+**Resolved:** durable persistence of the complete structured Gate verdict is **not required in v1** (Member A decision); enabled authoritative rating outputs must still remain consistent. Shared logging/`memory` implementation details for persisting the effective rating remain open under Stage 2 while the v1 contract above stands.
 
-1. The Evidence Gate is **fail-closed by design**; there is no runtime switch that bypasses it in production.
-2. **Implementation rollback** (before merge or during review) = revert the integration commit. Because the gate is part of the change, reverting removes the gate **and** restores the known baseline; this is a pre-merge review action only, not a runtime option, and must be recorded in the PR.
-3. **Any post-merge rollback or temporary disablement affecting the safety gate** MUST follow an **A/C-approved containment strategy** that prevents silent ungated publication (e.g., the containment keeps `effective_rating = REVIEW` for affected runs, or the event is escalated and the affected runs are quarantined/marked non-authoritative). A containment proposal requires A/C sign-off and an ADR before use.
-4. **No rollback** may publish a tradeable rating that the gate would have downgraded; if containment cannot guarantee this, publication is halted rather than downgraded.
-5. Rollback and containment events must be logged and reported (not silent).
-
-### K.3 Unresolved decisions (owner)
-(1) Graph integration point G1/G2/G3 — **A/C**; (2) `effective_rating` representation S1/S2/S3 and registry `state_rule` reconciliation — **A/C (+B)**; (3) CLI buffering B1/B2/B3 — **A/C**; (4) durable verdict persistence — **A/C**; (5) T-16 sampling protocol — **F**; (6) SE-06 — **F/team**; (7) invariant schema representation — **B**; (8) rebase workspace onto merged `main` — **D/A**.
+**Unresolved (owner):** original-rating storage field name/interface (A/C — not invented); exact G1/B1 insertion line scope (A/C); T-16 Gate invocation/timing boundary (A/C, Stage 2); SE-06 (F/team); invariant schema representation (B); rebase onto `main` @ 5afb24cf (D/A).
 
 ---
 
 ## L. Explicit human approval requirements before coding
 
-1. **Member F** — formal approval of `O4-Test-Plan.md` (O4-TEST-v0.3).
-2. **Member A** — formal approval of this execution plan (O4-EXEC-v0.1).
-3. **Members A/C** — confirm integration point (C.1), state representation (C.2) + registry reconciliation, and buffering (C.4).
-4. Required project governance artifacts present (Test Approval record, AI-use log per `docs/PROJECT_WORKSPACE.md`, ADR for containment if rollback policy adopted).
-5. Implementation begins only after 1–4. **This document records no approvals.** Member A and Member F have not approved either plan.
+1. **Member F** — formal approval of `O4-TEST-v0.4`. (A has approved Stage 1 scope; F has not approved the test plan.)
+2. **Members A/C** — Stage 2 shared-integration scope (separate approval; C coordinates, A aligned first).
+3. Confirm original-rating storage field and exact G1/B1 insertion scope (A/C).
+4. Governance artifacts present (Test Approval record, AI-use log, ADR for containment if adopted).
+5. **Stage 1 implementation may begin only after (1) and prerequisites.** Stage 2 only after (2)–(3). **This document records no approvals.**
 
 ---
 
-## Appendix — Unverified assumptions and pending verification
+## Appendix — Unverified assumptions
 
-- Line numbers derive from the pre-merge workspace snapshot; re-confirm on merged `main` (`4f87e29f…`).
-- `test/offline/conftest.py` behavior confirmed from PR snapshot only; not executed.
-- PR #2 merge state verified via API; no further GitHub write or merge claim is made.
-- O4-NFR-03 target (`<= 10 ms`) is the confirmed registry value; it is a requirement target, **not** a measured result.
+- Line numbers from pre-merge snapshot; re-confirm on `main` @ `5afb24cf…`.
+- G1/S2/B1 adopted from Member A's PR #7 comment (architecture direction, not code-level scope).
+- CI PR #1 provenance verified via API (files `pyproject.toml`, `test/offline/conftest.py`).
+- O4-NFR-03 target is a requirement value, not a measured result.
