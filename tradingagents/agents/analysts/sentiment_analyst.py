@@ -17,11 +17,20 @@ supports it and free text otherwise, so the band, score and confidence header
 reads the same across providers.
 """
 
+import logging
+import re
 from datetime import datetime, timedelta
 
 from langchain_core.messages import AIMessage
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
+from tradingagents.agents.analysts.condensation import (
+    CondensationError,
+    CondensationReport,
+    condense_source,
+    render_audit_footer,
+    validate_caps,
+)
 from tradingagents.agents.context import get_instrument_context_from_state, get_language_instruction
 from tradingagents.agents.post_screen import jev_screen
 from tradingagents.agents.schemas import SentimentReport, render_sentiment_report
@@ -31,6 +40,7 @@ from tradingagents.agents.structured import (
     invoke_structured_or_freetext,
 )
 from tradingagents.agents.tools import get_news
+from tradingagents.dataflows.config import get_config
 from tradingagents.dataflows.vendors.reddit import (
     CRYPTO_SUBREDDITS,
     DEFAULT_SUBREDDITS,
@@ -39,9 +49,25 @@ from tradingagents.dataflows.vendors.reddit import (
 )
 from tradingagents.dataflows.vendors.stocktwits import fetch_stocktwits_messages
 
+logger = logging.getLogger(__name__)
+
 
 def _seven_days_back(trade_date: str) -> str:
     return (datetime.strptime(trade_date, "%Y-%m-%d") - timedelta(days=7)).strftime("%Y-%m-%d")
+
+
+def _identity_terms(ticker: str, identity_context: str = "") -> tuple[str, ...]:
+    """Words that mark an item as being about this instrument.
+
+    The ticker always counts. When the run already resolved the company name
+    into ``instrument_context`` it is used as an extra term; nothing is looked
+    up here, so condensation stays offline and deterministic.
+    """
+    terms = [ticker]
+    match = re.search(r"(?:Company|Name): ([^(;]+)", identity_context or "")
+    if match:
+        terms.append(match.group(1).strip())
+    return tuple(term for term in terms if term)
 
 
 def create_sentiment_analyst(llm):
@@ -75,14 +101,74 @@ def create_sentiment_analyst(llm):
             ticker, subreddits, start_date=start_date, end_date=end_date, screen=screen
         )
 
+        # O3: trim the pre-fetched blocks before they reach the prompt. The
+        # surrounding identity, date and safety text is never condensed. A
+        # budget exception keeps the original block of that source and is
+        # recorded, so the run is never silently reported as within budget.
+        config = get_config()
+        condensed_news, condensed_st, condensed_rd = news_block, stocktwits_block, reddit_block
+        audit_footer = ""
+        budget_exception = False
+        if config.get("input_condensation_enabled", True):
+            # Validate the whole allocation once, before any source is touched:
+            # a misconfigured run must fail loudly, not half-condense.
+            validate_caps(config)
+            identity_terms = _identity_terms(ticker, instrument_context)
+            reports = []
+            condensed = {}
+            for source, block, cap_key in (
+                ("news", news_block, "input_news_cap_chars"),
+                ("stocktwits", stocktwits_block, "input_stocktwits_cap_chars"),
+                ("reddit", reddit_block, "input_reddit_cap_chars"),
+            ):
+                try:
+                    result, report = condense_source(
+                        block,
+                        source=source,
+                        ticker=ticker,
+                        identity_terms=identity_terms,
+                        budget_chars=config[cap_key],
+                        near_dup_jaccard=config.get("input_near_dup_jaccard", 0.8),
+                    )
+                except CondensationError as exc:
+                    logger.warning(
+                        "Sentiment Analyst: %s block kept unchanged (%s)", source, exc
+                    )
+                    result = block
+                    report = CondensationReport(
+                        source=source,
+                        chars_before=len(block or ""),
+                        chars_after=len(block or ""),
+                        budget_exception=getattr(exc, "budget_exception", False),
+                    )
+                if report.budget_exception:
+                    budget_exception = True
+                    logger.warning(
+                        "Sentiment Analyst: %s budget exception; original block used and "
+                        "this run is excluded from budget-pass results", source,
+                    )
+                condensed[source] = result
+                reports.append(report)
+            condensed_news = condensed["news"]
+            condensed_st = condensed["stocktwits"]
+            condensed_rd = condensed["reddit"]
+            if config.get("input_condensation_audit_note", True):
+                audit_footer = render_audit_footer(reports)
+            if budget_exception:
+                logger.warning(
+                    "Sentiment Analyst: O3 budget exception in this run; it is excluded "
+                    "from budget-pass results"
+                )
+
         system_message = _build_system_message(
             ticker=ticker,
             start_date=start_date,
             end_date=end_date,
-            news_block=news_block,
-            stocktwits_block=stocktwits_block,
-            reddit_block=reddit_block,
+            news_block=condensed_news,
+            stocktwits_block=condensed_st,
+            reddit_block=condensed_rd,
             subreddits=subreddits,
+            audit_footer=audit_footer,
         )
 
         prompt = ChatPromptTemplate.from_messages(
@@ -136,8 +222,14 @@ def _build_system_message(
     stocktwits_block: str,
     reddit_block: str,
     subreddits: tuple[str, ...] = DEFAULT_SUBREDDITS,
+    audit_footer: str = "",
 ) -> str:
-    """Assemble the sentiment-analyst system message with structured data blocks."""
+    """Assemble the sentiment-analyst system message with structured data blocks.
+
+    ``audit_footer`` carries O3's record of what condensation removed. It is
+    empty when condensation is disabled, which keeps the rendered prompt
+    byte-identical to the pre-O3 baseline.
+    """
     if subreddits == DEFAULT_SUBREDDITS:
         character = "r/wallstreetbets is often contrarian/exuberant; r/stocks more measured; r/investing longer-term"
     elif len(subreddits) > len(CRYPTO_SUBREDDITS):
@@ -168,7 +260,7 @@ Community discussion, without vote or comment counts. Subreddit character matter
 <start_of_reddit>
 {reddit_block}
 <end_of_reddit>
-
+{audit_footer}
 ## How to analyze this data (best practices)
 
 1. **Read the StockTwits Bullish/Bearish ratio as a leading retail-sentiment signal.** A 70/30 bullish/bearish split is moderately bullish; ≥90/10 may indicate over-extension and contrarian risk; 50/50 is uncertainty. Sample size matters — base rates on the actual message count, not percentages alone. A block headed "Screened by Jev" has had off-topic posts removed; its stance count is a classifier's read of every on-topic post fetched, labelled or not, of which the posts listed are a sample. Read it alongside the user tags.

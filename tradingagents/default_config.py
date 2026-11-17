@@ -141,6 +141,20 @@ def build_default_config() -> dict:
         "news_article_limit": 20,             # max articles per ticker (ticker-news)
         "global_news_article_limit": 10,      # max articles for global/macro news
         "global_news_lookback_days": 7,       # macro news lookback window
+        # --- O3 input condensation ---
+        # The Sentiment Analyst trims its three pre-fetched source blocks before
+        # they reach the prompt: duplicates collapse, identity-relevant items
+        # rank first, and each block fits its own character cap. The three caps
+        # must not sum above input_budget_chars. The audit footer is measured
+        # separately and never draws on the source budget.
+        "input_condensation_enabled": True,
+        "input_budget_chars": 24000,          # total across the three sources
+        "input_news_cap_chars": 12000,
+        "input_stocktwits_cap_chars": 6000,
+        "input_reddit_cap_chars": 6000,
+        "input_near_dup_jaccard": 0.8,        # inclusive threshold for near duplicates
+        "input_condensation_audit_note": True,  # append the <input_condensation> footer
+        # --- end O3 input condensation ---
         # Search queries used by get_global_news for macro headlines. Extend or
         # replace to broaden geographic / sector coverage.
         "global_news_queries": [
