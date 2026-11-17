@@ -4,15 +4,15 @@ Read the root `AGENTS.md` first. Work on the feature and batch named by the huma
 
 ## Plan first
 
-Inspect the repository without editing files or running tests. Return a short execution plan that includes:
+Inspect the repository without editing files. If the task owner has authorized a read-only check or offline probe, such as pytest collection or callback delivery, you may run it and record the command and result. A probe does not approve code edits. Return a short execution plan that includes:
 
-1. Current branch and commit SHA; requirement IDs, test plan version, case IDs, and links to the recorded pre-code approvals. Mark any missing approval or document as pending.
+1. Current branch and commit SHA; requirement IDs, test plan version, case IDs, and link to the designated test reviewer's approval of that exact test plan and scope. Mark any missing approval or document as pending.
 2. The actual functions and files to change, what each change will do, and which files stay outside scope.
 3. Interfaces and shared files involved, their owners, and any conflict with another feature or the current code. State assumptions and unresolved decisions.
 4. The test cases to add or update, with expected results for normal, boundary, and failure paths; the offline and regression commands to run after implementation.
 5. A small implementation order and the evidence to retain for the PR and agent transcript.
 
-Stop after the plan. Ask the human to approve this exact plan and scope before creating or changing production code, test code, or project configuration. If the approved test plan or interface decision is missing, identify what is needed without treating a draft or later PR review as pre-code approval.
+Stop after the plan. Ask A to approve this exact execution plan and file scope before creating or changing production code, test code, or project configuration. Both the designated test reviewer's approval and A's execution-plan approval must be recorded before the first code edit. If the approved test plan or interface decision is missing, identify what is needed without treating a draft or later PR review as pre-code approval.
 
 ## After recorded approval
 
