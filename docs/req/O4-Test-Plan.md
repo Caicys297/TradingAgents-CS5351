@@ -76,7 +76,7 @@
 - Stage 1 test IDs: **O4-T-01…T-07, T-09…T-15, T-17…T-19, T-24, T-25**.
 - For **O4-T-07, T-18, T-19**, Stage 1 covers **only their checker-level unit portions** (calling the real `check_evidence()` entry point); their Graph/CLI integration portions are Stage 2. T-07 remains Stage 1: the recoverable exception is handled by production checker logic, not a test wrapper.
 - Stage 1 **must NOT** modify shared Graph, CLI, reporting, logging, state, or runtime integration files.
-- Stage 1 approved-in-scope tests are **NOT yet implemented** and **NOT** a complete O4 safety approval.
+- Stage 1 approved-in-scope tests are **implemented and executed** (offline unit tests under `test/offline/test_evidence_gate.py`); Stage 1 is **NOT** a complete O4 safety approval.
 
 **Stage 2 — shared integration (Member C coordinates; separate A/C approval):**
 - Files: `tradingagents/graph/trading_graph.py`, `tradingagents/agents/state.py`, `cli/run.py`, `tradingagents/reporting.py`, `tradingagents/report_html.py`, `tradingagents/memory/log.py` (as approved).
@@ -139,9 +139,9 @@ Executable = automated offline test. Manual = scope review. Pending = depends on
 
 ## 4. Test case catalogue (O4-T-01 … O4-T-25)
 
-Each entry gives objective, input/setup, execution approach, expected outcome, pass/fail assertion, test type, and dependencies. All are **PROPOSED / NOT YET IMPLEMENTED**. Parameterized tests retain their original identity while expanding across the four report fields.
+Each entry gives objective, input/setup, execution approach, expected outcome, pass/fail assertion, test type, and dependencies. **Stage 1 entries are implemented and executed** (see §6.1); Stage 2 entries remain proposed. Parameterized tests retain their original identity while expanding across the four report fields.
 
-**Stage tags** (per §2.4): **[S1]** = Stage 1, D-owned pure checker + offline unit (approved in scope by Member A, not yet implemented). **[S2]** = Stage 2, shared integration (Member C, separate A/C approval). **[S1/S2]** = Stage 1 unit portion plus a Stage 2 integration portion. The tag appears in each entry's **Type** line.
+**Stage tags** (per §2.4): **[S1]** = Stage 1, D-owned pure checker + offline unit (**implemented and executed**; first code commit `fefd884`, reviewed HEAD `b441799`). **[S2]** = Stage 2, shared integration (Member C, separate A/C approval). **[S1/S2]** = Stage 1 unit portion plus a Stage 2 integration portion. The tag appears in each entry's **Type** line.
 
 ### O4-T-01 — Complete evidence preserves rating
 - **Covers:** O4-FR-01, O4-FR-02
@@ -518,7 +518,7 @@ Each test keeps its unique ID; mandatory status is applied per **parameterized s
 - **O4-T-14:** single-select `{market}` with `market_report=""`; multi-select `{market, news, fundamentals}` with `news_report=""`.
 - **O4-T-17:** each of the four required report keys removed entirely from the state.
 
-**Stage 1 execution scope (Member A approved in PR #7 — tests only, not yet implemented):** Stage 1 IDs are O4-T-01…T-07, T-09…T-15, T-17…T-19, T-24, T-25. For **T-07, T-18, T-19 only their checker-level unit portions** are Stage 1. Stage 1 mandatory-cases (checker-level unit portions): T-02, T-03, T-06, T-07 (checker-level), T-14, T-17, T-18 (checker-level), T-19 (checker-level), T-25, with all their parameterized subcases. Passing Stage 1 alone does **NOT** constitute full O4 safety approval — T-08, T-23, T-16, T-20, T-21 and the integration portions of T-07/T-18/T-19 are Stage 2 and still required before final merge.
+**Stage 1 execution scope (Member A approved in PR #7 — implemented and executed; first code commit `fefd884`, rating-resolution fix `38dad9b`, reviewed HEAD `b441799`, CI #58 6/6 passed):** Stage 1 IDs are O4-T-01…T-07, T-09…T-15, T-17…T-19, T-24, T-25. For **T-07, T-18, T-19 only their checker-level unit portions** are Stage 1. Stage 1 mandatory-cases (checker-level unit portions): T-02, T-03, T-06, T-07 (checker-level), T-14, T-17, T-18 (checker-level), T-19 (checker-level), T-25, with all their parameterized subcases. Passing Stage 1 alone does **NOT** constitute full O4 safety approval — T-08, T-23, T-16, T-20, T-21 and the integration portions of T-07/T-18/T-19 are Stage 2 and still required before final merge.
 
 **Full-O4 mandatory pass rule (final merge gate):** the canonical set above, plus all parameterized subcases, must be **collected**, **actually executed**, **passed**, **not skipped**, **not xfailed**, **not errored**, and **not missing from the collection manifest**. Stage 1 satisfies only the Stage 1 subset; the full set is discharged only after Stage 2. Any violation blocks merge under the proposed Safety CI Gate.
 
@@ -534,7 +534,7 @@ Member F has confirmed new O4 offline tests should live under `test/offline/`.
 
 | Item | Proposal | Status |
 |---|---|---|
-| Unit tests | `test/offline/test_evidence_gate.py` | PROPOSED (path confirmed by F; `test/` does not exist yet) |
+| Unit tests | `test/offline/test_evidence_gate.py` | IMPLEMENTED (Stage 1; created in `fefd884`, extended in `38dad9b`) |
 | Offline Graph/CLI integration tests | `test/offline/test_evidence_gate_integration.py` | PROPOSED |
 | Lint | `ruff check .` | Verified in `ci.yml:66` |
 | Benchmark | Member F harness per `O4_T16_Performance_Verification_Plan.md` v0.1 | NOT YET DEFINED |
@@ -560,9 +560,9 @@ Consequence for O4: the offline Graph/CLI tests (O4-T-07/T-08/T-18/T-19/T-23 int
 - `addopts = '-ra --strict-markers -m "not integration"'` — default run **excludes** `integration`-marked tests; `pytest -q` in `.github/workflows/ci.yml`.
 - The `test/offline/conftest.py` fixture returns early **only** for `integration`-marked tests; because O4 offline unit/Graph/CLI tests are **not** integration-marked under the unified policy, the fixture **is** active for them.
 
-> **Evidence caveat:** config and fixture facts are established from read-only API inspection of merged `main` / CI PR #1. Actual collection, execution, and network isolation on CI have **not** been verified; no O4 run has occurred. The current local workspace is a pre-merge snapshot and lacks `test/`.
+> **Evidence status:** config and fixture facts were established from read-only API inspection of merged `main` / CI PR #1. Stage 1 offline tests have since been **implemented and executed** — locally (O4 file 53 passed; root 1494 passed) and on CI #58 at reviewed HEAD `b441799` (6/6 checks passed; Python 3.12 job 1543 passed). See `docs/test-approvals/O4-Evidence-Gate.md` for links.
 
-### 7.3 Required commands (documented proposals — NOT executed, NOT verified for O4)
+### 7.3 Required commands (executed for Stage 1; evidence recorded)
 
 Under the unified policy the default run is the primary evidence source; a separate integration-marker run is **not** the O4 path for offline Graph/CLI tests (they are default-collected).
 
@@ -674,14 +674,14 @@ Immediate mandatory safety checks are separate from the confirmed-target perform
 
 ## 12. Review status
 
-Status: Draft
+Status: Stage 1 implemented and executed; Stage 2 not started
 Owner: Member D
-Reviewer: Pending
-Review date: Pending
-Approval evidence: Not yet available
+Reviewer: Member F (Stage 1 test plan approved; Stage 1 fix reviewed pass); Member A (Stage 1 scope; final PR review pending)
+Review date: 2026-11-17 (Member F test-plan approval 2026-11-17T08:02:32Z; Member F fix review 2026-11-17T15:20:24Z)
+Approval evidence: Member F formal APPROVED review id 5934877146; see docs/test-approvals/O4-Evidence-Gate.md
 Plan version: O4-TEST-v0.5
-Formal approval: Pending (Member F approved the T-07 test design only)
+Formal approval: Member F formally APPROVED O4-TEST-v0.5 Stage 1 (review 5934877146, 2026-11-17T08:02:32Z); Stage 2 not approved
 Authoritative requirements baseline: docs/req/requirements.yaml (PR #2 merged at 4f87e29f)
 Historical review snapshot: main 5afb24cf1b48e15e5000ee1365826eebb30d01ae
-Implementation baseline: Pending (verified main SHA after local sync)
+Implementation baseline: Verified main ef1e6a362def6bb24275e6fd3678e4f10d4b1f07; Stage 1 first code commit fefd884; reviewed HEAD b441799
 Superseded draft reference: O4-requirements.md O4-REQ-r3 (working draft, not the approved baseline)

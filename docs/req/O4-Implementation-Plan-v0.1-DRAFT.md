@@ -13,7 +13,7 @@
 | PR #2 merge commit | `4f87e29f7a52842dba8272071d2a4a1b527def10` |
 | O4 Draft PR | PR #7 (`feature/o4-evidence-gate`) |
 | CI provenance | Unified collection + `test/offline/` fixture from **CI PR #1** (merged) |
-| Approval | **Member A approved the Stage 1 execution scope; Member F formally approved the O4-TEST-v0.5 Stage 1 test plan. Stage 1 implementation committed (`fefd884`, reviewed HEAD `b1982c4`, CI 6/6). Stage 1 follow-up fix committed at `38dad9b`, awaiting Member F review. Shared Stage 2 integration NOT approved.** |
+| Approval | **Member A approved the Stage 1 execution scope; Member F formally approved the O4-TEST-v0.5 Stage 1 test plan. Stage 1 implementation committed (`fefd884`), rating-resolution fix `38dad9b`, reviewed HEAD `b441799`, CI #58 6/6 passed; Member F reviewed the fix pass. Final PR approval pending. Shared Stage 2 integration NOT approved.** |
 | Approval history | Member A (PR #7) approved **only the O4-EXEC-v0.1 Stage 1** D-owned scope and fixed G1/S2/B1; Member A **reconfirmed the Stage 1 execution scope** for this plan. This revised **v0.2** document is **not** approved as a whole; the T-07 production-entry clarification does not broaden the approved scope. Member F approved the **T-07 test design** only, not the overall revised test plan. |
 
 > **Version history.** O4-EXEC-v0.1 (prior draft) → **O4-EXEC-v0.2-DRAFT** (this revision: G1/S2/B1 adopted, two-stage scope, NFR-06 v1 durability not required, CI PR #1 provenance, T-16 formal-vs-supplementary). Test IDs remain O4-T-01…T-25.
@@ -26,7 +26,7 @@
 
 Documentation-only. No implementation, test code, CI, registry, Git, or GitHub writes are performed by this plan.
 
-**Stage 1 — D-owned, Member A approved (scope only; not yet implemented):**
+**Stage 1 — D-owned, Member A approved (scope; implemented and executed — first code `fefd884`, fix `38dad9b`, reviewed HEAD `b441799`, CI #58 6/6):**
 - Create `tradingagents/agents/evidence_gate.py` (pure checker) and `test/offline/test_evidence_gate.py` (offline unit tests).
 - Stage 1 tests: O4-T-01…T-07, T-09…T-15, T-17…T-19, T-24, T-25. For **T-07, T-18, T-19 only their checker-level unit portions** (real `check_evidence()` entry point).
 - Must NOT modify shared Graph, CLI, reporting, logging, state, or runtime integration files.
@@ -81,7 +81,7 @@ GateResult:
 
 The checker is **Stage 1**; it computes on inputs and returns a `GateResult`. It does **not** mutate state.
 
-**T-07 production-entry fail-closed contract (Member F, resolved):** the production checker itself handles a recoverable internal evidence-processing failure. The future Stage 1 test calls the real `check_evidence()` entry point and injects a representative recoverable exception (e.g. `RuntimeError`) at a **real internal evidence-processing computation point** (a production helper defined as part of the checked architecture, monkeypatched to raise). Production logic returns `verdict="review"`, `effective_rating="REVIEW"`, and a non-empty `reason`. A test-only wrapper that catches the exception and builds `REVIEW` is **not acceptable**. Configuration errors (T-18) are a separate contract: they raise `ValueError` and are **not** swallowed by the recoverable handler. The module does not yet exist; this is a proposed contract, not an implementation claim.
+**T-07 production-entry fail-closed contract (Member F, resolved):** the production checker itself handles a recoverable internal evidence-processing failure. The Stage 1 test calls the real `check_evidence()` entry point and injects a representative recoverable exception (e.g. `RuntimeError`) at a **real internal evidence-processing computation point** (a production helper defined as part of the checked architecture, monkeypatched to raise). Production logic returns `verdict="review"`, `effective_rating="REVIEW"`, and a non-empty `reason`. A test-only wrapper that catches the exception and builds `REVIEW` is **not acceptable**. Configuration errors (T-18) are a separate contract: they raise `ValueError` and are **not** swallowed by the recoverable handler. This contract is now **implemented and reviewed**: the module exists (Stage 1, `fefd884` + `38dad9b`) and the T-07 fail-closed behaviour, including the rating-resolution path, was reviewed by Member F.
 
 **Requirement priorities (authoritative registry, verified @ main 5afb24cf):** O4-FR-10 **Must**, O4-FR-11 **Must**, O4-NFR-01 **Must**, O4-NFR-02 **Must**; O4-FR-04 **Won't (v1)**; O4-NFR-03 **Should** (p95 <= 10 ms); O4-INV-05 → **O4-T-25**. No "Should"/"Must (proposed)" labels are used for FR-10/11 or NFR-01/02.
 
@@ -238,13 +238,13 @@ Stage 1 mandatory-cases (checker-level unit portions): T-02, T-03, T-06, T-07, T
 
 ---
 
-## L. Explicit human approval requirements before coding
+## L. Human approval requirements (Stage 1 satisfied; Stage 2 open)
 
-1. **Member F** — formal approval of `O4-TEST-v0.4`. (A has approved Stage 1 scope; F has not approved the test plan.)
-2. **Members A/C** — Stage 2 shared-integration scope (separate approval; C coordinates, A aligned first).
-3. Confirm original-rating storage field and exact G1/B1 insertion scope (A/C).
+1. **Member F** — formal approval of the Stage 1 test plan: **DONE** (O4-TEST-v0.5 approved, review `5934877146`, `2026-11-17T08:02:32Z`; Stage 1 fix reviewed pass `2026-11-17T15:20:24Z`).
+2. **Members A/C** — Stage 2 shared-integration scope (separate approval; C coordinates, A aligned first). **OPEN.**
+3. Confirm original-rating storage field and exact G1/B1 insertion scope (A/C). **OPEN (Stage 2).**
 4. Governance artifacts present (Test Approval record, AI-use log, ADR for containment if adopted).
-5. **Stage 1 implementation may begin only after (1) and prerequisites.** Stage 2 only after (2)–(3). **This document records no approvals.**
+5. **Stage 1 implementation is completed** (first code `fefd884`, fix `38dad9b`, reviewed HEAD `b441799`, CI #58 6/6); **final PR approval pending**. Stage 2 only after (2)–(3). **This document records no Stage 2 approval.**
 
 ---
 

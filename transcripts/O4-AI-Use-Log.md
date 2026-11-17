@@ -82,8 +82,23 @@ These results are supported by the preserved OpenCode session; exact raw output 
   configuration ValueError propagation all passed.
 - **Follow-up commit:** `38dad9b965e47b129eb2b6e49730477d713ef459` — committed
   `2026-11-17T22:52:46+08:00` (`2026-11-17T14:52:46Z` UTC), subject
-  `fix(o4): fail closed on rating-resolution errors`. **Awaiting Member F review of the fix**;
-  this is not yet represented as approved.
+  `fix(o4): fail closed on rating-resolution errors`.
+
+## Stage 1 review closeout — documentation sync (this activity)
+
+- **Member F review (recorded, not fabricated):** `fancx777`, comment `2026-11-17T15:20:24Z`,
+  https://github.com/Caicys297/TradingAgents-CS5351/pull/7#issuecomment-6952296749 — confirmed the
+  `38dad9b` fix and regression tests at PR head `b441799`; **CI #58 six checks passed**.
+- **Member A review (recorded):** `Caicys297`, COMMENTED review id `5941530439`,
+  `2026-11-17T15:38:16Z`, https://github.com/Caicys297/TradingAgents-CS5351/pull/7#pullrequestreview-5941530439
+  — requested documentation closeout + PR-title update; **final PR approval still pending**.
+- **CI #58 (recorded):** run `44108177104` (run_number 58), head_sha `b441799`, conclusion
+  **success** (6/6 jobs). Python 3.12 job reported **1543 passed** (CI count, distinct from the
+  local working-tree **1494 passed** — recorded separately per Member F).
+- **OpenCode use for this closeout:** documentation-only edits to the approval record and the two
+  O4 planning documents (progress/status text), via OpenCode. No code/test changes.
+- **Documentation commit for this closeout: not yet created** — pending authorization; PR title
+  update also pending.
 
 ## Provenance of approvals referenced by O4
 
