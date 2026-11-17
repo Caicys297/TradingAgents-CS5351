@@ -55,18 +55,18 @@
 - **Ownership:** F designs independently now; the **follow-up test + execution scope go to A for approval**.
 
 ## 5. Preserved items
-- **Fixed CLI expectations (TC-O6-12 table, unchanged):**
+- **Fixed CLI expectations (TC-O6-12):** Select `market,news`. Market's ordinary call reports 100 input and 20 output tokens, its `wrap_up` reports 80 input and 15 output tokens, and News's ordinary call reports 80 input and 15 output tokens.
 
-| Column | Market Analyst (`market`) | News Analyst (`news`) |
-|---|---|---|
-| Analyst label (rendered) | "Market Analyst" | "News Analyst" |
-| Calls | 2 (ordinary + wrap_up) | 1 (ordinary) |
-| Input tokens (total) | 180 | 80 |
-| Input completeness | complete | complete |
-| Output tokens (total) | 35 | 15 |
-| Output completeness | complete | complete |
+| Render order | Analyst key | Rendered label | Calls | Input tokens | Output tokens |
+|---|---|---|---:|---|---|
+| 1 | `market` | Market Analyst | 2 | 180 (`complete`) | 35 (`complete`) |
+| 2 | `news` | News Analyst | 1 | 80 (`complete`) | 15 (`complete`) |
 
-  Disclosures: (a) first structured-call attribution deferred; (b) named rows include only selected-Analyst calls with verified identity. Supporting evidence: the handler `get_agent_stats()` snapshot equal to the rendered rows.
+  The actual CLI statistics section renders exactly these two Analyst rows in plan order. Compare the rows with the same run's `get_agent_stats()` snapshot, including the call and token totals and completeness. Compare displayed duration to the snapshot using the CLI formatting rule. Assert `unattributed_calls == 0` in the snapshot and `unattributed calls: 0` in the CLI output. Assert that both disclosure strings appear verbatim:
+
+  - `first structured-call attribution deferred`
+  - `named rows include only selected-Analyst calls with verified identity`
+
 - **Test IDs:** TC-O6-07 (single-Analyst ordinary+wrap_up), 07b (two overlapping), 11, 12, 13, plus two-run isolation (ID for A) and handler regression. Registry remainder (FR-01 list `01,04,07,07b,08,10,11,12,13`; Batch 1 = 01,04,08,10) → **remaining 07, 07b, 11, 12, 13** + isolation + regression.
 - **Offline collection checks:** new tests under `test/offline/` (autouse `_no_network` guard); `.venv/bin/python -m pytest --collect-only -q` lists the new nodes; network-guard probe (`socket.connect`/`getaddrinfo` → `OSError`).
 - **Key source:** validated execution-plan `spec.key` values via `build_analyst_execution_plan`.
