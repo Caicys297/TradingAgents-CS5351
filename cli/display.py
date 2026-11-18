@@ -376,6 +376,73 @@ def update_display(layout, spinner_text=None, stats_handler=None, start_time=Non
     layout["footer"].update(Panel(stats_table, border_style="grey50"))
 
 
+def format_agent_tokens(field):
+    """One token field as shown in the summary: value, or "--" when unknown."""
+    if not field or field.get("status") == "unknown" or field.get("value") is None:
+        return "--"
+    text = format_tokens(field["value"])
+    if field.get("status") == "partial":
+        # The figure is a floor, not a total: say so rather than implying
+        # the analyst's whole usage was counted.
+        return f"{text} (partial)"
+    return text
+
+
+def display_agent_summary(stats_handler, target_console=None):
+    """Show per-Analyst usage and the unattributed-call count for this run.
+
+    Rendered after the run ends, on the normal screen: the live footer has
+    three lines and cannot hold one row per analyst. A named row appears only
+    for an analyst that recorded a call, an unknown token count prints "--"
+    (never 0), and the unattributed line is always printed so a zero is
+    evidence rather than silence.
+
+    ``target_console`` defaults to the module console; a caller that captures
+    the output can pass its own.
+    """
+    out = target_console or console
+    if stats_handler is None:
+        return
+    stats = stats_handler.get_agent_stats()
+    analysts = stats.get("analysts") or {}
+    unattributed = stats.get("unattributed_calls", 0)
+
+    table = Table(show_header=True, box=None, padding=(0, 2), header_style="bold")
+    table.add_column("Analyst")
+    table.add_column("Calls", justify="right")
+    table.add_column("Input tokens", justify="right")
+    table.add_column("Output tokens", justify="right")
+    table.add_column("Duration", justify="right")
+
+    for key, row in analysts.items():
+        table.add_row(
+            ANALYST_AGENT_NAMES.get(key, key),
+            str(row.get("calls", 0)),
+            format_agent_tokens(row.get("input_tokens")),
+            format_agent_tokens(row.get("output_tokens")),
+            f"{row.get('duration', 0.0):.1f}s",
+        )
+    table.add_row(
+        "unattributed calls",
+        str(unattributed),
+        "",
+        "",
+        "one of the selected analysts, without a verified identity"
+        if unattributed
+        else "none",
+    )
+
+    out.print()
+    out.print(Rule("Analyst Usage", style="bold cyan"))
+    out.print(table)
+    # Fixed display copy for TC-O6-12; asserted verbatim, so do not reword.
+    out.print("[dim]first structured-call attribution deferred[/dim]")
+    out.print(
+        "[dim]named rows include only selected-Analyst calls with verified identity[/dim]"
+    )
+    out.print()
+
+
 def display_complete_report(final_state):
     """Display the complete analysis report sequentially (avoids truncation)."""
     console.print()

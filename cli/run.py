@@ -16,6 +16,7 @@ from cli.display import (
     classify_message_type,
     console,
     create_layout,
+    display_agent_summary,
     display_complete_report,
     message_buffer,
     update_analyst_statuses,
@@ -112,19 +113,25 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
 
     config = _build_run_config(selections, checkpoint)
 
-    stats_handler = StatsCallbackHandler()
-
     # Normalize analyst selection to predefined order (selection is a 'set', order is fixed)
     selected_set = {analyst.value for analyst in selections["analysts"]}
     selected_analyst_keys = [a for a in ANALYST_ORDER if a in selected_set]
     analyst_execution_plan = build_analyst_execution_plan(selected_analyst_keys)
     analyst_wall_time_tracker = AnalystWallTimeTracker(analyst_execution_plan)
 
+    # O6: the handler learns this run's analyst keys from the plan, so a call
+    # tagged with one of them is attributed to that analyst and a tagged call
+    # without a usable key is counted as unattributed. It is built here, after
+    # the plan exists, and registered once through the graph execution config
+    # below -- the constructor registration was removed once that single path
+    # was shown to carry every analyst call.
+    selected_spec_keys = [spec.key for spec in analyst_execution_plan.specs]
+    stats_handler = StatsCallbackHandler(selected_spec_keys)
+
     graph = TradingAgentsGraph(
         selected_analyst_keys,
         config=config,
         debug=True,
-        callbacks=[stats_handler],
     )
 
     message_buffer.init_for_analysis(selected_analyst_keys)
@@ -384,6 +391,12 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
             "decision text below and judge it yourself.[/yellow]\n"
         )
     console.print(f"[dim]{analyst_wall_time_tracker.format_summary()}[/dim]")
+
+    # O6: per-analyst usage. Placed after the completion notice, the conditional
+    # REVIEW notice and the elapsed-time line, and before the report options
+    # below; this is the current placement, not yet a formally approved order.
+    # The live footer is three lines and cannot hold per-analyst rows.
+    display_agent_summary(stats_handler)
 
     _offer_reports(final_state, graph, selections["ticker"],
                    save=flags.get("save"), show=flags.get("show"), html=flags.get("html"))
