@@ -1,0 +1,657 @@
+{
+  "schema": "o5-dev20-fixtures-v0.5.3-corrected-r2-draft",
+  "status": "DRAFT — AI-proposed draft rule expectations. NOT human labels, NOT a gold standard. Pending E + a second human reviewer.",
+  "rules_version": "o5-rules-v1.1-draft",
+  "topic_order": [
+    "MONETARY_POLICY",
+    "INFLATION",
+    "ECONOMIC_ACTIVITY"
+  ],
+  "primary_topic_contract": "primary_topic = first REQUESTED topic among matched; same-field anchor/QC pairing may cross clauses within a field (AM-40)",
+  "fixture_key_note": "M/I/A prefixes are HISTORICAL IDENTIFIERS only. They are not classification inputs and not authoritative topics. They exist so that documents and tests can refer to records readably; the ID (o5:...) is the record's identity.",
+  "id_scheme": "o5:<first 32 hex of sha256(canon(title) + U+001F + canon(source) + U+001F + canonical_url + U+001F + timestamp_iso)>. canon = NFKC, casefold, collapse whitespace, strip. URL absent => ''. Canonical URL = lowercase scheme+host, no default port, no trailing slash, query+fragment dropped. Timestamp ISO at second precision. U+001F separator (AM-27).",
+  "source_annotation": "ALL sources are synthetic (FixtureWire A..L, SyntheticWire A..H). No real outlet is attributed any article. Titles/summaries are fabricated examples and must not be cited as reporting.",
+  "selector_contract": {
+    "in_memory": "published_at is an aware datetime (UTC) or null. Loader converts serialized RFC3339 strings to datetimes BEFORE the selector. fixture_key is stripped before selection.",
+    "serialized": "this file stores RFC3339 strings. url is always null (no fabricated links).",
+    "raw_removed": "AM-13: no raw object; selected copies preserve the supplied business fields."
+  },
+  "window": {
+    "start_at": "2026-09-20T00:00:00Z",
+    "end_at": "2026-09-27T23:59:59.999999Z",
+    "note": "Selector inclusive (AM-01/AM-25). Adapter: start_at = 00:00 of start_date UTC; end_at = (end_date + 1 day) - 1 microsecond."
+  },
+  "evaluation": {
+    "K_full": 20,
+    "K_roundrobin": 6,
+    "K_pair": 2
+  },
+  "primary_bucket_counts": {
+    "MONETARY_POLICY": 7,
+    "INFLATION": 1,
+    "ECONOMIC_ACTIVITY": 4
+  },
+  "candidates": [
+    {
+      "fixture_key": "M01",
+      "candidate_id": "o5:5bac9b8abe6d5ca1d080daddc17790be",
+      "title": "Fed holds rates steady as officials flag slower disinflation",
+      "summary": "The Federal Reserve left its benchmark rate unchanged, citing easing but still-elevated disinflation and a cooling labor market.",
+      "source": "FixtureWire A",
+      "url": null,
+      "published_at": "2026-09-26T14:05:00Z"
+    },
+    {
+      "fixture_key": "M02",
+      "candidate_id": "o5:58f3c5dd5bc2f436c98fc012baf182f9",
+      "title": "ECB cuts deposit rate by 25 basis points to support weak euro-area economy",
+      "summary": "The European Central Bank lowered its deposit facility rate, pointing to soft growth and easing inflation.",
+      "source": "FixtureWire B",
+      "url": null,
+      "published_at": "2026-09-26T09:30:00Z"
+    },
+    {
+      "fixture_key": "M03",
+      "candidate_id": "o5:44df14dcd79b73454a0aead746a40905",
+      "title": "Bank of Japan keeps policy rate unchanged, signals patience on normalization",
+      "summary": "The BOJ held its negative rate policy and said it would watch wage growth and the yen before further moves.",
+      "source": "FixtureWire C",
+      "url": null,
+      "published_at": "2026-09-25T18:40:00Z"
+    },
+    {
+      "fixture_key": "M04",
+      "candidate_id": "o5:e5d287a2701703d3a333955ea5632eca",
+      "title": "Federal Reserve minutes show split over pace of future rate cuts",
+      "summary": "Minutes revealed a divide among officials on how quickly to reduce the policy rate amid cooling inflation.",
+      "source": "FixtureWire D",
+      "url": null,
+      "published_at": "2026-09-24T12:00:00Z"
+    },
+    {
+      "fixture_key": "I01",
+      "candidate_id": "o5:d55befa5f36ac3b155868409c5f899cf",
+      "title": "US CPI rises 3.1 percent year over year in August as core PCE eases",
+      "summary": "Consumer price inflation remains above target even as the core PCE gauge showed disinflation.",
+      "source": "FixtureWire E",
+      "url": null,
+      "published_at": "2026-09-23T16:15:00Z"
+    },
+    {
+      "fixture_key": "I02",
+      "candidate_id": "o5:76af6077cb6a0e2997d55cde4b224aee",
+      "title": "Euro-area inflation falls to 2.2 percent in August on cheaper energy",
+      "summary": "Headline inflation eased toward the ECB target as energy prices declined, while core inflation held steady.",
+      "source": "FixtureWire F",
+      "url": null,
+      "published_at": "2026-09-22T11:10:00Z"
+    },
+    {
+      "fixture_key": "I03",
+      "candidate_id": "o5:b3b61c07f233284081ab068c751a0e55",
+      "title": "UK inflation holds at 2.6 percent as services prices stay sticky",
+      "summary": "The ONS reported stubborn services inflation, complicating the Bank of England's rate path.",
+      "source": "FixtureWire G",
+      "url": null,
+      "published_at": "2026-09-21T20:45:00Z"
+    },
+    {
+      "fixture_key": "I04",
+      "candidate_id": "o5:95601f86c25b678d54a4d2ddf234b8bd",
+      "title": "Core PCE inflation cools to 2.4 percent, reinforcing disinflation trend",
+      "summary": "The Fed's preferred inflation gauge continued to moderate, supporting expectations of slower tightening.",
+      "source": "FixtureWire H",
+      "url": null,
+      "published_at": "2026-09-20T08:20:00Z"
+    },
+    {
+      "fixture_key": "A01",
+      "candidate_id": "o5:5c49d34495cd1dbf9c2eeb2e2ddc914d",
+      "title": "US payrolls surge 187,000 as unemployment ticks up to 4.1 percent",
+      "summary": "Nonfarm payrolls rose more than forecast while the jobless rate edged higher, a mixed labor-market signal.",
+      "source": "FixtureWire I",
+      "url": null,
+      "published_at": "2026-09-27T10:00:00Z"
+    },
+    {
+      "fixture_key": "A02",
+      "candidate_id": "o5:561859c0dd24950172c101ba3de0418b",
+      "title": "Euro-area GDP grows 0.3 percent in the second quarter, beating forecasts",
+      "summary": "Eurostat said output expanded faster than expected, easing recession fears across the bloc.",
+      "source": "FixtureWire J",
+      "url": null,
+      "published_at": "2026-09-26T21:00:00Z"
+    },
+    {
+      "fixture_key": "A03",
+      "candidate_id": "o5:76d80b40c8887222a2bbd283cb698830",
+      "title": "US manufacturing PMI slips into contraction, adding to recession worries",
+      "summary": "The ISM manufacturing index fell below 50, a sign of weaker industrial activity.",
+      "source": "FixtureWire K",
+      "url": null,
+      "published_at": "2026-09-25T07:45:00Z"
+    },
+    {
+      "fixture_key": "A04",
+      "candidate_id": "o5:9d462239478e0228146a19800fbcb903",
+      "title": "Retail sales rise 0.5 percent as consumer spending stays resilient",
+      "summary": "Commerce Department data showed steady household demand, supporting the growth outlook.",
+      "source": "FixtureWire L",
+      "url": null,
+      "published_at": "2026-09-23T05:30:00Z"
+    },
+    {
+      "fixture_key": "N01",
+      "candidate_id": "o5:38dff84899c010207003e06ba4bfc2e8",
+      "title": "FedEx raises quarterly dividend and expands share buyback program",
+      "summary": "The logistics company announced a higher payout and a new buyback authorization.",
+      "source": "SyntheticWire A",
+      "url": null,
+      "published_at": "2026-09-22T19:00:00Z"
+    },
+    {
+      "fixture_key": "N02",
+      "candidate_id": "o5:a940e94d52a24510ca23ccb9c77511e2",
+      "title": "CPI Group appoints new chief executive after leadership review",
+      "summary": "The corporate services firm named a new CEO following an internal review.",
+      "source": "SyntheticWire B",
+      "url": null,
+      "published_at": "2026-09-21T13:25:00Z"
+    },
+    {
+      "fixture_key": "N03",
+      "candidate_id": "o5:4cff906ba11668b5f5010fb1719a5894",
+      "title": "Expansion pack adds inflation to the game economy in new update",
+      "summary": "The studio tweaked the virtual economy, introducing price inflation mechanics for players.",
+      "source": "SyntheticWire C",
+      "url": null,
+      "published_at": "2026-09-24T22:10:00Z"
+    },
+    {
+      "fixture_key": "N04",
+      "candidate_id": "o5:0ad640cce08d1c80838cc4b9fa874b06",
+      "title": "S&P 500 hits record high as technology shares rally",
+      "summary": "The benchmark index set a new closing high, led by gains in large technology companies.",
+      "source": "SyntheticWire D",
+      "url": null,
+      "published_at": "2026-09-20T17:40:00Z"
+    },
+    {
+      "fixture_key": "N05",
+      "candidate_id": "o5:abb7e0ce1ce48be73ee5cd5a0bcc015d",
+      "title": "Company unveils new smartphone lineup at annual launch event",
+      "summary": "The handset maker introduced three models with upgraded cameras.",
+      "source": "SyntheticWire E",
+      "url": null,
+      "published_at": "2026-09-27T23:30:00Z"
+    },
+    {
+      "fixture_key": "N06",
+      "candidate_id": "o5:8bd191598f05ecbe283d62e82e5c6f3a",
+      "title": "Board approves merger of two regional logistics firms",
+      "summary": "The boards signed a definitive agreement to combine operations next quarter.",
+      "source": "SyntheticWire F",
+      "url": null,
+      "published_at": "2026-09-26T03:15:00Z"
+    },
+    {
+      "fixture_key": "N07",
+      "candidate_id": "o5:dbbf869255eb3b83c178bb6fb1a7a725",
+      "title": "Actor wins award for leading role in historical drama film",
+      "summary": "The performer received a top prize at a film festival.",
+      "source": "SyntheticWire G",
+      "url": null,
+      "published_at": "2026-09-25T12:00:00Z"
+    },
+    {
+      "fixture_key": "N08",
+      "candidate_id": "o5:a5f8316d73407a07199cd4b40e6bc584",
+      "title": "Shares of retailer jump after better-than-expected quarterly earnings",
+      "summary": "The retailer reported earnings above guidance, sending shares higher.",
+      "source": "SyntheticWire H",
+      "url": null,
+      "published_at": "2026-09-24T06:50:00Z"
+    }
+  ],
+  "labels": [
+    {
+      "fixture_key": "M01",
+      "matched_topics": [
+        "MONETARY_POLICY",
+        "INFLATION"
+      ],
+      "primary_topic": "MONETARY_POLICY",
+      "relevant": true,
+      "witness": [
+        {
+          "field": "title",
+          "anchor": "fed",
+          "qc": "holds",
+          "rule": "R1-MP"
+        },
+        {
+          "field": "summary",
+          "anchor": "inflation",
+          "qc": "easing",
+          "rule": "R2-IN"
+        }
+      ],
+      "rationale": "MP+IN: title Fed+holds (R1) and summary inflation+easing (R2); clause-crossing within summary allowed; primary first requested MP."
+    },
+    {
+      "fixture_key": "M02",
+      "matched_topics": [
+        "MONETARY_POLICY",
+        "INFLATION"
+      ],
+      "primary_topic": "MONETARY_POLICY",
+      "relevant": true,
+      "witness": [
+        {
+          "field": "title",
+          "anchor": "ecb",
+          "qc": "cuts",
+          "rule": "R1-MP"
+        },
+        {
+          "field": "summary",
+          "anchor": "central bank",
+          "qc": "rate",
+          "rule": "R1-MP",
+          "span_note": "matched inside 'The European Central Bank lowered its deposit facility rate'; 'european' is not part of the vocabulary anchor."
+        },
+        {
+          "field": "summary",
+          "anchor": "inflation",
+          "qc": "easing",
+          "rule": "R2-IN"
+        }
+      ],
+      "rationale": "MP+IN: title ECB+cuts (R1); summary contains vocabulary anchor 'central bank' with QC 'rate' (R1) and 'inflation' with QC 'easing' (R2). Primary MP (first requested)."
+    },
+    {
+      "fixture_key": "M03",
+      "matched_topics": [
+        "MONETARY_POLICY"
+      ],
+      "primary_topic": "MONETARY_POLICY",
+      "relevant": true,
+      "witness": [
+        {
+          "field": "title",
+          "anchor": "bank of japan",
+          "qc": "rate",
+          "rule": "R1-MP"
+        }
+      ],
+      "rationale": "MP: BOJ rate policy."
+    },
+    {
+      "fixture_key": "M04",
+      "matched_topics": [
+        "MONETARY_POLICY"
+      ],
+      "primary_topic": "MONETARY_POLICY",
+      "relevant": true,
+      "witness": [
+        {
+          "field": "title",
+          "anchor": "federal reserve",
+          "qc": "minutes",
+          "rule": "R1-MP"
+        }
+      ],
+      "rationale": "MP: Fed minutes."
+    },
+    {
+      "fixture_key": "I01",
+      "matched_topics": [
+        "INFLATION"
+      ],
+      "primary_topic": "INFLATION",
+      "relevant": true,
+      "witness": [
+        {
+          "field": "title",
+          "anchor": "cpi",
+          "qc": "percent",
+          "rule": "R2-IN"
+        }
+      ],
+      "rationale": "IN: CPI+percent."
+    },
+    {
+      "fixture_key": "I02",
+      "matched_topics": [
+        "MONETARY_POLICY",
+        "INFLATION"
+      ],
+      "primary_topic": "MONETARY_POLICY",
+      "relevant": true,
+      "witness": [
+        {
+          "field": "title",
+          "anchor": "inflation",
+          "qc": "percent",
+          "rule": "R2-IN"
+        },
+        {
+          "field": "summary",
+          "anchor": "ecb",
+          "qc": "held",
+          "rule": "R1-MP"
+        }
+      ],
+      "rationale": "MP+IN: title inflation+percent (R2); summary ECB + held (R1, clause-crossing within field). Primary MP."
+    },
+    {
+      "fixture_key": "I03",
+      "matched_topics": [
+        "MONETARY_POLICY",
+        "INFLATION"
+      ],
+      "primary_topic": "MONETARY_POLICY",
+      "relevant": true,
+      "witness": [
+        {
+          "field": "title",
+          "anchor": "inflation",
+          "qc": "percent",
+          "rule": "R2-IN"
+        },
+        {
+          "field": "summary",
+          "anchor": "bank of england",
+          "qc": "rate",
+          "rule": "R1-MP"
+        }
+      ],
+      "rationale": "MP+IN: title inflation+percent; summary Bank of England+rate."
+    },
+    {
+      "fixture_key": "I04",
+      "matched_topics": [
+        "MONETARY_POLICY",
+        "INFLATION"
+      ],
+      "primary_topic": "MONETARY_POLICY",
+      "relevant": true,
+      "witness": [
+        {
+          "field": "title",
+          "anchor": "core pce",
+          "qc": "percent",
+          "rule": "R2-IN"
+        },
+        {
+          "field": "summary",
+          "anchor": "fed",
+          "qc": "tightening",
+          "rule": "R1-MP"
+        }
+      ],
+      "rationale": "MP+IN: title Core PCE+percent (R2); summary Fed's->[fed,s] + tightening (R1). Primary MP. v0.5.1's 'no Fed anchor' claim was false and is withdrawn."
+    },
+    {
+      "fixture_key": "A01",
+      "matched_topics": [
+        "ECONOMIC_ACTIVITY"
+      ],
+      "primary_topic": "ECONOMIC_ACTIVITY",
+      "relevant": true,
+      "witness": [
+        {
+          "field": "title",
+          "anchor": "payrolls",
+          "qc": "percent",
+          "rule": "R3-EA"
+        }
+      ],
+      "rationale": "EA: payrolls+percent."
+    },
+    {
+      "fixture_key": "A02",
+      "matched_topics": [
+        "ECONOMIC_ACTIVITY"
+      ],
+      "primary_topic": "ECONOMIC_ACTIVITY",
+      "relevant": true,
+      "witness": [
+        {
+          "field": "title",
+          "anchor": "gdp",
+          "qc": "percent",
+          "rule": "R3-EA"
+        }
+      ],
+      "rationale": "EA: GDP+percent."
+    },
+    {
+      "fixture_key": "A03",
+      "matched_topics": [
+        "ECONOMIC_ACTIVITY"
+      ],
+      "primary_topic": "ECONOMIC_ACTIVITY",
+      "relevant": true,
+      "witness": [
+        {
+          "field": "title",
+          "anchor": "pmi",
+          "qc": "contraction",
+          "rule": "R3-EA"
+        }
+      ],
+      "rationale": "EA: PMI+contraction."
+    },
+    {
+      "fixture_key": "A04",
+      "matched_topics": [
+        "ECONOMIC_ACTIVITY"
+      ],
+      "primary_topic": "ECONOMIC_ACTIVITY",
+      "relevant": true,
+      "witness": [
+        {
+          "field": "title",
+          "anchor": "retail sales",
+          "qc": "percent",
+          "rule": "R3-EA"
+        }
+      ],
+      "rationale": "EA: retail sales+percent."
+    },
+    {
+      "fixture_key": "N01",
+      "matched_topics": [],
+      "primary_topic": null,
+      "relevant": false,
+      "witness": null,
+      "rationale": "R1 exclusion: 'Fed' inside 'FedEx' is not a word-boundary match. No permitted anchor+QC pair survives."
+    },
+    {
+      "fixture_key": "N02",
+      "matched_topics": [],
+      "primary_topic": null,
+      "relevant": false,
+      "witness": null,
+      "rationale": "R2 exclusion: 'CPI' is a company name; no numeric/percent statistic in the same field. No permitted pair."
+    },
+    {
+      "fixture_key": "N03",
+      "matched_topics": [],
+      "primary_topic": null,
+      "relevant": false,
+      "witness": null,
+      "rationale": "R2 context exclusion: 'inflation' occurs in 'game economy'/'virtual economy' context. No permitted pair."
+    },
+    {
+      "fixture_key": "N04",
+      "matched_topics": [],
+      "primary_topic": null,
+      "relevant": false,
+      "witness": null,
+      "rationale": "No anchor appears. No permitted pair."
+    },
+    {
+      "fixture_key": "N05",
+      "matched_topics": [],
+      "primary_topic": null,
+      "relevant": false,
+      "witness": null,
+      "rationale": "No anchor appears. No permitted pair."
+    },
+    {
+      "fixture_key": "N06",
+      "matched_topics": [],
+      "primary_topic": null,
+      "relevant": false,
+      "witness": null,
+      "rationale": "No anchor appears. No permitted pair."
+    },
+    {
+      "fixture_key": "N07",
+      "matched_topics": [],
+      "primary_topic": null,
+      "relevant": false,
+      "witness": null,
+      "rationale": "No anchor appears. No permitted pair."
+    },
+    {
+      "fixture_key": "N08",
+      "matched_topics": [],
+      "primary_topic": null,
+      "relevant": false,
+      "witness": null,
+      "rationale": "No anchor appears ('earnings' is not an R3 anchor). No permitted pair."
+    }
+  ],
+  "fixture_key_to_id": {
+    "M01": "o5:5bac9b8abe6d5ca1d080daddc17790be",
+    "M02": "o5:58f3c5dd5bc2f436c98fc012baf182f9",
+    "M03": "o5:44df14dcd79b73454a0aead746a40905",
+    "M04": "o5:e5d287a2701703d3a333955ea5632eca",
+    "I01": "o5:d55befa5f36ac3b155868409c5f899cf",
+    "I02": "o5:76af6077cb6a0e2997d55cde4b224aee",
+    "I03": "o5:b3b61c07f233284081ab068c751a0e55",
+    "I04": "o5:95601f86c25b678d54a4d2ddf234b8bd",
+    "A01": "o5:5c49d34495cd1dbf9c2eeb2e2ddc914d",
+    "A02": "o5:561859c0dd24950172c101ba3de0418b",
+    "A03": "o5:76d80b40c8887222a2bbd283cb698830",
+    "A04": "o5:9d462239478e0228146a19800fbcb903",
+    "N01": "o5:38dff84899c010207003e06ba4bfc2e8",
+    "N02": "o5:a940e94d52a24510ca23ccb9c77511e2",
+    "N03": "o5:4cff906ba11668b5f5010fb1719a5894",
+    "N04": "o5:0ad640cce08d1c80838cc4b9fa874b06",
+    "N05": "o5:abb7e0ce1ce48be73ee5cd5a0bcc015d",
+    "N06": "o5:8bd191598f05ecbe283d62e82e5c6f3a",
+    "N07": "o5:dbbf869255eb3b83c178bb6fb1a7a725",
+    "N08": "o5:a5f8316d73407a07199cd4b40e6bc584"
+  },
+  "expected": {
+    "k20_shipped_round_robin_order": [
+      "M01",
+      "I01",
+      "A01",
+      "M02",
+      "A02",
+      "M03",
+      "A03",
+      "M04",
+      "A04",
+      "I02",
+      "I03",
+      "I04"
+    ],
+    "k20_expected_selected_set": [
+      "M01",
+      "I01",
+      "A01",
+      "M02",
+      "A02",
+      "M03",
+      "A03",
+      "M04",
+      "A04",
+      "I02",
+      "I03",
+      "I04"
+    ],
+    "k6_order": [
+      "M01",
+      "I01",
+      "A01",
+      "M02",
+      "A02",
+      "M03"
+    ],
+    "k2_order": [
+      "M01",
+      "I01"
+    ],
+    "k20_counts": {
+      "input_count": 20,
+      "selected_count": 12,
+      "not_selected_limit_count": 0,
+      "irrelevant_count": 8,
+      "invalid_count": 0,
+      "out_of_window_count": 0,
+      "duplicate_count": 0,
+      "skipped_zero_limit_count": 0
+    },
+    "k6_counts": {
+      "input_count": 20,
+      "selected_count": 6,
+      "not_selected_limit_count": 6,
+      "irrelevant_count": 8,
+      "invalid_count": 0,
+      "out_of_window_count": 0,
+      "duplicate_count": 0,
+      "skipped_zero_limit_count": 0
+    },
+    "k2_counts": {
+      "input_count": 20,
+      "selected_count": 2,
+      "not_selected_limit_count": 10,
+      "irrelevant_count": 8,
+      "invalid_count": 0,
+      "out_of_window_count": 0,
+      "duplicate_count": 0,
+      "skipped_zero_limit_count": 0
+    },
+    "note": "Orders computed from proposed primary labels and per-bucket descending timestamp (timestamps fixed). k20_shipped_round_robin_order assumes K=20 is applied as ROUND-ROBIN selection over all 12 relevant (not the raw bucket dump). For K>=12 the selected set is all 12 regardless of order.",
+    "k6_order_note": "k6_order and all orders below are FIXTURE KEYS for human readability. Serveral tests must map via fixture_key_to_id; see expected.k6_order_ids for the actual-ID form.",
+    "k6_order_ids": [
+      "o5:5bac9b8abe6d5ca1d080daddc17790be",
+      "o5:d55befa5f36ac3b155868409c5f899cf",
+      "o5:5c49d34495cd1dbf9c2eeb2e2ddc914d",
+      "o5:58f3c5dd5bc2f436c98fc012baf182f9",
+      "o5:561859c0dd24950172c101ba3de0418b",
+      "o5:44df14dcd79b73454a0aead746a40905"
+    ],
+    "k2_order_ids": [
+      "o5:5bac9b8abe6d5ca1d080daddc17790be",
+      "o5:d55befa5f36ac3b155868409c5f899cf"
+    ],
+    "k20_round_robin_order_ids": [
+      "o5:5bac9b8abe6d5ca1d080daddc17790be",
+      "o5:d55befa5f36ac3b155868409c5f899cf",
+      "o5:5c49d34495cd1dbf9c2eeb2e2ddc914d",
+      "o5:58f3c5dd5bc2f436c98fc012baf182f9",
+      "o5:561859c0dd24950172c101ba3de0418b",
+      "o5:44df14dcd79b73454a0aead746a40905",
+      "o5:76d80b40c8887222a2bbd283cb698830",
+      "o5:e5d287a2701703d3a333955ea5632eca",
+      "o5:9d462239478e0228146a19800fbcb903",
+      "o5:76af6077cb6a0e2997d55cde4b224aee",
+      "o5:b3b61c07f233284081ab068c751a0e55",
+      "o5:95601f86c25b678d54a4d2ddf234b8bd"
+    ]
+  },
+  "rules_version_note": "AMENDED-PROPOSAL (AM-39): v0.4 was o5-rules-v1.0-draft; v0.4.1-corrected adds explicit QC inflections (easing, holds, held, fall, rose, eased, cools, grows, fell, ticks up, resilient, slips). M01/M02 match INFLATION via literal R2 QC easing as a consequence of this amendment.",
+  "review_basis": "Member F correction applied: I04's summary contains Fed's + tightening; tokenizer maps Fed's -> [fed, s], so I04 matches MONETARY_POLICY and INFLATION (primary MONETARY_POLICY). M02's summary European Central Bank + rate => R1 fires (MP); easing inflation => R2 QC easing but no separate INFLATION topic? see witness. Labels AI-proposed; human approval Pending.",
+  "matching_scope": "Anchor and QC must be in the same field (title or summary); pairing MAY cross clause boundaries within that field; it MUST NOT cross fields.",
+  "percent_tokenization": "NFKC->casefold; every % becomes its own token. Trailing/leading '.' and '-' are boundary punctuation and are stripped from tokens. Examples: 3.1% -> [3.1, %]; % -> [%]; percent -> [percent]; tightening. -> [tightening].",
+  "correction_note": "Withdrawn false claim (v0.5.1): 'I04 summary has no Fed anchor'. It does: Fed's -> [fed, s]; fed is an R1 anchor and tightening is an R1 QC in the same field, so R1 fires. Buckets recomputed: MP=7, IN=1, EA=4. K6=M01,I01,A01,M02,A02,M03.",
+  "witness_vocabulary_note": "v0.5.3: M02's summary R1 witness cites the actual vocabulary anchor 'central bank' (not 'european central bank', which is not a vocabulary entry). Article text and topic labels unchanged.",
+  "revision_note": "v0.5.3-corrected-r2: identical content to v0.5.3-corrected; article text, labels and scheduling unchanged. M02 witness anchor is the vocabulary entry 'central bank'."
+}
