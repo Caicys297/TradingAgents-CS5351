@@ -49,6 +49,7 @@ CONFIG_ALLOWLIST = (
     "input_stocktwits_cap_chars",
     "input_reddit_cap_chars",
     "input_near_dup_jaccard",
+    "input_condensation_audit_note",
     "o5_rules_version",
     "o5_requested_topics",
     "o5_limit",
