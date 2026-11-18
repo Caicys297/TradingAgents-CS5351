@@ -97,8 +97,13 @@ These results are supported by the preserved OpenCode session; exact raw output 
   local working-tree **1494 passed** — recorded separately per Member F).
 - **OpenCode use for this closeout:** documentation-only edits to the approval record and the two
   O4 planning documents (progress/status text), via OpenCode. No code/test changes.
-- **Documentation commit for this closeout: not yet created** — pending authorization; PR title
-  update also pending.
+- **Documentation closeout commit:** `0e0e981fdaf7216fa02ab95c85c931b020440d0a` — `2026-11-18T00:05:00+08:00`
+  (`2026-11-17T16:05:00Z` UTC), subject `docs(o4): finalize Stage 1 approval and CI evidence`
+  (documentation-only; four files). CI #61 (run for `0e0e981`) completed success — this is a
+  documentation commit, not a code change.
+- **Final documentation/PR-title cleanup commit:** created after `0e0e981` (this entry's own
+  commit SHA is identified by Git history, not self-referenced). The PR #7 title is updated to
+  `feat(o4): Stage 1 evidence gate checker + offline tests (rating-resolution fail-closed fix)`.
 
 ## Provenance of approvals referenced by O4
 

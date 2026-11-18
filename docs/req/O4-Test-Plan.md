@@ -10,7 +10,7 @@
 | Approval history | Member A (PR #7) approved the **Stage 1 execution scope** (reconfirmed for O4-EXEC-v0.2 at `2026-11-17T07:19:19Z`) and did **not** approve the plan as a whole. Member F formally approved the **O4-TEST-v0.5 Stage 1 test plan** at reviewed commit `27f244a`. Shared Stage 2 integration is **unapproved**. |
 | **Authoritative requirements baseline** | `docs/req/requirements.yaml` — Caicys297/TradingAgents-CS5351, PR #2 merged into `main`; PR #2 merge commit `4f87e29f7a52842dba8272071d2a4a1b527def10` |
 | Historical review snapshot | `main` `5afb24cf1b48e15e5000ee1365826eebb30d01ae` — **historical review snapshot only**, not the implementation baseline |
-| Implementation baseline | Verified `main` `ef1e6a362def6bb24275e6fd3678e4f10d4b1f07` merged into `feature/o4-evidence-gate` (merge commit `c83e7379e417ede2e99c777cd2f04c80b33d5fa3`). Stage 1 first code commit `fefd884`; reviewed Stage 1 HEAD `b1982c4`. |
+| Implementation baseline | Verified `main` `ef1e6a362def6bb24275e6fd3678e4f10d4b1f07` merged into `feature/o4-evidence-gate` (merge commit `c83e7379e417ede2e99c777cd2f04c80b33d5fa3`). Stage 1 first code commit `fefd884`; rating-resolution fix `38dad9b`; reviewed Stage 1 HEAD `b441799`. |
 | O4 Draft PR | PR #7 (`feature/o4-evidence-gate`); previously reviewed commit `0b6840426a0492aa33061911d7ee4bd8f539dfc4` |
 | **CI provenance** | Unified pytest collection + `test/offline/` network-blocking fixture originate from **CI PR #1** (`pyproject.toml`, `test/offline/conftest.py`), NOT PR #2 |
 | Superseded draft reference | `O4-requirements.md` (workspace draft revision **O4-REQ-r3**) — a working draft, NOT the approved baseline |
@@ -19,7 +19,7 @@
 | Registry | Requirements Registry / Schema 1.0.0 (Member B confirmed; O4 IDs preserved) |
 | Supersedes | O4-TEST-v0.3, O4-TEST-v0.2, O4-TEST-v0.1 |
 
-> **Status of this document.** This is a *pre-implementation* test plan. No test in this plan has been written, executed, or approved. The O4 checker module (`tradingagents/agents/evidence_gate.py`) and the O4 test files do **not** exist in the workspace. Every test ID below is a **proposed identifier**, not a passing test. No approval, benchmark measurement, or result is fabricated here.
+> **Status of this document.** Originally a *pre-implementation* test plan; **Stage 1 is now implemented and executed** (first code commit `fefd884`, rating-resolution fix `38dad9b`, reviewed HEAD `b441799`; CI #58 6/6 passed). The O4 checker module (`tradingagents/agents/evidence_gate.py`) and the Stage 1 test file (`test/offline/test_evidence_gate.py`) now exist; Stage 1 test IDs (O4-T-01…07, 09…15, 17…19, 24, 25) are implemented and executed. **Stage 2** remains proposed / not implemented and separately subject to approval. Passing Stage 1 is not complete O4 safety approval. Historical plan text below is preserved; no approval, benchmark result, or CI result is fabricated.
 >
 > **Two-stage scope (Member A, PR #7).** Member A has approved **only** Member D's **Stage 1** scope: the pure Evidence Gate checker and its deterministic offline unit tests. **Stage 2** — shared Graph/CLI/reporting/state/persistence integration — is coordinated by Member C and requires separate A/C approval. Partial Stage 1 safety coverage is **NOT** complete O4 safety approval. See §2.4.
 >
@@ -31,9 +31,9 @@
 
 - **Plan ID:** O4-TEST-v0.5 (versioned; increments on each reviewed revision). Prior reviewed versions were O4-TEST-v0.4 and O4-TEST-v0.3; this revision changes reviewed scope and acceptance details, so earlier approvals do **not** automatically cover it.
 - **Owner:** Member D.
-- **Status:** Draft.
-- **Approval:** Pending. Approval record completed in Section 11 only by the authorised reviewer(s).
-- **Authoritative requirements baseline:** `docs/req/requirements.yaml` (PR #2 merged at `4f87e29f…`). FR-04 = `Won't`; NFR-03 = `Should`, p95 `<= 10 ms`; INV-05 maps to O4-T-25. The implementation baseline (post-sync `main` SHA) is pending — see the metadata table.
+- **Status:** Stage 1 implemented and executed; Stage 2 not started.
+- **Approval:** Stage 1 test plan **approved by Member F** (review `5934877146`, `2026-11-17T08:02:32Z`); Stage 1 execution scope approved by Member A; final PR approval by Member A **pending**. Stage 2 not approved.
+- **Authoritative requirements baseline:** `docs/req/requirements.yaml` (PR #2 merged at `4f87e29f…`). FR-04 = `Won't`; NFR-03 = `Should`, p95 `<= 10 ms`; INV-05 maps to O4-T-25. The implementation baseline is **confirmed** as verified `main` `ef1e6a3` — see the metadata table.
 - **Superseded draft:** `O4-requirements.md` O4-REQ-r3 (working draft; its FR-04/NFR-03 values are not the approved baseline).
 - **Requirement IDs** (`O4-FR-01…16`, `O4-NFR-01…08`, `O4-INV-01…05`) and **test IDs** (`O4-T-01`…`O4-T-25`) are preserved/extended as in `O4-requirements.md`.
 
