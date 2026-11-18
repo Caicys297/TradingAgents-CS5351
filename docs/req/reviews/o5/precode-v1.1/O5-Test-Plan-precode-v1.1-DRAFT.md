@@ -1,6 +1,6 @@
-# O5 Test Plan - S1 formal review v1.6
+# O5 Test Plan - S1 formal review v1.7
 
-**Active revision: v1.6, 2026-11-18. F APPROVAL PENDING. No permission to implement yet.** Stable filename retained.
+**Active revision: v1.7, 2026-11-18. F APPROVAL PENDING. No permission to implement yet.** Stable filename retained.
 
 ## Verified authority and scope
 
@@ -26,9 +26,13 @@ B's manual Registry Schema validation has a record per A's supplied message; thi
 
 [Course matrix](./O5-S1-Course-Requirements-and-Evidence-v1.5-r2.md) preserves D1-D9 and all six gates, three-tier verification, full previous-suite regression, negative cases, independent expected values, actual OpenCode sessions and human interventions. This document does not certify full course compliance. No functional/test code has been generated.
 
-The v1.4 body below retains detailed cases and amendments. Its pending A approval/version-choice and historical-baseline statements are historical and superseded by this active v1.6 block. F's previous document closures are retained; formal S1 approval is still required.
+The v1.4 body below retains detailed cases and amendments. Its pending A approval/version-choice and historical-baseline statements are historical and superseded by this active v1.7 block. F's previous document closures are retained; formal S1 approval is still required.
 
 ---
+
+## v1.7 response to F's v1.6 review
+
+F accepted the 48 selector rows and parameters at 825b901; they remain unchanged. Inventory section 5.1 now names the planned test-local `_static_o5_contract_errors(event)` entry, Interface-derived decision table and diagnostic behavior. Section 5.2 specifies that all valid controls and mutants call that identical entry, with independent expected verdicts, intended-clause assertions and fresh-copy/non-mutation checks. No production validator/builder/CI or new dependency is introduced. Inventory section 1 labels the old Registry-pending state historical; d36a677 is the formal baseline. Formal final-version S1 pre-code approval is still Pending; all software tests remain Not run.
 
 ## Preserved v1.4 reference body (historical status; case specifications retained)
 

@@ -1,4 +1,4 @@
-# O5 S1 formal review package v1.6
+# O5 S1 formal review package v1.7
 
 **Registry corrected and verified. F formal S1 approval pending. All software tests and benchmarks Not run.**
 
@@ -23,3 +23,7 @@ F must approve this version's exact S1 subset before first functional/test edit.
 ## PR delivery
 
 Use existing PR #3, branch docs/o5-precode-review-v1.1, folder docs/req/reviews/o5/precode-v1.1/. Replace Test Plan/README and add the S1 inventory/course matrix. Seven existing supporting files remain unchanged. Local check reports and submission draft are not software test results. Do not upload to the repository root.
+
+## v1.7 narrow review correction
+
+F accepted the v1.6 selector row/parameter scope; those rows are unchanged. Inventory sections 5.1-5.2 specify the one test-local contract entry, independent rules, common control/mutant calls and intended-clause diagnostics. Section 1 corrects the old pending Registry statement. F's final pre-code approval is still pending. No executable tests, production validator/builder, dependency or CI changes. The course evidence matrix retains its v1.6 content unchanged.

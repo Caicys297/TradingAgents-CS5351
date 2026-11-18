@@ -1,16 +1,18 @@
-# O5 S1 case inventory — v1.6 - formal S1 review request (approval pending)
+# O5 S1 case inventory — v1.7 - formal S1 review request (approval pending)
 
 Owner: E. Reviewer: F. Revised 2026-11-18. Previous v1.5/v1.5-r2 preparations retained unchanged. Stable filename retained. All cases **Not run**. No implementation or executable test code has been produced.
 
 ## 1. Exact authority and readiness
 
 - Approved execution plan: [v1.4 at b5891ac534bf686989d0b670dca1d3e5b76b33e1](https://github.com/Caicys297/TradingAgents-CS5351/blob/b5891ac534bf686989d0b670dca1d3e5b76b33e1/docs/req/reviews/o5/precode-v1.1/O5-OpenCode-Execution-Plan-precode-v1.1-DRAFT.md), section 5a S1. Its bytes are preserved in this package.
-- [A's explicit execution approval and rules-version decision](https://github.com/Caicys297/TradingAgents-CS5351/pull/3#issuecomment-6917171487): `o5-rules-v1.1-draft` is selected by A; the choice is no longer pending, but its Registry reconciliation is still pending.
+- [A's explicit execution approval and rules-version decision](https://github.com/Caicys297/TradingAgents-CS5351/pull/3#issuecomment-6917171487): `o5-rules-v1.1-draft` is selected by A. **Historical status before PR #9 merged:** Registry reconciliation was pending. **Current formal baseline:** `d36a677d4738efd365b6bbcf6f69f993acf8fd3c`; statement, contract and DEV20 agree; reconciliation is complete.
 - [A's S1 clarification](https://github.com/Caicys297/TradingAgents-CS5351/pull/3#issuecomment-6943145906): S1 does not wait for C/D interfaces or unpublished project AGENTS.md/Prompt.md. Read the merged Registry, approved execution plan, F-approved applicable test plan and actual code; record baseline, approval links, allowed files and session evidence.
 - [F's v1.4 document closure](https://github.com/Caicys297/TradingAgents-CS5351/pull/3#pullrequestreview-5920289874) closes mapping, I9-b/I13 and T17 document issues; it is not formal test-plan approval.
 - **Registry correction merge SHA and inspected main:** `d36a677d4738efd365b6bbcf6f69f993acf8fd3c`, verified merged through GitHub PR #9 and present on origin/main. Statement, contract and DEV20 all use `o5-rules-v1.1-draft`.
 - **PR #3 document commit:** to be recorded in the submission note after committing; never use a file's own commit SHA as self-referential content.
-- **F formal S1 approval: PENDING.** This v1.6 requests review of the exact cases/parameters below. A's approved execution-plan bytes remain unchanged.
+- **F formal S1 approval: PENDING.** This v1.7 requests review of the exact cases/parameters below. A's approved execution-plan bytes remain unchanged.
+
+**F review of v1.6 / 825b901 (message supplied by E):** the 48 selector rows and their parameters are accepted in scope, including T05a tie ordering, T19 topic subset and T14b fixed permutation. Those rows are preserved byte-for-byte in v1.7. F requested the static validation entry below and correction of the stale Registry status. Formal pre-code S1 approval awaits F's final-version record; this scope acceptance is not falsely recorded as that approval.
 
 The S1 row lists T01-T12, T14, T19, T20 and I6-I10 **schema cases**. It is not permission to pull adapter, builder or emission assertions into S1 merely because they share a parent ID. The case-by-case projection below is proposed to F, not an already-approved test scope.
 
@@ -29,7 +31,7 @@ B's manual Schema validation has a record according to A's supplied message. Tha
 
 Proposed production file: `tradingagents/dataflows/macro_news_filter.py` only, containing the pure selector (validation, classification, allocation and result construction). Proposed test files: `test/offline/test_o5_macro_news_filter.py` for the selector rows, and `test/offline/test_o5_invariants.py` for static schema rows. A byte-identical DEV20 fixture copy may live under the already-approved `test/offline/fixtures/o5/` directory. No executable files are created by this document preparation.
 
-No news.py edits, vendor/router entry, sink construction/emission, JSONL persistence, O2 run_dir, public output wording, shared configuration, CLI/Graph, CI, pyproject.toml or conftest.py changes are requested for S1. No evidence builder is introduced under the label of schema validation. Static schema checks use fixed dictionaries and the preserved Interface section 4 contract; passing them would not prove runtime emission or a production validator. F must approve the validation seam: controls and mutations must be evaluated against one explicit contract oracle independent of selector output, not a predicate invented merely to make its own test pass. This does not authorize adding a production builder/validator or another production file in S1.
+No news.py edits, vendor/router entry, sink construction/emission, JSONL persistence, O2 run_dir, public output wording, shared configuration, CLI/Graph, CI, pyproject.toml or conftest.py changes are requested for S1. No evidence builder is introduced under the label of schema validation. Static schema checks use fixed dictionaries and the preserved Interface section 4 contract; passing them would not prove runtime emission or a production validator. Section 5.1 specifies the test-local validation entry and independent contract oracle; the same entry evaluates all valid controls and mutants. This does not authorize adding a production builder/validator or another production file in S1.
 
 No D-owned output-field spelling or negation-flag publication assertion is requested in S1. The Registry's negated-context policy is not repealed; its field-level integration acceptance remains outside this request, as A's stage clarification directs.
 
@@ -117,6 +119,46 @@ Sources: [detailed reference](./O5-Detailed-Test-Cases-Reference-r2.md), its I6/
 
 **No I9-a or I9-b is silently included by the range I6-I10.** I9-a is a builder invocation (S2); I9-b is reachable adapter integration (S3). Missing-version checks remain covered by I6-RV-1..8 and static nullability in the controls. Builder stage semantics and runtime resolved-version assertions are deferred, not dropped. I13 also stays outside S1.
 
+### 5.1 Single static validation entry (planned test-local implementation)
+
+**Exact entry:** `test/offline/test_o5_invariants.py::_static_o5_contract_errors(event: object) -> tuple[str, ...]`. It will be implemented only after F's pre-code approval, in the already-scoped test file. This is a pure, test-local contract checker, not an existing runnable API or a production validator. It returns an empty tuple exactly when the supplied static dictionary satisfies the referenced contract; otherwise it returns deterministic diagnostic identifiers. It does not modify the dictionary, normalize/default missing values, read a clock, import/call a selector or builder, emit evidence, access a sink/network, or alter CI. No new production module, external schema dependency, fixture file or shared helper is needed.
+
+The checker receives **only the event**, not a case ID, expected verdict, mutation label, desired variant, or simulated processing stage. It cannot look up an expected answer by case ID. Unexpected exceptions are test errors, never a substitute for a contract rejection.
+
+**Decision authority:** transcribe the existing Interface section 4 common/variant key sets and field types, section 4.1 nullability, section 4.2 V-PARTIAL branches/count inequalities, and section 4.3 legal tuples into a test-local constant contract table. Active Test Plan amendments take precedence; use the merged `o5-rules-v1.1-draft` in resolved-version controls. Do not derive this table from product output, from accepted examples, or from the mutation list. Tests keep their independently specified accept/reject and violated-clause expectations in a separate parameter table. F can compare each contract-table row with its cited Interface subsection during code review.
+
+| Check performed by the single entry | Governing clause / deterministic result |
+|---|---|
+| Object, variant and keys | Require a dictionary and known variant; common required keys plus variant required keys must be present, including required-null keys. Only common + required + expressly optional keys allowed. Missing key -> `missing:<key>`; extra/prohibited key -> `prohibited:<key>`; invalid root/variant -> `type:root` / `enum:variant`. |
+| Types, values and nullability | Apply declared types/ranges and closed enums in Interface section 4; counts declared integer use exact integer type, excluding bool; required-null value must be None; nullable-required remains present. Type/nullability/range/enum failures identify the field. Check occurred_at against the declared UTC-seconds timestamp contract using explicit calendar validation, not wall-clock comparison. No undeclared digest-length or extra business rule inferred from examples. |
+| Legal variant/action/trigger/disposition combination | Section 4.3 M1-M11 constitute allowed tuples (including four V-VENDOR triggers). Any other combination -> `combination:variant_action_trigger_disposition`; the expected verdict is not inferred from a sample's X/M label. |
+| rules_version | Section 4.1: V-INVALID-REQUEST requires null; V-VENDOR permits str or null because stage is absent from the payload; the other variants require str. All require presence. Resolved controls use -draft. Static validation does NOT infer whether a V-VENDOR version should be resolved; I9-a/I9-b stage assertions remain excluded. |
+| V-PARTIAL A/B | Section 4.2: exact integer counts excluding bool; pre_filter_candidate_count >=0 determines A (>=1) or B (=0); batch_id/input_count/reason_counts present-and-null; 1<=queries_failed<=executed_query_count. An inequality failure -> `relation:queries_failed`; a missing/wrong-type discriminator is rejected before branch evaluation. No fail-fast reachability restriction added. |
+
+Diagnostic strings are test-helper diagnostics only, not a new product evidence schema or API. For scalar violations use `type:<field>`, `nullability:<field>`, `range:<field>` or `enum:<field>` as applicable; return a stable sorted tuple. Relational checks run only after operand presence/type checks, so a wrong type produces a diagnostic instead of raising. Unrecognized fields/variants are rejected rather than silently ignored. Contract scope stays the existing Interface; this helper does not invent unspecified optional-map inner constraints.
+
+### 5.2 Controls and mutations use that same entry
+
+Static valid controls are explicitly completed literal dictionaries in the same test file, one per Interface example/allowed tuple, with both V-PARTIAL branches. They include fixed `occurred_at` (2026-09-28T00:00:00Z), every required key, permitted values and resolved -draft/null versions per section 4.1. No production builder or checker-generated defaults construct controls. M1-M11 are completed payloads, not just four-field tuple fragments. For I10 use the existing four A-11/A-33/B-11/B-33 full controls; do not pass an expected branch into the checker.
+
+The common parameter runner performs this sequence for **every** row:
+
+1. Deep-copy its named valid literal control. Call `_static_o5_contract_errors(control)` and assert the result equals `()`. A failed control fails the test setup; it is not skipped or repaired automatically.
+2. Independently deep-copy that control and apply only the row's specified mutation (delete one key, add one prohibited key, replace one enum/value, or change the named count). Keep a snapshot of each payload.
+3. Call **the same** `_static_o5_contract_errors(candidate)`. For a valid parameter assert `()`. For an invalid parameter assert a nonempty tuple **containing the diagnostic for the intended violated clause**, not just any failure. The known expected verdict/diagnostic is used only by the outer test assertion, never as checker input.
+4. Assert the control and candidate still equal their snapshots. Use fresh copies for the next row, preventing accumulated mutations and order-dependent results.
+
+| Family | Same-entry application and independent expected judgment |
+|---|---|
+| I6 | Each complete control accepts; delete the specified required key -> `missing:<key>`. I6-RV-1..8 delete rules_version from each variant, including null-valued V-INVALID-REQUEST/V-VENDOR controls; all reject. V-PARTIAL deletion rows run against A and B. |
+| I7 | Each control accepts; add one prohibited/unknown key -> `prohibited:<key>` (e.g. vendor on V-SELECTED, input_count on V-INVALID-REQUEST, selected_count on V-PARTIAL). |
+| I8 | Complete M1-M11 controls accept. X1 unknown trigger rejects with `enum:trigger` (the combination may also fail); X2-X6 preserve individually allowed values but form an illegal tuple and reject with `combination:variant_action_trigger_disposition`. All existing illegal-combination parameters use the same checker. |
+| I10 | Each branch's valid control accepts. For each of batch_id/input_count/reason_counts: present-null -> accept; absent -> `missing:<key>`; present-non-null -> `nullability:<key>`. All 18 existing states run through the same entry. A/B x 1/1 and 3/3 controls accept; zero/excess failed count, negative candidate count, float/string/bool mutations reject with the applicable relation/range/type diagnostic. |
+
+Concrete example of the call sequence (descriptive, no executable tests created): complete V-PARTIAL A control with executed_query_count=1, queries_failed=1, pre_filter_candidate_count=1 and all three required-null keys -> the single entry returns `()`. Deleting only reason_counts -> the same entry reports `missing:reason_counts`. Starting afresh and replacing reason_counts with `{}` -> the same entry reports `nullability:reason_counts`. Fresh B control differs only in pre_filter_candidate_count=0 and is accepted; the two mutations have the same required-null rejection behavior.
+
+**Limits:** these are static contract consistency tests and negative controls for the test-local oracle. They do not prove any production validation, runtime emission, builder stage, invariant suppression, persisted JSONL or Registry Schema CI. Production entry points will have their own tests in later approved stages. No executable test code is introduced by this document revision.
+
 ## 6. Explicit exclusions and retained later coverage
 
 | Excluded from this S1 approval request | Reason / retained stage |
@@ -176,7 +218,7 @@ REQ-O5-07 human quality acceptance (T18), REQ-O5-09 public regression acceptance
 ## 8. Formal review and implementation handoff
 
 1. Baseline verification completed: d36a677d4738efd365b6bbcf6f69f993acf8fd3c is the PR #9 merge and inspected main. Registry O5 diff and unchanged fixture bytes verified; no rule/label/order/count change is introduced.
-2. Submit v1.6 to existing PR #3 and record resulting full document commit SHA in the review request. F is asked to approve section 4's 48 selector rows (including parameters), section 5's four schema families and sections 6a/7a's assertions and file exclusions.
+2. Submit v1.7 to existing PR #3 and record resulting full document commit SHA in the review request. F is asked to approve section 4's 48 selector rows (including parameters), section 5's four schema families and sections 6a/7a's assertions and file exclusions.
 3. F approval is still pending. Do not implement S1 functional/test code until it is recorded. No S2-S6 approval is requested.
 4. Before implementation, verify actual implementation-branch baseline, read approved materials and actual code/applicable instructions, record links and whitelist, and preserve the raw OpenCode session. C/D later integration and unpublished project agent files are not extra S1 gates under A's clarification; final course deliverables remain required.
 
