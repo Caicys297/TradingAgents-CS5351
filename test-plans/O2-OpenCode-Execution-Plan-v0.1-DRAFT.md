@@ -73,7 +73,9 @@ B may provide helper design and tests but must not edit C-owned shared files wit
 
 ## 4. Ordered implementation steps
 
-1. **Freeze approved Phase 1 schema and defaults.** Confirm `schema_version: "1.0.0"`, normalized identity fields, and the merged allowlist at `d36a677...`, including `input_condensation_audit_note`.
+> **Phase 1 evidence boundary:** The original Phase 1 implementation and its 24 passing tests used the earlier merged allowlist, which excluded `input_condensation_audit_note`. PR #16’s 24 passing tests and CI validate that original Phase 1 state only; they do not validate the later TC-23 expectation. The TC-23 update aligned with the Registry merged at `d36a677...` is a planned expectation whose implementation and test synchronization/verification are still pending.
+
+1. **Freeze approved Phase 1 schema and defaults.** Confirm `schema_version: "1.0.0"`, normalized identity fields, and the original Phase 1 merged allowlist used by the implementation. The later merged allowlist at `d36a677...` adds `input_condensation_audit_note`; TC-23’s updated expectation remains planned pending implementation and test synchronization.
 2. **Create isolated B-owned manifest writer.** Build pure construction, normalization, allowlist, artifact-label, and fingerprint helpers.
 3. **Implement canonical fingerprint.** SHA-256 over UTF-8 canonical JSON with sorted keys, comma/colon separators, `ensure_ascii=false`, `allow_nan=false`, ISO analysis date, and fixed Analyst order; exclude run ID, time, duration, output, artifact paths, secrets, and vendor payloads (`requirements.yaml:28`).
 4. **Implement B-owned atomic writing.** Write to a temporary file in the reserved run directory and promote to `manifest.json`; serialization/write failure must leave no partial manifest.
@@ -104,6 +106,8 @@ B may provide helper design and tests but must not edit C-owned shared files wit
 
 Phase 1 writer-level mappings are recorded as implemented/tested in PR #16. Stage 2 mappings remain proposed and deferred. Candidate default command is `pytest -q`; Stage 2 tests have not been run.
 
+> **TC-23 status:** The current `main` writer and `test_o2_tc_23_only_merged_allowlist_is_serialized` validate only the original Phase 1 allowlist, which excluded `input_condensation_audit_note`. They do not include or verify the field. TC-23’s updated expectation, aligned with the Registry merged by PR #9 at `d36a677d4738efd365b6bbcf6f69f993acf8fd3c`, is planned; implementation and test synchronization/verification are still pending.
+
 | Test | Coverage | Owner / integration need |
 |---|---|---|
 | `O2-TC-01` | Valid completed invocation produces parseable manifest with required fields and `schema_version: "1.0.0"` | B; offline test |
@@ -128,7 +132,7 @@ Phase 1 writer-level mappings are recorded as implemented/tested in PR #16. Stag
 | `O2-TC-20` | First layer: `pytest -q` regression; live/integration conditions separately listed | **Deferred from Phase 1; C/F** define regression scope |
 | `O2-TC-21` | Path/JSON checks on Ubuntu, macOS, and Windows | **Deferred from Phase 1; F/C** CI matrix |
 | `O2-TC-22` | Manifest contains normalized ticker, asset type, ISO date, selected analysts | B; isolated test |
-| `O2-TC-23` | Only merged allowlisted fields serialized; unapproved keys absent; merged allowlist includes `input_condensation_audit_note` | B; isolated test |
+| `O2-TC-23` | Planned expectation aligned with the merged Registry at `d36a677...`: only allowlisted fields serialized; unapproved keys absent; allowlist includes `input_condensation_audit_note`. The current Phase 1 writer/test does not yet verify this field. | Pending implementation and test synchronization/verification |
 | `O2-TC-24` | Package version, Python version, platform recorded when available | B; isolated test |
 | `O2-TC-25` | Manifest contains agreed schema-version field and value `"1.0.0"` | B; isolated test |
 
