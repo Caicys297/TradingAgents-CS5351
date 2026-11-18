@@ -2,12 +2,12 @@
 
 | Field | Value |
 |---|---|
-| Plan ID | O4-TEST-S2-v0.3-DRAFT |
+| Plan ID | O4-TEST-S2-v0.4-DRAFT |
 | Status | **DRAFT — NOT APPROVED** |
 | Owner | Member D |
 | Prepared for | Member F (test coordination, CI integration, verification); Member A/C (integration scope) |
-| Companion execution plan | `docs/req/O4-Execution-Plan-Stage2-DRAFT.md` (O4-EXEC-S2-v0.3-DRAFT) |
-| Verified baseline | `main` `185d18b483ce1e04a9ac649923cbec14707fd9e3` (Stage 1 merge) — **historical baseline; local checkout is behind `origin/main` (`d36a677`). Treat newer-code facts as UNVERIFIED until C re-checks on latest main.** |
+| Companion execution plan | `docs/req/O4-Execution-Plan-Stage2-DRAFT.md` (O4-EXEC-S2-v0.4-DRAFT) |
+| Verified baseline | `origin/main` `d36a677d4738efd365b6bbcf6f69f993acf8fd3c` (this review branch's base; includes O2 PR #16, PR #9). Historical Stage 1 merge: `185d18b483ce1e04a9ac649923cbec14707fd9e3`. C must re-verify the O6/O2-integrated baseline before O4 CLI edits. |
 | Stage 1 checker under test | `tradingagents/agents/evidence_gate.py` — `check_evidence()`, `GateResult` (merged, unchanged by Stage 2) |
 | Authoritative requirements | `docs/req/requirements.yaml` (PR #2 `4f87e29f…`); `development_contract.o4` |
 | Approval | **NONE — DRAFT.** This plan requests approval; it does not grant it. No test below exists yet. |
@@ -35,7 +35,14 @@ Proposed location: `test/offline/` (default-collected). Candidate files:
 - `conflict_state` — `final_rating` vs body disagree; `preexisting_review_state`.
 - `fake_graph_stream` / `fake_cli_stream` — deterministic stand-ins for `stream_run` chunks (PM `Buy` body + report fields), so the **real** `record_decision`/publication path runs without LLM/network.
 - `tmp_results_dir` — isolated `results_dir` for state log / report tree / HTML.
-- `expected_enabled_surface_set(entrypoint, save, show, html)` — **grounded in the actual execution entrypoint and output selections, not config alone**. Expected surfaces (computed independently **before** the run), e.g.: programmatic vs CLI entrypoint; `save` on/off controls markdown report + standalone `decision.md`; `show` on/off controls the terminal report view; `html=True/False` controls the HTML report; always-on where applicable: programmatic return (programmatic path), state log (via `record_decision`/`_log_state`), memory log only when `memory_log_path` set, CLI display only on the CLI path. The **observed** set is collected **after** the run from real artefacts; compared as sets (§T-08). Hardcoded/assumed lists are not acceptable; not every surface is enabled in every scenario.
+- `expected_enabled_surface_set(entrypoint, save, show, html, memory_config)` — **grounded in the actual execution entrypoint + output selections + memory configuration, not config alone**. Expected surfaces (computed independently **before** the run):
+  - **entrypoint:** programmatic Graph completion vs CLI completion (CLI display only on the CLI path; programmatic return only on the programmatic path);
+  - **save** on/off → full Markdown report + standalone `decision.md` present/absent;
+  - **show** on/off → terminal/`show` report view present/absent;
+  - **html** on/off → HTML report present/absent;
+  - **memory** enabled/disabled ← driven by the relevant memory configuration (`memory_log_path`/equivalent) → memory log present/absent;
+  - **always where applicable:** state log (via `record_decision`/`_log_state`).
+  The **observed** set is collected **after** the run from real artefacts; compared as sets (§T-08). Hardcoded/assumed lists are not acceptable; **Memory is NOT assumed always enabled**, and **save/show/html do not have identical effects** — each combination yields its own expected set.
 - Reuse `test/offline/conftest.py::_no_network` (already active).
 
 **Common execution rule:** drive the **real** Graph/CLI entry points with the fake stream/fixtures; inspect actual artefacts/messages, not only helper returns. Never mark these `integration`.
@@ -55,25 +62,26 @@ Proposed location: `test/offline/` (default-collected). Candidate files:
 
 ## 2. O4-T-08 — Cross-surface consistency (real path) — **includes explicit test-case matrix**
 - **Covers:** O4-FR-07, FR-09, INV-01, INV-03, INV-04, NFR-08.
-- **Fixtures:** `missing_evidence_state` + `conflict_state` + checker-failure; `expected_enabled_surface_set(entrypoint, save, show, html)`; memory config.
+- **Fixtures:** `missing_evidence_state` + `conflict_state` + checker-failure; `expected_enabled_surface_set(entrypoint, save, show, html, memory_config)`; memory config (enabled/disabled).
 - **Execution:** offline integration through the real Graph/CLI publication path; inspect return value, CLI display text, full Markdown report, standalone `decision.md`, HTML report, state log, memory log. Capture **actual output BEFORE the Gate** where the assertion is about pre-gate suppression (see §T-23/display-order), and **after** publication for consistency.
 - **Parameterized test-case matrix (each enabled surface checked for presence AND authoritative `effective_rating`):**
 
   | Axis | Values |
   |---|---|
   | Entrypoint | programmatic Graph completion; CLI completion |
-  | save | on / off (markdown report + standalone `decision.md`) |
-  | show | on / off (terminal report view) |
-  | html | enabled / disabled |
+  | save | on / off (full Markdown report + standalone `decision.md`) |
+  | show | on / off (terminal/`show` report view) |
+  | html | enabled / disabled (HTML report) |
+  | memory | enabled / disabled (memory log via memory configuration) |
   | Downgrade variant | missing evidence; rating conflict; checker failure |
-  | Persistence | state log (always); memory log (when `memory_log_path` set); return value (programmatic path) |
+  | Persistence paths | state log (always); memory log (only when memory enabled); return value (programmatic path only) |
 
-  Sub-scenarios are enumerated as the cross-product of the applicable axes; **not every surface is enabled for every scenario**. Each scenario computes its own `expected_enabled_surface_set(...)` and must match the observed set.
+  Sub-scenarios are enumerated as the cross-product of the applicable axes; **not every surface is enabled for every scenario**, and save/show/html have **distinct** effects (do not collapse them). Each scenario computes its own `expected_enabled_surface_set(entrypoint, save, show, html, memory_config)` and must match the observed set.
 
 - **Assertions (ordered, independent expected-vs-observed; [CONFIRMED §4]):**
-  1. `expected = expected_enabled_surface_set(entrypoint, save, show, html)` computed **before** the run; `observed` collected **after** the run from real artefacts; assert `observed == expected` (both non-empty). A missing enabled surface, or an empty observed set, **fails** — a vacuous `set(vals)=={...}` equality is explicitly disallowed.
+  1. `expected = expected_enabled_surface_set(entrypoint, save, show, html, memory_config)` computed **before** the run; `observed` collected **after** the run from real artefacts; assert `observed == expected` (both non-empty). A missing enabled surface, or an empty observed set, **fails** — a vacuous `set(vals)=={...}` equality is explicitly disallowed.
   2. Independently, every expected enabled surface carries the authoritative `effective_rating` (`REVIEW` for all three variants) — asserted **per surface** on the actual artefact content (Markdown header rating, standalone `decision.md`, HTML rating, CLI text, state-log `final_rating`/`effective_rating`, memory tag) — not by collapsing to one set comparison.
-- **Expected:** both independent assertions pass for the expected enabled set; disabled surfaces are not assumed enabled and are not counted in `expected`.
+- **Expected:** both independent assertions pass for the expected enabled set; disabled surfaces (incl. memory when disabled) are not assumed enabled and are not counted in `expected`.
 - **Owner:** D; F collection/CI.
 - **Dependencies:** integration point (Q4) A/C-confirmed; mandatory sub-scenarios confirmed by F (§13).
 
@@ -128,7 +136,9 @@ Proposed location: `test/offline/` (default-collected). Candidate files:
   1. Run the full existing suite (including the **actual gated paths** where applicable after Stage 2 wiring lands) — must stay green.
   2. Automated/manual **signature diff**: additive-only (no removed/renamed params; new params optional/back-compatible).
   3. **Legacy/checkpoint behaviour:** a finalized state without `effective_rating` (pre-Stage-2 or restored from an older checkpoint) still yields a usable rating via `run_rating` semantics without raising; default behaviour for consumers unchanged. Checkpoint/resume-to-completion still produces a gated, consistent rating (see execution plan §K.2).
-- **Assertions:** suite green; diff additive-only; legacy state path does not raise and preserves prior semantics; resumed-to-completion run consistent.
+  4. **Existing-caller compatibility:** the merged tests asserting the current `record_decision()` behaviour/signature (`tests/test_cli_memory_log.py` `:29/:37/:190`, `tests/test_memory_log.py` `:966`) must remain green — any signature change must be additive/back-compatible (pending C).
+  5. **Repeated-completion & stale-field read-compat:** a repeat within one completed execution does not double-publish/persist; a legacy state carrying stale `effective_rating`/`original_rating` is readable for history but does **not** authorize an ungated new publication (see execution plan §K.2 and §10 above).
+- **Assertions:** suite green; diff additive-only; legacy state path does not raise and preserves prior semantics; resumed-to-completion run consistent; existing-caller tests green; repeat→single publish; stale-fields→re-evaluated.
 - **Expected:** `suite green; diff additive-only; legacy/checkpoint back-compat holds`.
 - **Owner:** F (regression + signature review), D (diff/legacy fixtures).
 - **Type:** Regression + manual signature review + legacy/checkpoint behaviour.
@@ -169,28 +179,32 @@ Proposed location: `test/offline/` (default-collected). Candidate files:
 
 ---
 
-## 10. Checkpoint / resume coverage — [PROPOSED]
-- **Covers:** O4-FR-07, FR-09, INV-01/03 (publication integrity across resume paths).
-- **Fixtures:** a checkpointed run that is **resumed to completion** (via `checkpoint_thread_id` + `checkpoint_input`) with a downgraded state; an **interrupted** run that does not reach publication.
-- **Execution:** offline; drive the real Graph/CLI resume path with fixtures; do not assume fresh and resumed paths are identical.
-- **Assertions:**
-  - resumed-to-completion run performs the single gated evaluation on its finalized state before publication; enabled surfaces consistent (`REVIEW` when downgraded); no ungated Buy/Sell published.
-  - interrupted run that never reaches authoritative publication publishes **no** authoritative rating (existing skip-`record_decision` behaviour preserved).
-  - legacy/checkpointed state without `effective_rating` still yields a usable rating (see T-20).
-- **Expected:** `resumed→gated-consistent`; `interrupted→no authoritative rating`.
+## 10. Checkpoint / resume & repeated-completion coverage — [PROPOSED]
+- **Covers:** O4-FR-07, FR-09, INV-01/03 (publication integrity across resume + repeated-completion paths).
+- **Fixtures:** a checkpointed run **resumed to completion** (`checkpoint_thread_id` + `checkpoint_input`) with a downgraded state; an **interrupted** run that does not reach publication; a **repeated `record_decision()`** fixture (same completed execution invoked twice); a **legacy/stale-field checkpoint** state carrying stale `final_rating`/`effective_rating`/`original_rating`.
+- **Execution:** offline; drive the real Graph/CLI resume/repeat path with fixtures; do not assume fresh and resumed paths are identical.
+- **Assertions (observable):**
+  - **repeated `record_decision()` within one completed execution** → no duplicate authoritative publication (state log / memory persist **exactly once**) and no second authoritative evaluation;
+  - **`original_rating` not overwritten** by a previously downgraded `REVIEW` on a repeat;
+  - **interrupted** run that never reaches authoritative publication publishes **no** authoritative rating (existing skip-`record_decision` behaviour preserved);
+  - **resumed-to-completion** → exactly one gated evaluation on the finalized state before publication; enabled surfaces consistent;
+  - **legacy/stale-field checkpoint** state with stale `final_rating`/`effective_rating`/`original_rating` → **re-evaluated** on completion (presence of stale `effective_rating` does **not** authorize publication); historical-state read still works via `run_rating` semantics;
+  - **legacy/checkpointed state without `effective_rating`** still yields a usable rating (see T-20).
+- **Expected:** `repeat→single authoritative publish+persist`, `resumed→gated-consistent`, `interrupted→no authoritative rating`, `stale-fields→re-evaluated`.
 - **Owner:** D; F collection/CI.
-- **Note:** exact resume/checkpoint interaction with the Gate is C/A confirmation.
+- **Note:** exact resume/repeat/legacy interaction with the Gate is **pending C**.
 
 ---
 
 ## 10a. Gate-invocation-count & ordering (mandatory) — [PROPOSED]
 - **Covers:** O4-FR-07, FR-09, INV-01/03 (one authoritative evaluation, before publication).
-- **Fixtures:** instrument `check_evidence` via a counting seam (wrap/spy) around the **authoritative** call; programmatic completion, CLI completion, and resume-to-completion fixtures; interrupted/error fixture.
+- **Fixtures:** instrument `check_evidence` via a counting seam (wrap/spy) around the **authoritative** call; programmatic completion, CLI completion, resume-to-completion, and repeated-completion fixtures; interrupted/error fixture.
 - **Execution:** run each entrypoint offline; count authoritative `check_evidence()` evaluations and record the order relative to `record_decision`/publication.
 - **Assertions:**
   - normal programmatic completion → **exactly one** authoritative evaluation;
   - CLI completion → **exactly one** authoritative evaluation (must **not** re-invoke authoritatively after `record_decision`);
   - resume-to-completion → **exactly one** authoritative evaluation **before** publication;
+  - repeated `record_decision()` → still **exactly one** authoritative evaluation total (no duplicate);
   - the evaluation precedes any authoritative publication in every case; interrupted/error cases publish **no** authoritative rating;
   - S2 state per case: `original_rating` captured pre-gate (never the downgraded effective), `final_rating == effective_rating`, `final_trade_decision` byte-preserved.
 - **Expected:** `count == 1` per completed execution; `gate_before_publication == True`; interrupted → `no_authoritative_publication`.
@@ -218,6 +232,7 @@ For T-02, T-06, T-14, T-17, T-25 the **cross-surface** portions (already validat
 | T-23 | FR-07, FR-13, INV-01, INV-03 | CLI integration | D/F | no pre-gate publish (message area **and** report section) |
 | Display-order (new) | FR-07, FR-13, INV-03 | CLI integration | D/F | completion→REVIEW→elapsed→O6→reports; completion not implying trade |
 | Checkpoint/resume (new) | FR-07, FR-09, INV-01/03 | integration | D/F | resumed→gated-consistent; interrupted→no authoritative rating |
+| Repeated-completion (new) | FR-07, FR-09, INV-01/03 | integration | D/F | repeat→single authoritative publish/persist; `original_rating` not overwritten; stale-fields→re-evaluated |
 | Gate-invocation-count (new) | FR-07, FR-09, INV-01/03 | integration | D/F | exactly one authoritative eval, before publication |
 
 ---
@@ -234,13 +249,14 @@ All **mandatory** Stage 2 tests and their **parameterized subcases / sub-scenari
 - **T-23** — pre-Gate observation of **BOTH** the CLI message area **and** the decision/report section (no authoritative publication before the Gate).
 - **Display-order (new)** — completion notice → REVIEW warning (if applicable) → elapsed → O6 stats → report options; completion not implying an approved trade.
 - **Checkpoint/resume (new)** — **completed** (resumed→gated-consistent) and **interrupted** (no authoritative rating) cases.
+- **Repeated-completion (new, mandatory)** — repeated `record_decision()` within one completed execution → single authoritative publish/persist; `original_rating` not overwritten by a prior REVIEW; legacy/stale-field checkpoint → re-evaluated, stale `effective_rating` does **not** authorize publication.
 - **Gate-invocation-count** — see below.
 - **T-20 (regression gate)** — historical-state read compatibility **without** allowing an ungated **new** publication; gated-path suite green; additive-only signatures.
 - **T-21 (auditability)** — effective rating recoverable from enabled outputs and consistent; runtime `GateResult` observed at the **observation-point contract pending confirmation** (no mandatory durable persistence of full verdict).
 
 **Direct Gate-invocation-count assertions (mandatory):**
 - normal programmatic Graph completion → **exactly one** authoritative `check_evidence()` evaluation;
-- CLI completion → **exactly one** authoritative evaluation (reused from the shared boundary, not a second authorititative call);
+- CLI completion → **exactly one** authoritative evaluation (reused from the shared boundary, not a second authoritative call);
 - resume-to-completion → **exactly one** authoritative evaluation before publication;
 - **all** cases: the evaluation occurs **before** any authoritative publication; interrupted/error cases perform **no** authoritative publication;
 - **S2 state assertions** in each: `original_rating` captured pre-gate (never overwritten by a downgraded effective), `final_rating == effective_rating`, `final_trade_decision` byte-preserved.
@@ -251,7 +267,8 @@ All **mandatory** Stage 2 tests and their **parameterized subcases / sub-scenari
 
 ## 14. Unresolved items blocking finalization
 **Resolved by Member A (do not re-open):** `original_rating` field name; S2 capture→set order + conflict in `gate.reason` (no full durable `GateResult`); single authoritative Gate at the `record_decision` shared boundary (no Graph/CLI second authoritative call); T-16 measures the **pure** checker; `Should` non-blocking by default; T-07 integration **mandatory**.
-- **C:** shared completion interface/signature/compatibility + exact mechanism (inline vs helper); O2 PR #16 + O6 CLI sequencing; B1 two-area insertion points; `original_rating` conflict/absent encoding; effective-rating persistence shape (with B); checkpoint/resume interaction.
+- **C (exact `record_decision` interface PENDING C CONFIRMATION):** signature/return compatibility + all callers/tests; how `selected_analysts` reaches the boundary; inline vs shared helper; `GateResult` runtime availability; `original_rating` conflict/absent encoding; effective-rating persistence shape (with B); B1 two-area insertion points; repeated-completion/checkpoint/resume/legacy-stale-field rules.
+- **C — O6 prerequisite:** O6 F identity-binding verification commit/evidence + C CLI joint verification + re-verify O6/O2-integrated `main` (after O2 PR #16) before O4 CLI edits. *(No O6 SHA invented; not claimed passed. O6 prerequisite ≠ O4 Stage 2 coding approval.)*
 - **A/C:** enabled-surface contract confirmation; non-authoritative label wording (CLI/MD/`decision.md`/HTML) + cause-neutral REVIEW message + display-order placement; unknown-config abort UX; T-21 observation-point contract.
 - **A/F:** whether the `Should` (≤10 ms) target may ever be CI-blocking (default non-blocking).
 - **F:** confirm the mandatory Stage 2 set + parameterized sub-scenarios and record test approval.
