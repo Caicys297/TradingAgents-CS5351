@@ -1,27 +1,31 @@
 # O2 Implementation Execution Plan — Draft for Human Review
 
 **Document version:** v0.1-DRAFT (Revision 2)  
-**Status: Draft — revised for A-approved O2 Phase 1 baseline `aa549f66...`; pending review. Phase 1 implementation commit `70a4eee` exists locally and contains the two approved files; its relationship to `aa549f66...` is not verified. No test result or approval of this document revision is claimed.**
+**Status: Draft — Revision 2 post-implementation documentation alignment; Stage 2 not approved. Phase 1 merged by PR #16 at `808df04...`; Revision 2 is not a new pre-code approval.**
 
-**Implementation source:** No local source path is asserted here unless separately verified. Existing Phase 1 implementation commit `70a4eeee0397efc5da5012ebec0bacd4635a260f` exists locally and contains only `tradingagents/repro/manifest.py` and `test/offline/test_o2_manifest.py`. Its base relationship to `aa549f66...` is not verified.
+**Original pre-code approval:** A (Caicys297) approved commit `b0287da171cb77673bc7c03c4a6b13535d427730`, test plan `v0.3-DRAFT`, and execution plan `v0.1-DRAFT` in [PR #8 comment 6920115438](https://github.com/Caicys297/TradingAgents-CS5351/pull/8#issuecomment-6920115438) at `2026-11-16T15:02:47Z`.
 
-**Implementation baseline:** A-approved `main` commit `aa549f662a4cdb1836aaf448e3f51fbe57c6ce83`.
+**Revision 2 alignment approval:** A’s [PR #8 comment 6973848349](https://github.com/Caicys297/TradingAgents-CS5351/pull/8#issuecomment-6973848349) at `2026-11-18T08:59:29Z` approves Revision 2 as documentation alignment, not as a new pre-code approval or Stage 2 approval.
 
-**Test-plan basis:** `test-plans/O2-Test-Plan-v0.3-DRAFT.md` in this documentation branch; still draft and pending review.
+**Phase 1 implementation:** Merged by PR #16 at `main` merge commit `808df04f320d95c1ab4ef5a6e88149335cdeff41`; PR head `2d2c63b162290a3dce6360fe88218927ea76a7bb`; two approved files only.
+
+**Implementation baseline:** Phase 1 base `main` at `aa549f662a4cdb1836aaf448e3f51fbe57c6ce83`; merged at `808df04...`.
+
+**Test-plan basis:** `test-plans/O2-Test-Plan-v0.3-DRAFT.md` Revision 2 in this documentation branch; not Stage 2 approval.
 
 ## 1. Preconditions and approval gates
 
-No code edit may begin until both gates are recorded:
+These gates applied to the original Phase 1 implementation and are recorded below. They do not approve Stage 2:
 
-1. **A approves the versioned O2 test plan.** The registry requires test-plan approval before code generation (`docs/req/requirements.yaml:7-15`), with O2 test-plan review assigned to A (`:10`).
-2. **A approves this exact OpenCode execution plan** before the first code edit (`requirements.yaml:15`).
+1. **Original pre-code test-plan approval:** A approved test plan `v0.3-DRAFT` in [PR #8 comment 6920115438](https://github.com/Caicys297/TradingAgents-CS5351/pull/8#issuecomment-6920115438) at `2026-11-16T15:02:47Z`.
+2. **Original pre-code execution-plan approval:** The same PR #8 comment approved execution plan `v0.1-DRAFT` at docs commit `b0287da171cb77673bc7c03c4a6b13535d427730`.
 
-Additional preconditions:
+Additional preconditions for Stage 2:
 
-- Confirm the implementation baseline is A-approved `main` commit `aa549f662a4cdb1836aaf448e3f51fbe57c6ce83`.
-- Preserve existing Phase 1 implementation commit `70a4eee`. Do not claim it is based on `aa549f66...` unless Git evidence verifies that relationship.
-- Confirm Phase 1 scope is the standalone manifest writer and its offline tests only. Defer `cli/run.py`, `trading_graph.py`, shared integration, and CI changes.
-- Confirm C remains the sole integrator for shared `cli/run.py` and `trading_graph.py` changes when those deferred items are approved (`requirements.yaml:16`).
+- Phase 1 implementation is merged at `main` commit `808df04...`; PR #16 head was `2d2c63b...`.
+- Confirm Phase 1 scope remains the standalone manifest writer and its offline tests only. Stage 2 is not approved.
+- Defer `cli/run.py`, `trading_graph.py`, shared integration, real unique run-directory integration, and three-platform CI acceptance until separately approved.
+- Confirm C remains the sole integrator for shared `cli/run.py` and `trading_graph.py` changes when Stage 2 is approved (`requirements.yaml:16`).
 - Confirm full O2 scope remains completed CLI runs only; failed/programmatic runs remain out of scope (`requirements.yaml:24`).
 - Confirm the v0.3 test plan includes:
   - UUID collision retries without overwriting an existing run directory or manifest, and the new run directory is reserved before graph execution.
@@ -31,15 +35,15 @@ Additional preconditions:
   - O2-TC-18 uses the implementation PR’s dependency-file diff and writer-import inspection.
   - O2-TC-20 first-layer regression is `pytest -q`; live/integration conditions are listed separately.
   - O2-TC-21 covers Ubuntu, macOS, and Windows through F’s CI integration.
-  - O2-TC-23 uses only the merged Registry allowlist and excludes `input_condensation_audit_note` pending unmerged Draft PR #9.
-- Record approval in the project’s pre-code approval record. No completed approval evidence for this revision is recorded in this local document.
+  - O2-TC-23 uses only the merged Registry allowlist and excludes `input_condensation_audit_note` pending open/unmerged PR #9.
+- Record Stage 2 approval separately. Revision 2 documentation alignment is not Stage 2 approval.
 
 ## 2. Implementation branch and base commit
 
 - Implementation branch: `feat/o2-reproducibility-manifest`.
-- Base: A-approved `main` at `aa549f662a4cdb1836aaf448e3f51fbe57c6ce83`.
-- Existing Phase 1 implementation commit `70a4eeee0397efc5da5012ebec0bacd4635a260f` is preserved. Its base relationship to `aa549f66...` is not verified here.
-- The active checkout path and commit relationship must be verified separately; no unverified local path is asserted.
+- Phase 1 base: `main` at `aa549f662a4cdb1836aaf448e3f51fbe57c6ce83`.
+- Phase 1 was merged by PR #16 at `main` merge commit `808df04f320d95c1ab4ef5a6e88149335cdeff41`; PR head was `2d2c63b162290a3dce6360fe88218927ea76a7bb`.
+- Stage 2 has no approved branch or baseline yet; a new approved plan is required.
 
 ## 3. Architecture and ownership boundary
 
@@ -67,7 +71,7 @@ B may provide helper design and tests but must not edit C-owned shared files wit
 
 ## 4. Ordered implementation steps
 
-1. **Freeze approved Phase 1 schema and defaults.** Confirm `schema_version: "1.0.0"`, normalized identity fields, and the merged allowlist. Keep `input_condensation_audit_note` excluded pending unmerged Draft PR #9.
+1. **Freeze approved Phase 1 schema and defaults.** Confirm `schema_version: "1.0.0"`, normalized identity fields, and the merged allowlist. Keep `input_condensation_audit_note` excluded pending open/unmerged PR #9.
 2. **Create isolated B-owned manifest writer.** Build pure construction, normalization, allowlist, artifact-label, and fingerprint helpers.
 3. **Implement canonical fingerprint.** SHA-256 over UTF-8 canonical JSON with sorted keys, comma/colon separators, `ensure_ascii=false`, `allow_nan=false`, ISO analysis date, and fixed Analyst order; exclude run ID, time, duration, output, artifact paths, secrets, and vendor payloads (`requirements.yaml:28`).
 4. **Implement B-owned atomic writing.** Write to a temporary file in the reserved run directory and promote to `manifest.json`; serialization/write failure must leave no partial manifest.
@@ -83,8 +87,8 @@ B may provide helper design and tests but must not edit C-owned shared files wit
 
 | File / path | Purpose | Owner | Rationale |
 |---|---|---|---|
-| `tradingagents/repro/manifest.py` | Phase 1 isolated manifest construction, allowlist, fingerprint, metadata, artifact labels, canonical JSON, atomic temp-file write and promotion | **B** | Approved Phase 1 implementation exists in local commit `70a4eee`; preserve it. Do not claim it is based on `aa549f66...` without Git evidence. |
-| `test/offline/test_o2_manifest.py` | Phase 1 offline unit/behavior tests | **B** | Approved Phase 1 test file exists in local commit `70a4eee`; preserve it. |
+| `tradingagents/repro/manifest.py` | Phase 1 isolated manifest construction, allowlist, fingerprint, metadata, artifact labels, canonical JSON, atomic temp-file write and promotion | **B** | Phase 1 implementation merged by PR #16 at `808df04...`; PR head `2d2c63b...`. |
+| `test/offline/test_o2_manifest.py` | Phase 1 offline unit/behavior tests | **B** | Phase 1 test file merged by PR #16 at `808df04...`; PR head `2d2c63b...`. |
 | `cli/run.py` | Reserve unique run directory before graph execution, invoke manifest writer, surface provenance-failed warning, collect artifact references | **C** | **Deferred from Phase 1.** Shared CLI integration. In the inspected ZIP snapshot, the run directory is `<results_dir>/<safe_ticker>/<date>` (`cli/run.py:36-42`, `:135-136`); message log appends (`:150-151`, `:162-163`); section reports use fixed names (`:175-178`); graph streams at `:241`; decision recorded at `:353`; cleanup at `:357-359`; report offer at `:388-389`; report-save failure at `:453-454`. |
 | `tradingagents/graph/trading_graph.py` | Provide effective settings/run context without changing report/state/checkpoint contracts | **C** | **Deferred from Phase 1.** Shared graph integration. In the inspected ZIP snapshot: `run_settings()` `:255-275`; report path `:288-291`; state log `:438-476`; run signature `:140-165`. |
 | `tradingagents/dataflows/files.py` | Reuse or assess atomic temp-file/promotion pattern | **C for edits; B may call** | **Deferred from Phase 1 for shared edits.** In the inspected ZIP snapshot, `replace_file()` uses temp + `os.replace` (`:14-33`); its cache-oriented `PermissionError` behavior (`:28-32`) must be reviewed against O2’s fail-soft provenance rules. |
@@ -92,11 +96,11 @@ B may provide helper design and tests but must not edit C-owned shared files wit
 | `pyproject.toml` | Test discovery and markers | **C/F if changed** | **Deferred from Phase 1.** In the inspected ZIP snapshot, `testpaths` includes `tests` and `test/offline` (`:59`); integration excluded by default (`:60`); markers at `:61-64`. |
 | `.github/workflows/ci.yml` | Three-platform CI and O2-TC-18 dependency gate | **C/F** | **Deferred from Phase 1.** In the inspected ZIP snapshot, CI runs `pytest -q` (`:36`) on `ubuntu-latest` only (`:15`, `:40`, `:56`); O2-TC-21 needs F’s CI coordination. |
 | `test/offline/conftest.py` | Offline no-network fixture | **No edit expected** | In the inspected ZIP snapshot, this blocks network/curl access unless integration-marked (`:14-30`). |
-| `test-plans/O2-Test-Plan-v0.3-DRAFT.md` | Draft test-plan baseline for review; pending approval. | **Review source; not B-owned edit** | Present in this documentation branch. This row does not approve the v0.3 plan. |
+| `test-plans/O2-Test-Plan-v0.3-DRAFT.md` | Test-plan baseline; Revision 2 documentation alignment approved by A; Stage 2 not approved. | **Review source; not B-owned edit** | Present in this documentation branch. Revision 2 alignment is not a new pre-code approval. |
 
 ## 6. Mapping to O2-TC-01 through O2-TC-25
 
-All mappings are proposed. Candidate default command is `pytest -q`; it has **not** been run for O2.
+Phase 1 writer-level mappings are recorded as implemented/tested in PR #16. Stage 2 mappings remain proposed and deferred. Candidate default command is `pytest -q`; Stage 2 tests have not been run.
 
 | Test | Coverage | Owner / integration need |
 |---|---|---|
@@ -122,17 +126,17 @@ All mappings are proposed. Candidate default command is `pytest -q`; it has **no
 | `O2-TC-20` | First layer: `pytest -q` regression; live/integration conditions separately listed | **Deferred from Phase 1; C/F** define regression scope |
 | `O2-TC-21` | Path/JSON checks on Ubuntu, macOS, and Windows | **Deferred from Phase 1; F/C** CI matrix |
 | `O2-TC-22` | Manifest contains normalized ticker, asset type, ISO date, selected analysts | B; isolated test |
-| `O2-TC-23` | Only merged allowlisted fields serialized; unapproved keys absent; `input_condensation_audit_note` is excluded pending unmerged Draft PR #9 | B; isolated test |
+| `O2-TC-23` | Only merged allowlisted fields serialized; unapproved keys absent; `input_condensation_audit_note` is excluded pending open/unmerged PR #9 | B; isolated test |
 | `O2-TC-24` | Package version, Python version, platform recorded when available | B; isolated test |
 | `O2-TC-25` | Manifest contains agreed schema-version field and value `"1.0.0"` | B; isolated test |
 
 ## 7. Candidate offline test path and planned commands
 
-- Phase 1 test file: `test/offline/test_o2_manifest.py`, present in local commit `70a4eee`.
-- Planned default command: `pytest -q`.
-- Planned targeted command: `pytest -q test/offline/test_o2_manifest.py`.
-
-These are planned commands only. No test execution evidence is recorded in this plan. Integration/live conditions remain separate and are not part of the offline default command.
+- Phase 1 test file: `test/offline/test_o2_manifest.py`, merged by PR #16 at `808df04...` (PR head `2d2c63b...`).
+- Phase 1 default command: `pytest -q`.
+- Phase 1 targeted command: `pytest -q test/offline/test_o2_manifest.py`; [PR #16 comment 6954201609](https://github.com/Caicys297/TradingAgents-CS5351/pull/16#issuecomment-6954201609) records `24 passed`.
+- Six CI checks on `2d2c63b` completed successfully in PR #16.
+- Stage 2 commands and coverage require new approval; no Stage 2 execution evidence is recorded.
 
 ## 8. Stop conditions and draft status
 
@@ -143,8 +147,8 @@ Stop and request human/team approval before any edit if:
 - B is asked to edit `cli/run.py` or `trading_graph.py` without an explicit ownership change.
 - Shared interfaces, report/state/memory/checkpoint behavior, or public signatures must change.
 - A new runtime dependency is proposed.
-- The implementation baseline changes from A-approved `aa549f66...`.
-- Existing implementation commit `70a4eee` would be reset, rebased, amended, or discarded without explicit approval.
+- The Phase 1 merge commit `808df04...` or its approved two-file scope would be rewritten or discarded without explicit approval.
+- Stage 2 integration is started without separate approval.
 - UUID reservation/collision policy changes.
 - `schema_version`, fingerprint fields, `allow_nan=false`, or allowlist content changes.
 - `input_condensation_audit_note` is treated as part of the approved allowlist before PR #9 merges and the Registry is updated.
@@ -153,4 +157,4 @@ Stop and request human/team approval before any edit if:
 - O2-TC-21 platform scope changes or F does not support the CI matrix.
 - The approved test plan or execution plan differs materially from this plan.
 
-**Draft — pending human review and approval.** No approval, implementation, test execution, test result, commit, push, PR, or GitHub action is claimed for this revision.
+**Draft — Revision 2 documentation alignment approved by A; Stage 2 not approved.** No Stage 2 implementation, test execution, test result, commit, push, PR, or GitHub action is claimed.
