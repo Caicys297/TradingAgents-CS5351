@@ -142,8 +142,12 @@ class GraphSetup:
         workflow = StateGraph(AgentState)
 
         for spec in plan.specs:
+            # Trusted Analyst identity for the statistics callback: the selected
+            # Analyst's validated spec.key travels as node-level metadata, so it
+            # reaches every model call inside the subgraph (ordinary and wrap_up).
             workflow.add_node(spec.agent_node,
-                              _analyst_graph(spec, analyst_factories[spec.key](), self.max_tool_rounds))
+                              _analyst_graph(spec, analyst_factories[spec.key](), self.max_tool_rounds),
+                              metadata={"scope": "analyst", "agent_key": spec.key})
 
         workflow.add_node("Bull Researcher", bull_researcher_node)
         workflow.add_node("Bear Researcher", bear_researcher_node)
