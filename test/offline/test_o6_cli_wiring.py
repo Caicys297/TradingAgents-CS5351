@@ -50,28 +50,65 @@ DISCLOSURE_ROWS = (
 
 
 class ScriptedChatModel(BaseChatModel):
-    """A chat model answering from a fixed script, with real callback traffic.
+    """A chat model answering from a per-Analyst script, with real callback traffic.
 
     ``_generate`` is the model execution point, so LangChain emits the same
     ``on_chat_model_start`` / ``on_llm_end`` notifications a provider client
-    would. ``executions`` counts those executions independently of any handler.
+    would.
+
+    One instance is shared by every Analyst in the run, so a response cannot be
+    chosen by a global counter: the Analysts run concurrently, and whichever
+    enters first would consume the other's turn. Each response is chosen instead
+    by *who is asking*, read from the prompt the Analyst actually sent (the
+    system message carries the ticker under analysis), and each Analyst keeps
+    its own call index. ``executions`` records every execution with its Analyst
+    label, so the independent count is still real.
     """
 
-    script: list = []
+    script: dict = {}
     executions: list = []
+    # Set on the per-Analyst copy returned by ``bind_tools``; empty on the
+    # shared instance, which is only used to build those copies.
+    _analyst: str = ""
 
     @property
     def _llm_type(self):
         return "o6-scripted"
 
     def bind_tools(self, tools, **kwargs):
-        """Tool binding is a no-op here: the script already names the tool call."""
-        return self
+        """Return a bound copy that knows which Analyst will be calling.
+
+        Each Analyst binds its own tool set at graph build time, and no two
+        Analysts share a set, so the tool names identify the caller without
+        anything being injected into the prompt. A bound copy keeps its own
+        call index, so concurrent Analysts cannot consume each other's turns.
+
+        A bind that is not an Analyst tool set -- a structured-output schema
+        bound by a manager, for instance -- is left unbound: those nodes are not
+        scripted by this fixture and must keep the model's default behaviour.
+        """
+        tools = list(tools)
+        names = frozenset(getattr(tool, "name", None) for tool in tools)
+        key = next(
+            (candidate for candidate, spec in _TOOL_SETS.items() if spec == names),
+            None,
+        )
+        if key is None:
+            return super().bind_tools(tools, **kwargs)
+        return self.model_copy(update={"_analyst": key})
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-        index = len(self.executions)
-        self.executions.append(index)
-        step = self.script[min(index, len(self.script) - 1)]
+        key = self._analyst
+        if not key:
+            # ``wrap_up`` reaches the model without ``bind_tools``, so the copy
+            # that knows its Analyst is not the object called. That prompt is
+            # still the Analyst's own and lists the tools it offers, so the
+            # Analyst is read from those names -- not from call order.
+            key = self._analyst_of_prompt(messages)
+        turns = self.script[key]
+        index = sum(1 for label in self.executions if label == key)
+        self.executions.append(key)
+        step = turns[min(index, len(turns) - 1)]
         message = AIMessage(
             content=step["content"],
             tool_calls=step.get("tool_calls", []),
@@ -82,6 +119,17 @@ class ScriptedChatModel(BaseChatModel):
             },
         )
         return ChatResult(generations=[ChatGeneration(message=message)])
+
+    def _analyst_of_prompt(self, messages) -> str:
+        """The Analyst whose own prompt this unbound call carries."""
+        text = " ".join(str(getattr(m, "content", m)) for m in (messages or []))
+        for key, names in _TOOL_SETS.items():
+            if names and all(name in text for name in names):
+                return key
+        raise AssertionError(
+            "a scripted model call carried neither an Analyst binding nor a "
+            "prompt listing one Analyst's tools"
+        )
 
 
 def _market_script():
@@ -95,6 +143,25 @@ def _market_script():
         },
         {"content": "Market report body.", "input_tokens": 100, "output_tokens": 20},
     ]
+
+
+def _tool_sets():
+    """Each Analyst's bound tool names, read from the production specs."""
+    from tradingagents.graph.analyst_execution import ANALYST_NODE_SPECS
+
+    return {
+        key: frozenset(tool.name for tool in spec.tools)
+        for key, spec in ANALYST_NODE_SPECS.items()
+        if spec.tools
+    }
+
+
+_TOOL_SETS = _tool_sets()
+
+
+def _script(market, news):
+    """The per-Analyst scripts for one fixture, keyed by Analyst."""
+    return {"market": market, "news": news}
 
 
 def _news_script(in_tokens=80, out_tokens=15):
@@ -173,6 +240,9 @@ def _build_fixture_graph(script, record=None, monkeypatch=None, wrap_up_analysts
     from tradingagents.graph import trading_graph as tg
 
     if monkeypatch is not None:
+        # One model object serves every Analyst, as production's shared client
+        # does; it routes by the tools each Analyst binds, so concurrent calls
+        # cannot consume each other's scripted turn.
         model = ScriptedChatModel(script=copy.deepcopy(script), executions=[])
 
         class _Client:
@@ -459,7 +529,7 @@ def test_tc_o6_12_cli_disclosure_rows_and_wording(monkeypatch):
 
     record = {}
     graph_cls = _build_fixture_graph(
-        _tc12_market_script() + _news_script(),
+        _script(_tc12_market_script(), _news_script()),
         record,
         monkeypatch,
         wrap_up_analysts=("market",),
@@ -607,7 +677,9 @@ def test_w15a_ordinary_path_statistics_and_footer(monkeypatch):
     from cli import run as run_mod
 
     record = {}
-    graph_cls = _build_fixture_graph(_market_script() + _news_script(), record, monkeypatch)
+    graph_cls = _build_fixture_graph(
+        _script(_market_script(), _news_script()), record, monkeypatch
+    )
     monkeypatch.setattr(run_mod, "TradingAgentsGraph", graph_cls)
 
     harness = _make_harness(monkeypatch, ["market", "news"])
@@ -634,7 +706,9 @@ def test_w15b_new_checkpoint_persists_state(monkeypatch, tmp_path):
     from cli import run as run_mod
 
     record = {}
-    graph_cls = _build_fixture_graph(_market_script() + _news_script(), record, monkeypatch)
+    graph_cls = _build_fixture_graph(
+        _script(_market_script(), _news_script()), record, monkeypatch
+    )
     monkeypatch.setattr(run_mod, "TradingAgentsGraph", graph_cls)
 
     harness = _make_harness(monkeypatch, ["market", "news"])
@@ -713,7 +787,7 @@ def test_tc_o6_14_two_runs_in_one_process_are_isolated(monkeypatch):
 
     monkeypatch.setattr(run_mod, "StatsCallbackHandler", recording_handler)
 
-    run1_script = _market_script() + _market_script() + _news_script()
+    run1_script = _script(_market_script() + _market_script(), _news_script())
     record = {}
     graph_cls = _build_fixture_graph(run1_script, record, monkeypatch)
     monkeypatch.setattr(run_mod, "TradingAgentsGraph", graph_cls)
@@ -726,7 +800,11 @@ def test_tc_o6_14_two_runs_in_one_process_are_isolated(monkeypatch):
 
     run2_record = {}
     monkeypatch.setattr(
-        run_mod, "TradingAgentsGraph", _build_fixture_graph(_news_script(23, 7), run2_record, monkeypatch)
+        run_mod,
+        "TradingAgentsGraph",
+        _build_fixture_graph(
+            _script(_market_script(), _news_script(23, 7)), run2_record, monkeypatch
+        ),
     )
     from cli.models import AnalystType
 
