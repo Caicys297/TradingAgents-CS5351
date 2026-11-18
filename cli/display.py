@@ -414,7 +414,14 @@ def display_agent_summary(stats_handler, target_console=None):
     table.add_column("Output tokens", justify="right")
     table.add_column("Duration", justify="right")
 
-    for key, row in analysts.items():
+    # Rendered in the canonical Analyst order rather than in the order the
+    # Analysts happened to finish: they run concurrently, so completion order is
+    # the scheduler's to decide, and a table whose rows move between runs is
+    # harder to read and to compare.
+    ordered = [key for key in ANALYST_ORDER if key in analysts]
+    ordered += [key for key in analysts if key not in ANALYST_ORDER]
+    for key in ordered:
+        row = analysts[key]
         table.add_row(
             ANALYST_AGENT_NAMES.get(key, key),
             str(row.get("calls", 0)),
