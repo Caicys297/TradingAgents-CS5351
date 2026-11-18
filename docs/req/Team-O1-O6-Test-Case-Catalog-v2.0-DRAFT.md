@@ -115,7 +115,7 @@ None of these tests are claimed implemented, executed, or approved. `test/offlin
 | O2-TC-14 | Manifest destination unwritable | Approved fail-soft/closed behavior; no partial file | FR-14 |
 | O2-TC-15 | Invalid/path-traversal ticker | Rejected without writing outside results boundary | FR-03, NFR-05 |
 | O2-TC-16 | Nested secret or credential URL | Secret excluded/redacted | FR-11, NFR-03 |
-| O2-TC-17 | Git lookup OS/timeout failure | Explicit unavailable/error status; no fabricated data | FR-06/14 |
+| O2-TC-17 | Git lookup OS/timeout failure | Explicit unavailable/error status; no fabricated data | FR-06 |
 | O2-TC-18 | Inspect runtime dependencies | No new third-party runtime dependency | NFR-01; proposed Static Analysis Gate check |
 | O2-TC-19 | Run manifest tests with fakes and network disabled | No vendor/market-data/LLM/network access | NFR-04; proposed |
 | O2-TC-20 | Regression-check agreed existing outputs/interfaces | Existing behavior is preserved | NFR-06; proposed |
