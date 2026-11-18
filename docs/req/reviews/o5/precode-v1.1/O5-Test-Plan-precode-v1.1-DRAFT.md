@@ -1,3 +1,39 @@
+# O5 Test Plan - S1 formal review v1.6
+
+**Active revision: v1.6, 2026-11-18. F APPROVAL PENDING. No permission to implement yet.** Stable filename retained.
+
+## Verified authority and scope
+
+Registry PR #9 is merged at **d36a677d4738efd365b6bbcf6f69f993acf8fd3c**, also the current main inspected for this revision. REQ-O5-01.statement, development_contract.o5.rules_version and DEV20 all agree on **o5-rules-v1.1-draft**. Compared with historical c861d03, the only O5 change is that statement literal; all other O5 requirements, mappings, rules and fixture bytes are unchanged. O2's audit-note allowlist addition and FR-14 TC-13/14 mapping do not affect S1.
+
+[A approved execution plan v1.4](https://github.com/Caicys297/TradingAgents-CS5351/pull/3#issuecomment-6917171487) at b5891ac534bf686989d0b670dca1d3e5b76b33e1. That file remains byte-identical. [A's S1 clarification](https://github.com/Caicys297/TradingAgents-CS5351/pull/3#issuecomment-6943145906) permits independent S1 after Registry reconciliation and F approval. C/D integration and unpublished AGENTS.md/Prompt.md are not extra S1 gates; final teacher deliverables remain required.
+
+Requested review: [inventory](./O5-S1-Case-Inventory-v1.5-DRAFT.md) section 4's **48 selector row IDs with parameters**, section 5's **I6/I7/I8/I10 static schema families**, common assertions/negative coverage in section 6a and the change list in section 7a. T05a tie, T19 subset and fixed T14b permutation remain proposed parameter details for F. No I9-a/I9-b/I13, adapter/sink or S2-S6 coverage is silently included. Row count is not a count of executed tests.
+
+## Assertion delta
+
+- Valid cases already use -draft; retain that literal. T10j continues rejecting unsupported versions; no non-draft alias is authorized.
+- Required rules_version keys and variant/stage nullability remain unchanged. Static schema controls do not prove runtime emission.
+- DEV20 SHA-256 remains a6f65bf271d9c9ac555f5d9f81cde5cbdb4ff526f46772c065cfe2653f0231f6. No fixture bytes, labels, order, counts, tokenizer, invariant mapping or T17 artifacts changed. DEV20 is still provisional, not human quality sign-off.
+- Preserve later I9-b V-VENDOR / I13 V-PARTIAL and T13c single-V-PARTIAL/no-extra-V-VENDOR assertions.
+- Exact code/test file scope and exclusions are in inventory section 2. No approved execution-plan scope changes.
+
+## Status and evidence
+
+F formal S1 approval: **Pending**. Software tests and benchmarks: **Not run**. Document/data integrity checks only are recorded in the local review package. The resulting document commit SHA is to be supplied in the PR submission note after commit.
+
+B's manual Registry Schema validation has a record per A's supplied message; this preparation did not rerun it. **Schema CI Gate remains unconnected.** Neither six green CI jobs nor I6-I10 evidence-schema checks proves the course's Registry Schema gate.
+
+[Course matrix](./O5-S1-Course-Requirements-and-Evidence-v1.5-r2.md) preserves D1-D9 and all six gates, three-tier verification, full previous-suite regression, negative cases, independent expected values, actual OpenCode sessions and human interventions. This document does not certify full course compliance. No functional/test code has been generated.
+
+The v1.4 body below retains detailed cases and amendments. Its pending A approval/version-choice and historical-baseline statements are historical and superseded by this active v1.6 block. F's previous document closures are retained; formal S1 approval is still required.
+
+---
+
+## Preserved v1.4 reference body (historical status; case specifications retained)
+
+
+
 # O5 Macro News Filter — Test Plan (pre-code upload, v1.1-DRAFT)
 
 **Owner:** Member E (O5). **Test-plan reviewer:** Member F (registry `development_contract.approval_roles.O5_test_plan` → "F reviews").
