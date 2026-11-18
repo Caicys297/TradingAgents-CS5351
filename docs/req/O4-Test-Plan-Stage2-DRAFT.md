@@ -2,12 +2,12 @@
 
 | Field | Value |
 |---|---|
-| Plan ID | O4-TEST-S2-v0.4-DRAFT |
+| Plan ID | O4-TEST-S2-v0.5-DRAFT |
 | Status | **DRAFT — NOT APPROVED** |
 | Owner | Member D |
 | Prepared for | Member F (test coordination, CI integration, verification); Member A/C (integration scope) |
-| Companion execution plan | `docs/req/O4-Execution-Plan-Stage2-DRAFT.md` (O4-EXEC-S2-v0.4-DRAFT) |
-| Verified baseline | `origin/main` `d36a677d4738efd365b6bbcf6f69f993acf8fd3c` (this review branch's base; includes O2 PR #16, PR #9). Historical Stage 1 merge: `185d18b483ce1e04a9ac649923cbec14707fd9e3`. C must re-verify the O6/O2-integrated baseline before O4 CLI edits. |
+| Companion execution plan | `docs/req/O4-Execution-Plan-Stage2-DRAFT.md` (O4-EXEC-S2-v0.5-DRAFT) |
+| Verified baseline | **Integration baseline:** current `origin/main` `bbc888126f2a4a645d2006b9cda49259e9a56efd` (includes PR #9 `d36a677`, O2 PR #16 `808df04`, O6 identity-binding PR #19 `6a561ab`). **PR #17 base:** `d36a677`. **Historical O4 Stage 1 baseline:** `185d18b483ce1e04a9ac649923cbec14707fd9e3`. C must re-verify the O6/C-integrated baseline before O4 CLI edits. |
 | Stage 1 checker under test | `tradingagents/agents/evidence_gate.py` — `check_evidence()`, `GateResult` (merged, unchanged by Stage 2) |
 | Authoritative requirements | `docs/req/requirements.yaml` (PR #2 `4f87e29f…`); `development_contract.o4` |
 | Approval | **NONE — DRAFT.** This plan requests approval; it does not grant it. No test below exists yet. |
@@ -43,6 +43,10 @@ Proposed location: `test/offline/` (default-collected). Candidate files:
   - **memory** enabled/disabled ← driven by the relevant memory configuration (`memory_log_path`/equivalent) → memory log present/absent;
   - **always where applicable:** state log (via `record_decision`/`_log_state`).
   The **observed** set is collected **after** the run from real artefacts; compared as sets (§T-08). Hardcoded/assumed lists are not acceptable; **Memory is NOT assumed always enabled**, and **save/show/html do not have identical effects** — each combination yields its own expected set.
+- **`memory_config` fixture (isolation) [PROPOSED]:**
+  - **Memory-disabled cases:** pass an **empty/disabled Memory configuration appropriate to the actual implementation** (e.g. `memory_log_path` unset/`None`, or the implementation's explicit "no memory" setting) — **not** merely omitting a field that defaults to a real path.
+  - **Memory-enabled cases:** use an **isolated temporary Memory path** (per-test `tmp_path`), never the default user directory.
+  - Regardless of config, tests must assert whether memory persistence occurred and **where**.
 - Reuse `test/offline/conftest.py::_no_network` (already active).
 
 **Common execution rule:** drive the **real** Graph/CLI entry points with the fake stream/fixtures; inspect actual artefacts/messages, not only helper returns. Never mark these `integration`.
@@ -81,7 +85,8 @@ Proposed location: `test/offline/` (default-collected). Candidate files:
 - **Assertions (ordered, independent expected-vs-observed; [CONFIRMED §4]):**
   1. `expected = expected_enabled_surface_set(entrypoint, save, show, html, memory_config)` computed **before** the run; `observed` collected **after** the run from real artefacts; assert `observed == expected` (both non-empty). A missing enabled surface, or an empty observed set, **fails** — a vacuous `set(vals)=={...}` equality is explicitly disallowed.
   2. Independently, every expected enabled surface carries the authoritative `effective_rating` (`REVIEW` for all three variants) — asserted **per surface** on the actual artefact content (Markdown header rating, standalone `decision.md`, HTML rating, CLI text, state-log `final_rating`/`effective_rating`, memory tag) — not by collapsing to one set comparison.
-- **Expected:** both independent assertions pass for the expected enabled set; disabled surfaces (incl. memory when disabled) are not assumed enabled and are not counted in `expected`.
+  3. **Memory isolation (independent checks):** for **Memory-disabled** cases → assert **no** memory persistence occurred (no entry written anywhere) using an explicit disabled Memory config; for **Memory-enabled** cases → assert the effective rating is persisted to the **expected isolated temporary location**, and assert **no default user directory** (e.g. `~/.tradingagents` or the implementation default) was written.
+- **Expected:** both independent assertions pass for the expected enabled set; disabled surfaces (incl. memory when disabled) are not assumed enabled and are not counted in `expected`; memory isolations hold (disabled→no write; enabled→temp-only, no default dir).
 - **Owner:** D; F collection/CI.
 - **Dependencies:** integration point (Q4) A/C-confirmed; mandatory sub-scenarios confirmed by F (§13).
 
@@ -184,15 +189,18 @@ Proposed location: `test/offline/` (default-collected). Candidate files:
 - **Fixtures:** a checkpointed run **resumed to completion** (`checkpoint_thread_id` + `checkpoint_input`) with a downgraded state; an **interrupted** run that does not reach publication; a **repeated `record_decision()`** fixture (same completed execution invoked twice); a **legacy/stale-field checkpoint** state carrying stale `final_rating`/`effective_rating`/`original_rating`.
 - **Execution:** offline; drive the real Graph/CLI resume/repeat path with fixtures; do not assume fresh and resumed paths are identical.
 - **Assertions (observable):**
-  - **repeated `record_decision()` within one completed execution** → no duplicate authoritative publication (state log / memory persist **exactly once**) and no second authoritative evaluation;
+  - **authoritative evaluation count:** resumed-to-completion and repeated-call paths each perform **exactly one** authoritative Gate evaluation (direct count assertion, see §10a);
+  - **rating propagation:** after a resumed/complete run, `effective_rating`/`final_rating` reflect the gated result and `original_rating` holds the pre-gate value;
   - **`original_rating` not overwritten** by a previously downgraded `REVIEW` on a repeat;
+  - **persistence count:** state log and memory persist **exactly once** per completed execution (no duplicates on repeat);
+  - **checkpoint cleanup ordering:** checkpoint cleanup (`clear_checkpoint_on_success`) occurs **only after** successful gated completion (restore → Gate → S2 → log → cleanup), not before;
+  - **complete restored state evaluated:** the resumed Gate evaluates the **full restored reports** (all four report fields restored), not a partial state — a resumed run whose restored reports satisfy presence yields a non-downgraded gated result, and one with a missing restored report downgrades;
   - **interrupted** run that never reaches authoritative publication publishes **no** authoritative rating (existing skip-`record_decision` behaviour preserved);
-  - **resumed-to-completion** → exactly one gated evaluation on the finalized state before publication; enabled surfaces consistent;
   - **legacy/stale-field checkpoint** state with stale `final_rating`/`effective_rating`/`original_rating` → **re-evaluated** on completion (presence of stale `effective_rating` does **not** authorize publication); historical-state read still works via `run_rating` semantics;
   - **legacy/checkpointed state without `effective_rating`** still yields a usable rating (see T-20).
-- **Expected:** `repeat→single authoritative publish+persist`, `resumed→gated-consistent`, `interrupted→no authoritative rating`, `stale-fields→re-evaluated`.
+- **Expected:** `eval-count==1`, `rating-propagated`, `original_rating-preserved`, `persist-count==1`, `cleanup-after-gated-completion`, `stale-fields→re-evaluated`, `interrupted→no authoritative rating`.
 - **Owner:** D; F collection/CI.
-- **Note:** exact resume/repeat/legacy interaction with the Gate is **pending C**.
+- **Note:** exact resume/repeat/legacy interaction with the Gate (and execution-identity mechanism) is **pending C**.
 
 ---
 
@@ -266,10 +274,11 @@ All **mandatory** Stage 2 tests and their **parameterized subcases / sub-scenari
 ---
 
 ## 14. Unresolved items blocking finalization
-**Resolved by Member A (do not re-open):** `original_rating` field name; S2 capture→set order + conflict in `gate.reason` (no full durable `GateResult`); single authoritative Gate at the `record_decision` shared boundary (no Graph/CLI second authoritative call); T-16 measures the **pure** checker; `Should` non-blocking by default; T-07 integration **mandatory**.
-- **C (exact `record_decision` interface PENDING C CONFIRMATION):** signature/return compatibility + all callers/tests; how `selected_analysts` reaches the boundary; inline vs shared helper; `GateResult` runtime availability; `original_rating` conflict/absent encoding; effective-rating persistence shape (with B); B1 two-area insertion points; repeated-completion/checkpoint/resume/legacy-stale-field rules.
-- **C — O6 prerequisite:** O6 F identity-binding verification commit/evidence + C CLI joint verification + re-verify O6/O2-integrated `main` (after O2 PR #16) before O4 CLI edits. *(No O6 SHA invented; not claimed passed. O6 prerequisite ≠ O4 Stage 2 coding approval.)*
+**Resolved (do not re-open):** `original_rating` field name; S2 capture→set order + conflict in `gate.reason` (no full durable `GateResult`); single authoritative Gate at the `record_decision` shared boundary (no Graph/CLI second authoritative call); **C's backward-compatible `record_decision` contract** (signature + `None` return preserved, in-place mutation); T-16 measures the **pure** checker; `Should` non-blocking by default; T-07 integration **mandatory**. **PR #9: merged (merge commit `d36a677` = PR #17 base) — not a live dependency.**
+- **C (exact mechanism PENDING C CONFIRMATION):** same-vs-new **execution-identity** mechanism (§B.1 — do not invent an approved identity field); inline vs shared helper; `selected_analysts` reaching the boundary; `GateResult` runtime availability; `original_rating` conflict/absent encoding; effective-rating persistence shape (with B); B1 two-area insertion points; repeated-completion/checkpoint/resume/legacy-stale-field rules + cleanup ordering.
+- **C — O6 prerequisite:** O6 identity-binding **merged** (`6a561ab`/PR #19) → traceable commit exists; **C's CLI joint verification evidence still required**; re-verify O6/O2/PR#9-integrated `main` before O4 CLI edits. *(Not claimed passed; no invented SHA; O6 prerequisite ≠ O4 coding approval.)*
 - **A/C:** enabled-surface contract confirmation; non-authoritative label wording (CLI/MD/`decision.md`/HTML) + cause-neutral REVIEW message + display-order placement; unknown-config abort UX; T-21 observation-point contract.
+- **A:** confirm the **exact six shared-file modification scope** at final Execution Plan approval.
 - **A/F:** whether the `Should` (≤10 ms) target may ever be CI-blocking (default non-blocking).
 - **F:** confirm the mandatory Stage 2 set + parameterized sub-scenarios and record test approval.
 

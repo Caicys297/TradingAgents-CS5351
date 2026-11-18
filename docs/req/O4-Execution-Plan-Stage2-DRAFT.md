@@ -2,12 +2,12 @@
 
 | Field | Value |
 |---|---|
-| Plan ID | O4-EXEC-S2-v0.4-DRAFT |
+| Plan ID | O4-EXEC-S2-v0.5-DRAFT |
 | Status | **DRAFT — NOT APPROVED** |
 | Prepared by | Member D |
 | Prepared for | Member A (scope/integration review), Member C (shared-file integration owner), Member F (test/CI) |
-| Companion test plan | `docs/req/O4-Test-Plan-Stage2-DRAFT.md` (O4-TEST-S2-v0.4-DRAFT) |
-| Verified baseline | `origin/main` `d36a677d4738efd365b6bbcf6f69f993acf8fd3c` (this review branch's base; includes O2 PR #16 `808df04`, PR #9). Historical Stage 1 merge: `185d18b483ce1e04a9ac649923cbec14707fd9e3`. |
+| Companion test plan | `docs/req/O4-Test-Plan-Stage2-DRAFT.md` (O4-TEST-S2-v0.5-DRAFT) |
+| Verified baseline | **Integration baseline:** current `origin/main` `bbc888126f2a4a645d2006b9cda49259e9a56efd` (includes PR #9 `d36a677`, O2 PR #16 `808df04`, and O6 identity-binding PR #19 `6a561ab`). **PR #17 base:** `d36a677` (PR #9 merge). **Historical O4 Stage 1 baseline:** `185d18b483ce1e04a9ac649923cbec14707fd9e3`. |
 | Stage 1 checker | `tradingagents/agents/evidence_gate.py` (`check_evidence`, `GateResult`) — merged |
 | Authoritative requirements | `docs/req/requirements.yaml` (PR #2 merged at `4f87e29f…`); `development_contract.o4` |
 | Approval | **NONE.** Stage 2 is NOT approved. Shared-file ownership for Stage 2 has NOT been newly granted by this document. This is a proposal for A/C/F review. |
@@ -82,22 +82,30 @@
 - **No publication bypass:** every authoritative publication point (Graph return `:405`; `record_decision` `:360`; CLI display/reports `:380`/`:388`; reporting/HTML/memory readers) observes only the gated effective rating. Any new publication path must route through the same boundary (fail-closed if it cannot).
 - **Checkpoint/resume:** a resumed run that reaches completion must perform the single authoritative gated evaluation on its finalized state before publication (see §K.2). A partial/interrupted run that does **not** reach authoritative publication must publish no authoritative rating (existing behaviour — it skips `record_decision` on mid-stream failure).
 
-### B.1 Proposed `record_decision()` contract — **[PROPOSED; EXACT INTERFACE PENDING C CONFIRMATION]**
+### B.1 Proposed `record_decision()` contract — **[Member C's backward-compatible design; EXACT MECHANISM PENDING C CONFIRMATION]**
 
-The current signature `record_decision(self, company_name, trade_date, final_state)` is **not** proposed to change in a way that breaks the two production callers or the existing tests; any change is **pending C confirmation**. The proposed **behavioural contract** at this boundary:
+Member C's proposed contract (adopted as the planning baseline, **subject to final C confirmation**):
 
-1. **Inputs:** receives `final_state` (complete finalized run state). `selected_analysts` is available on the graph instance (`self.selected_analysts`, `trading_graph.py:109`) — whether the Gate reads it from `self`, from an argument C adds, or from a shared helper is **pending C**.
-2. **Exactly one authoritative evaluation per completed execution:** one `check_evidence(final_state, selected_analysts)` call determines the published rating; Graph/CLI do not re-invoke authoritatively.
-3. **Capture `original_rating` before any Gate-driven overwrite:** read the pre-gate rating (Stage 1 precedence: `final_rating` else parsed body) into `original_rating` **before** step 4.
-4. **Set `final_rating = gate.effective_rating` and `effective_rating = gate.effective_rating`.**
-5. **Preserve `final_trade_decision` unchanged** (bytes; FR-12).
-6. **`GateResult` runtime availability:** `gate` (verdict, effective rating, per-item statuses, `reason`) is available at the boundary in-memory for diagnostics and integration tests — **no full durable persistence required**; exact availability/return shape pending C.
-7. **State logging + memory persistence only after Gate evaluation:** `_log_state(...)` (`:362`) and `memory_log.store_decision(...)` (`:368–371`) run **after** the Gate and persist the **effective** rating; they must not run before, nor use the ungated original.
-8. **Return value & backward compatibility:** the boundary returns so the Graph return (`_run_graph` `:405`) and CLI post-`record_decision` display read the gated effective rating. If `record_decision` currently returns `None` (it does — no return), any new return value must be **additive/back-compatible** for the CLI caller and tests — **pending C**.
-9. **Error propagation:** invalid Analyst configuration raises `ValueError` from `check_evidence` and **propagates** (aborts publication) — not converted to `REVIEW` (see §G).
+1. **Preserve the signature** `record_decision(self, company_name, trade_date, final_state)` — no new required parameters. (`selected_analysts` remains available as `self.selected_analysts`, `trading_graph.py:109`; how it reaches the Gate — read from `self` vs a shared helper — is **pending C**, not a signature change.)
+2. **Preserve its `None` return value** — existing Graph/CLI callers (`trading_graph.py:400`, `cli/run.py:353`) and tests must not depend on a new return.
+3. **Mutate `final_state` in place** so existing callers observe the resulting authoritative rating (no separate return channel needed).
+4. **Perform the authoritative Gate BEFORE state logging and memory persistence** (`_log_state` `:362`, `store_decision` `:368–371`).
+5. **Capture `original_rating` BEFORE overwriting `final_rating`** (Stage 1 precedence: `final_rating` else parsed body).
+6. **Set `final_rating` and `effective_rating` to `GateResult.effective_rating`.**
+7. **Preserve `final_trade_decision` unchanged** (bytes; FR-12).
+8. **Keep `GateResult.reason` accessible at runtime** (in-memory at the boundary) for diagnostics/integration tests — **without** requiring full durable `GateResult` persistence. Exact access/return vehicle **pending C**.
+9. **Propagate invalid analyst configuration errors** (`ValueError`) rather than converting them into an ordinary `REVIEW` (see §G).
 
-- Then the Graph return path (`_run_graph` `:405`) and the CLI post-`record_decision` display read the gated effective rating; they must **not** re-invoke the checker.
-- **Whether this lives inline in `record_decision` or in a shared completion helper, and the exact interface/signature change (if any), is PENDING C CONFIRMATION.** Signature/return compatibility (T-20) must be preserved; existing callers/tests must not break.
+**Same vs new logical completion — execution identity [PROPOSED; telemetry mechanism PENDING C CONFIRMATION]:**
+The runtime must distinguish **repeated processing of the *same* logical completion** from a **NEW completed execution**. Finding `effective_rating`/`original_rating` already in a state does **not** prove the Gate ran for the *current* completion (see §C, §K.2).
+
+- **Do NOT invent an approved execution-identity field.** Candidate mechanisms — choose **one**, pending C: (a) an in-memory per-call/per-graph completion guard (e.g. a sentinel set/flag scoped to the completed execution), (b) a completion nonce/marker threaded through the (already-threaded) run config, or (c) C structuring callers so the boundary is invoked exactly once. **Exact mechanism PENDING C CONFIRMATION.**
+- **For repeated processing of the same logical completion:**
+  - never perform a **second authoritative Gate evaluation**;
+  - never overwrite `original_rating` with the already-downgraded rating;
+  - never duplicate authoritative publication or persistence.
+
+**Whether this lives inline in `record_decision` or in a shared completion helper is PENDING C CONFIRMATION.** Signature/return compatibility (T-20) must be preserved; existing callers/tests must not break.
 
 ### B.2 CLI path (`cli/run.py`) — **[PROPOSED; C-owned shared edit]**
 - **Verified:** the CLI reaches publication via `stream_run` (`:241`) + `record_decision` (`:353`); since `record_decision` now carries the single authoritative Gate (§B.1), the CLI **consumes** the gated result from there and does **not** call `check_evidence()` again.
@@ -205,7 +213,7 @@ The **completion notice must never imply an approved trade recommendation** — 
 
 ## H. Proposed shared-file modification scope — **[PROPOSED; exact scope SUBJECT TO A APPROVAL + C VERIFICATION]**
 
-> These files/edits are **proposals**, not authorized scope. Per §I, C owns shared edits; A approves scope; exact lines pending C's re-verification on the latest main. `effective_rating` is the approved state field; `original_rating` is the approved diagnostic field name (§C).
+> These files/edits are **proposals**, not authorized scope. Per §I, C owns shared edits; **Member A confirms the exact six shared-file modification scope during final Execution Plan approval**; exact lines pending C's re-verification on the latest main. `effective_rating` is the approved state field; `original_rating` is the approved diagnostic field name (§C). *(The six files below are the proposed set; A may adjust/confirm the exact scope.)*
 
 | File | Proposed change |
 |---|---|
@@ -233,17 +241,18 @@ The **completion notice must never imply an approved trade recommendation** — 
 - **F:** collection/CI/T-16 harness + mandatory-case confirmation.
 - **A:** approve architecture + final execution plan; resolve §J.
 
-**Cross-feature coordination — latest state [based on `origin/main` `d36a677`]:**
-- **O6 prerequisite (Member C's review requirement) [CONFIRMED sequencing rule]:** Before any O4 Stage 2 CLI shared-file edits:
-  1. **First complete the O6 F identity-binding requirement** (O6-FR-01) **and C's CLI joint verification**.
-  2. **Obtain a traceable O6 verification commit/evidence.** *(The exact O6 commit SHA is NOT known here and must not be invented; C/F supply it.)*
-  3. **Re-verify the current `main` after O2 PR #16 and subsequent merges.**
-  4. **Use the confirmed O6/O2-integrated baseline for O4 CLI changes.**
-  5. **Member C remains responsible for shared integration code.**
+**Cross-feature coordination — latest state [verified `origin/main` `bbc8881`; PR #17 base `d36a677`]:**
+- **O6 prerequisite (Member C's review requirement) [CONFIRMED sequencing rule]:** Before any O4 Stage 2 **CLI implementation**:
+  1. **O6 F identity binding + C's CLI joint verification must produce a traceable commit** (and review evidence). **Status now:** O6 identity binding **has merged** (`6a561ab`, PR #19, into `main` `bbc8881`, touching `tradingagents/graph/setup.py` + tests) — so a *traceable O6 commit exists*; **C's CLI joint verification is a separate step and is NOT yet evidenced** — do not claim O6 verification complete until C records it.
+  2. **O4 planning review can continue in parallel** with the O6 step (this v0.5 review does not block on it).
+  3. **Re-verify current `main` against O2 PR #16 and PR #9 dependencies** (both already merged — see below) before O4 CLI changes.
+  4. **Use the confirmed O6/O2/PR#9-integrated baseline for O4 CLI changes.** *(Local facts are from `origin/main` `bbc8881`; exact post-integration lines pending C.)*
+  5. **Member C remains responsible for shared integration code** (shared-file ownership coordinated by C).
+  6. **The exact six shared-file modification scope is confirmed by Member A during final Execution Plan approval** (§H).
   - **The O6 prerequisite is NOT equivalent to O4 Stage 2 coding approval** — it is a sequencing prerequisite; O4 Stage 2 still requires C interface confirmation → F test approval → A execution-plan approval.
-- **O6 — merged infrastructure vs pending CLI:** O6 statistics infrastructure is merged (`cli/stats_handler.StatsCallbackHandler` in `cli/run.py`; O6 PRs #11/#15). **O6 F identity-binding / CLI rev.5 disclosure-isolation (TC-O6-12/14) is NOT assumed merged/passed** — no O6 verification evidence is claimed. C must supply the traceable O6 verification commit before O4 CLI edits.
-- **O2 PR #16 [merged to `origin/main` `d36a677`]:** added **`tradingagents/repro/manifest.py`** (isolated `build_manifest`/`write_manifest`), **not yet wired** into `cli/run.py`/`trading_graph.py` on `d36a677`. Per `A-Requirements-Decisions`, O2 will write `manifest.json` **at run start** in `cli/run.py`, with **manifest failure not altering O4's gated result** (visible provenance-failed warning, no success claim). When O2's CLI wiring lands, C must reconcile O2 run-start manifest writing with O4's completion-boundary Gate and B1 buffering.
-- **Ordering rule:** O4 CLI shared-file edits occur only after (a) the O6 prerequisite above is satisfied with traceable evidence, (b) C re-verifies the O6/O2-integrated `main`, (c) C confirms the shared completion interface + compatibility, and (d) F jointly verifies O6 CLI before O4 CLI edits.
+- **PR #9 dependency [RESOLVED — merged]:** PR #9 (`codex/o2-fr14-trace-fix`) is **already merged**; its merge commit **is `d36a677`** (the current PR #17 base), and it changed `docs/req/requirements.yaml` (6 lines) + `Team-O1-O6-Test-Case-Catalog-v2.0-DRAFT.md` (4 lines) under **PR #9's own review record** (not newly authored/approved under O4). **PR #17 does *not* carry PR #9's changes as its own** — verified: PR #17's diff vs its base is exactly the two O4 Stage 2 DRAFT files (no registry/catalogue changes). PR #9 is **not a live dependency**; it is in the base. *(Member A need take no merge-ordering action for PR #9; recorded for provenance only.)*
+- **O2 PR #16 [merged; merge commit `808df04`, ancestor of `d36a677` and `origin/main`]:** added **`tradingagents/repro/manifest.py`** (isolated `build_manifest`/`write_manifest`), **not yet wired** into `cli/run.py`/`trading_graph.py`. Per `A-Requirements-Decisions`, O2 will write `manifest.json` **at run start** in `cli/run.py`, with **manifest failure not altering O4's gated result** (visible provenance-failed warning, no success claim). When O2's CLI wiring lands, C must reconcile O2 run-start manifest writing with O4's completion-boundary Gate and B1 buffering.
+- **Ordering rule:** O4 CLI shared-file edits occur only after (a) O6 traceable commit + C's joint CLI verification evidence, (b) C re-verifies the O6/O2/PR#9-integrated `main`, (c) C confirms the shared completion interface + compatibility, and (d) F jointly verifies O6 CLI before O4 CLI edits.
 
 ---
 
@@ -251,16 +260,17 @@ The **completion notice must never imply an approved trade recommendation** — 
 
 > **Resolved by Member A (do not re-open):** (a) `original_rating` is the approved field name; (b) the S2 new-execution contract order (capture→set `final_rating`→set `effective_rating`→preserve bytes; conflict in `gate.reason`; no full durable `GateResult`); (c) the single-authoritative Gate at the shared completion boundary (`record_decision`), no independent Graph/CLI second evaluation; (d) `Should` latency non-blocking by default.
 
-**Pending C (shared-file integration owner) — exact interface is PENDING C CONFIRMATION:**
-1. Confirm the `record_decision()` **contract/signature** and all current callers incl. tests (`trading_graph.py:400`, `cli/run.py:353`, `tests/test_cli_memory_log.py`, `tests/test_memory_log.py`); decide whether the signature changes or a shared helper is added, keeping return-value compatibility (currently returns `None`).
-2. Confirm how `selected_analysts` reaches the boundary (`self.selected_analysts` vs a parameter).
-3. Confirm the exact implementation mechanism: inline in `record_decision` vs a shared completion helper.
-4. Confirm `GateResult` runtime availability/return shape to Graph/CLI/tests (no full durable persistence).
-5. Confirm `original_rating` capture point + encoding for **conflicting** / **absent** sources (§C); confirm `original_rating` not overwritten by a prior REVIEW.
-6. Confirm effective-rating persistence shape in `_log_state` JSON (add `effective_rating`/`original_rating` fields?) — with B for invariant schema.
-7. Confirm B1 two-area insertion points (PM message area + decision/report section) — §D.
-8. Confirm repeated-completion / checkpoint / resume / legacy-stale-field rules and re-evaluate-on-completion behaviour — §K.2.
-9. **O6 prerequisite:** supply the traceable **O6 F identity-binding verification commit/evidence**; re-verify the O6/O2-integrated `main` after O2 PR #16 and later merges; reconcile O2 run-start manifest and O6 CLI with O4 CLI edits (§I). *(No O6 SHA invented; joint verification not claimed.)*
+**Pending C (shared-file integration owner) — exact mechanism is PENDING C CONFIRMATION:**
+1. Confirm C's backward-compatible contract holds against all current callers incl. tests (`trading_graph.py:400`, `cli/run.py:353`, `tests/test_cli_memory_log.py`, `tests/test_memory_log.py`): signature preserved, `None` return preserved, in-place mutation observed by callers.
+2. Confirm how `selected_analysts` reaches the boundary (`self.selected_analysts` vs a shared helper) — no signature change assumed.
+3. **Confirm the same-vs-new execution-identity mechanism** (§B.1): in-memory completion guard vs run-config marker vs caller structuring — **do not invent an approved identity field**.
+4. Confirm the exact implementation mechanism: inline in `record_decision` vs a shared completion helper.
+5. Confirm `GateResult` runtime availability/return shape to Graph/CLI/tests (no full durable persistence).
+6. Confirm `original_rating` capture point + encoding for **conflicting** / **absent** sources (§C); confirm `original_rating` not overwritten by a prior REVIEW.
+7. Confirm effective-rating persistence shape in `_log_state` JSON (add `effective_rating`/`original_rating` fields?) — with B for invariant schema.
+8. Confirm B1 two-area insertion points (PM message area + decision/report section) — §D.
+9. Confirm repeated-completion / checkpoint / resume / legacy-stale-field rules, restore-then-Gate-then-log ordering, and checkpoint-cleanup ordering — §K.2.
+10. **O6 prerequisite:** a traceable O6 identity-binding commit now exists (`6a561ab`/PR #19); **C must record CLI joint verification evidence** and re-verify the O6/O2/PR#9-integrated `main`. *(O6 verification not claimed complete until C records it; no invented SHA.)*
 
 **Pending A/F:**
 8. **A:** approve the updated Stage 2 Execution Plan (final).
@@ -282,16 +292,17 @@ Pre-gate CLI leak (T-23); multi-surface inconsistency; unknown-config silently d
 
 **Proposed rules for the Gate at the `record_decision` boundary:**
 
-1. **Repeated `record_decision()` within one logical completed execution** (e.g. accidental double call, or programmatic + CLI on the same run): the Gate must not publish twice. The authoritative evaluation/persist is idempotent for a single completed execution — the second call must not create a second authoritative publication or a second memory/state persist. *(Exact mechanism — an invocation guard/flag, or C structuring callers so the boundary runs once — pending C.)*
-2. **`original_rating` never overwritten by a previously downgraded REVIEW:** once `original_rating` is set for the execution, do not re-capture from a `final_rating` that a prior Gate already set to `effective_rating` (that would record `REVIEW` as "original"). Capture occurs once, before the overwrite.
+1. **Repeated `record_decision()` within one logical completed execution** (same execution identity per §B.1): never a second authoritative Gate evaluation; never duplicate authoritative publication/persistence; never overwrite `original_rating` with the already-downgraded rating. Idempotent for that execution. *(Identity mechanism pending C — §B.1.)*
+2. **`original_rating` never overwritten by a previously downgraded REVIEW:** once `original_rating` is set for the execution, do not re-capture from a `final_rating` that a prior Gate already set to `effective_rating` (that would record `REVIEW` as "original").
 3. **No duplicate authoritative publication / persistence:** state log and memory persist exactly once per completed execution, using the effective rating.
-4. **Interrupted execution that has not completed:** if the run does not reach authoritative publication, publish **no** authoritative rating and do **not** persist a gated decision (existing skip-`record_decision` behaviour preserved); the checkpoint may be retained for resume.
-5. **Checkpoint resumed to successful completion:** the resumed run performs exactly one authoritative gated evaluation on its finalized state before publication (same invariant as fresh).
-6. **Legacy checkpoint data with stale `final_rating` / `effective_rating` / `original_rating`:** must **not** be treated as a valid gate decision for a new completion. Presence of `effective_rating` in restored state does **not** prove the Gate ran for the *current* completion. The boundary re-evaluates on the current finalized state; historical/legacy values are read for display/back-compat only.
-7. **Historical-state reading vs new authoritative publication:** reading old states (lacking `effective_rating`/`original_rating`) remains supported via `run_rating` semantics, but that must **not** enable an ungated **new** publication.
-8. **Do not assume** fresh and resumed paths are implemented identically; exact Gate placement relative to resume/checkpoint clearing is **pending C**.
+4. **Interrupted execution that has not completed:** if the run does not reach authoritative publication, produce **no** authoritative rating and do **not** persist a gated decision (existing skip-`record_decision` behaviour preserved); the checkpoint may be retained for resume.
+5. **Checkpoint resumed to successful completion — evaluate the COMPLETE restored final state:** the resumed run must run the authoritative Gate over the **full restored state, including saved reports** (restored `market_report`/`sentiment_report`/`news_report`/`fundamentals_report`), not a partial state — so evidence presence is judged on the actually-restored reports.
+6. **Required order on resume-to-completion [PROPOSED]:** `restore and complete the state → authoritative Gate (on complete restored state) → S2 updates (original_rating/final_rating/effective_rating; bytes preserved) → state/memory logging → successful completion and checkpoint cleanup`. The Gate must precede logging/persistence; checkpoint cleanup (`clear_checkpoint_on_success`) follows successful completion.
+7. **Stale checkpoint fields = NOT publication authorization:** stale `original_rating`/`final_rating`/`effective_rating` restored from a checkpoint must **not** constitute authorization for the resumed completion. Presence of any of these does **not** prove the Gate ran for the *current* completion; the boundary re-evaluates on the current complete restored state. *(This is the point that a naive "effective_rating present ⇒ done" check gets wrong.)*
+8. **Historical-state reading vs new publication:** reading old states (lacking `effective_rating`/`original_rating`) remains supported via `run_rating` semantics, but that must **not** let a legacy state bypass the Gate for a **newly completed** execution.
+9. **Do not assume** fresh and resumed paths are implemented identically; exact Gate placement relative to resume/checkpoint clearing is **pending C**.
 
-**Observable tests for these paths [see test plan]:** repeated-call idempotence (single authoritative publication/persist); `original_rating` not overwritten by a prior REVIEW; interrupted → no authoritative rating; resumed-to-completion → exactly one gated evaluation; legacy stale-field state → re-evaluated, not trusted; equivalent wording errors checked.
+**Observable tests for these paths [see test plan §10/§10a]:** authoritative evaluation count; rating propagation (`original_rating`/`final_rating`/`effective_rating`); `original_rating` preservation (not overwritten by a prior REVIEW); persistence **count** (exactly once); checkpoint **cleanup ordering** (cleanup only after successful gated completion); interrupted → no authoritative rating; legacy stale-field state → re-evaluated, not trusted.
 
 ### K.3 Rollback / containment
 Rollback/containment [CONFIRMED policy direction]: Gate is fail-closed with no production bypass toggle; pre-merge rollback = revert the integration commit; any post-merge rollback/disable affecting the Gate must follow an A/C-approved containment strategy + ADR preventing silent ungated publication; no rollback may publish a rating the Gate would downgrade.
@@ -304,16 +315,16 @@ Rollback/containment [CONFIRMED policy direction]: Gate is fail-closed with no p
 
 ## L. Governance & approval workflow (Member A's required order) — **[CONFIRMED order; no step skipped]**
 
-1. **D** revises and shares the **v0.4** plans (this document + companion test plan).
-2. **C — O6 prerequisite first:** complete the **O6 F identity-binding** requirement + C's CLI joint verification, produce a **traceable O6 verification commit/evidence**, and re-verify `main` after O2 PR #16 + later merges. *(This is a sequencing prerequisite, NOT O4 Stage 2 coding approval.)*
-3. **C** confirms the shared completion interface, compatibility, O6/O2-integrated baseline, and assigned file scope (§J items 1–9). Exact interface **PENDING C CONFIRMATION**.
+1. **D** revises and shares the **v0.5** plans (this document + companion test plan). *(O4 planning review proceeds in parallel with the O6 step; it is not blocked by O6.)*
+2. **C — O6 prerequisite (for O4 CLI implementation):** O6 F identity-binding **has merged** (`6a561ab`, PR #19) giving a traceable commit; **C's CLI joint verification must still produce its own traceable evidence**; then re-verify `main` against O2 PR #16 + PR #9 (both merged). *(Sequencing prerequisite, NOT O4 Stage 2 coding approval. Do not claim O6 verification complete until C records it.)*
+3. **C** confirms the shared completion interface, compatibility, O6/O2/PR#9-integrated baseline, and assigned file scope. Exact mechanism/execution-identity **PENDING C CONFIRMATION**.
 4. **F** re-reviews the Stage 2 Test Plan, verifies mandatory cases, and records test approval.
-5. **A** formally approves the updated Stage 2 Execution Plan.
-6. **Only after** all required approvals (and the O6 prerequisite evidence) may approved Stage 2 code implementation begin.
+5. **A** formally approves the updated Stage 2 Execution Plan **and confirms the exact six shared-file modification scope**.
+6. **Only after** all required approvals (and the O6/C verification evidence) may approved Stage 2 code implementation begin.
 
 Additional prerequisites (still required, do not bypass):
 - Record a completed Stage 2 Test Approval entry (per `docs/test-approvals/TEMPLATE.md`) with real comment links/timestamps before the first Stage 2 code edit.
 - A read-only OpenCode Stage 2 execution plan approved before the first code edit (D9).
 - AI-use log + redacted session evidence maintained (REQ-GOV-06).
 
-**Member C's v0.3 review comments are architecture/interface feedback, NOT coding approval. This document records no approval and authorizes no code.**
+**Member C's v0.4 review comments are architecture/interface feedback, NOT coding approval. This document records no approval and authorizes no code.**
