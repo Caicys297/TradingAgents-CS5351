@@ -13,6 +13,8 @@
 
 **Test-plan basis:** `test-plans/O2-Test-Plan-v0.3-DRAFT.md` Revision 2 in this documentation branch; not Stage 2 approval.
 
+**PR #9 timing:** At the Phase 1 documentation approval point, PR #9 was open/unmerged. It later merged at `d36a677d4738efd365b6bbcf6f69f993acf8fd3c`; the merged O2 allowlist now includes `input_condensation_audit_note`, and TC-23 below is aligned to that merged state.
+
 ## 1. Preconditions and approval gates
 
 These gates applied to the original Phase 1 implementation and are recorded below. They do not approve Stage 2:
@@ -35,7 +37,7 @@ Additional preconditions for Stage 2:
   - O2-TC-18 uses the implementation PR’s dependency-file diff and writer-import inspection.
   - O2-TC-20 first-layer regression is `pytest -q`; live/integration conditions are listed separately.
   - O2-TC-21 covers Ubuntu, macOS, and Windows through F’s CI integration.
-  - O2-TC-23 uses only the merged Registry allowlist and excludes `input_condensation_audit_note` pending open/unmerged PR #9.
+  - O2-TC-23 uses the merged Registry allowlist at `d36a677...`, including `input_condensation_audit_note`; unknown/unapproved fields and secrets remain excluded.
 - Record Stage 2 approval separately. Revision 2 documentation alignment is not Stage 2 approval.
 
 ## 2. Implementation branch and base commit
@@ -71,7 +73,7 @@ B may provide helper design and tests but must not edit C-owned shared files wit
 
 ## 4. Ordered implementation steps
 
-1. **Freeze approved Phase 1 schema and defaults.** Confirm `schema_version: "1.0.0"`, normalized identity fields, and the merged allowlist. Keep `input_condensation_audit_note` excluded pending open/unmerged PR #9.
+1. **Freeze approved Phase 1 schema and defaults.** Confirm `schema_version: "1.0.0"`, normalized identity fields, and the merged allowlist at `d36a677...`, including `input_condensation_audit_note`.
 2. **Create isolated B-owned manifest writer.** Build pure construction, normalization, allowlist, artifact-label, and fingerprint helpers.
 3. **Implement canonical fingerprint.** SHA-256 over UTF-8 canonical JSON with sorted keys, comma/colon separators, `ensure_ascii=false`, `allow_nan=false`, ISO analysis date, and fixed Analyst order; exclude run ID, time, duration, output, artifact paths, secrets, and vendor payloads (`requirements.yaml:28`).
 4. **Implement B-owned atomic writing.** Write to a temporary file in the reserved run directory and promote to `manifest.json`; serialization/write failure must leave no partial manifest.
@@ -126,7 +128,7 @@ Phase 1 writer-level mappings are recorded as implemented/tested in PR #16. Stag
 | `O2-TC-20` | First layer: `pytest -q` regression; live/integration conditions separately listed | **Deferred from Phase 1; C/F** define regression scope |
 | `O2-TC-21` | Path/JSON checks on Ubuntu, macOS, and Windows | **Deferred from Phase 1; F/C** CI matrix |
 | `O2-TC-22` | Manifest contains normalized ticker, asset type, ISO date, selected analysts | B; isolated test |
-| `O2-TC-23` | Only merged allowlisted fields serialized; unapproved keys absent; `input_condensation_audit_note` is excluded pending open/unmerged PR #9 | B; isolated test |
+| `O2-TC-23` | Only merged allowlisted fields serialized; unapproved keys absent; merged allowlist includes `input_condensation_audit_note` | B; isolated test |
 | `O2-TC-24` | Package version, Python version, platform recorded when available | B; isolated test |
 | `O2-TC-25` | Manifest contains agreed schema-version field and value `"1.0.0"` | B; isolated test |
 
@@ -151,7 +153,7 @@ Stop and request human/team approval before any edit if:
 - Stage 2 integration is started without separate approval.
 - UUID reservation/collision policy changes.
 - `schema_version`, fingerprint fields, `allow_nan=false`, or allowlist content changes.
-- `input_condensation_audit_note` is treated as part of the approved allowlist before PR #9 merges and the Registry is updated.
+- The merged allowlist from `d36a677...` is changed without approval, or unknown/unapproved fields are treated as allowlisted.
 - Fail-soft write-failure behavior changes.
 - O2-TC-18 command or O2-TC-20 regression scope is undefined.
 - O2-TC-21 platform scope changes or F does not support the CI matrix.

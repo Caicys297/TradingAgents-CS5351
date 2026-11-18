@@ -1,5 +1,7 @@
 # O2 Reproducibility Manifest — Test Plan
 
+> **Historical draft:** This v0.2-DRAFT is superseded by [O2-Test-Plan-v0.3-DRAFT.md](./O2-Test-Plan-v0.3-DRAFT.md) and is retained for historical record only.
+
 **Document version:** v0.2-DRAFT  
 **Status:** Draft; approval pending  
 **Owner:** Member B  
