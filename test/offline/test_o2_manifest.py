@@ -124,7 +124,6 @@ def test_o2_tc_06_secret_fields_and_unapproved_keys_are_excluded():
             "token": "tok-should-not-appear",
             "password": "pw-should-not-appear",
             "backend_url": "https://user:secret@relay.example/v1",
-            "input_condensation_audit_note": "unmerged-field",
             "unknown_field": "unapproved",
         }
     )
@@ -134,7 +133,6 @@ def test_o2_tc_06_secret_fields_and_unapproved_keys_are_excluded():
     assert "tok-should-not-appear" not in serialized
     assert "pw-should-not-appear" not in serialized
     assert "user:secret" not in serialized
-    assert "input_condensation_audit_note" not in serialized
     assert "unknown_field" not in serialized
     assert manifest["config"]["deep_think_llm"] == "deep-model"
 
@@ -298,13 +296,13 @@ def test_o2_tc_23_only_merged_allowlist_is_serialized():
     manifest = _manifest(
         config={
             **CONFIG,
-            "input_condensation_audit_note": "unmerged",
+            "input_condensation_audit_note": "allowlisted-note",
             "api_key": "secret",
             "unknown": "unapproved",
         }
     )
     assert set(manifest["config"]) == set(manifest_module.CONFIG_ALLOWLIST)
-    assert "input_condensation_audit_note" not in manifest["config"]
+    assert manifest["config"]["input_condensation_audit_note"] == "allowlisted-note"
     assert "api_key" not in manifest["config"]
     assert "unknown" not in manifest["config"]
 
