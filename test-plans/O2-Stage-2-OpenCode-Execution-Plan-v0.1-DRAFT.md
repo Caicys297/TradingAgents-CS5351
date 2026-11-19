@@ -1,10 +1,10 @@
 # O2 Stage 2 Integration — OpenCode Execution Plan
 
-**Document version:** v0.2-DRAFT (TC-05 artifact update; filename unchanged: `…-v0.1-DRAFT.md`)
-**Status:** Draft planning record. A implementation-scope confirmation, F test-boundary/CI approval, and latest A/F/C TC-05 artifact decisions are recorded here; existing formal approvals remain bound to earlier commits (§7). This revision needs A file-scope confirmation and F formal review of the revised test cases. PR #18 remains Draft. This planning update is not implementation approval; no implementation or CI result is claimed.
+**Document version:** v0.3-DRAFT (A clarification; filename unchanged: `…-v0.1-DRAFT.md`)
+**Status:** Draft planning record. A's latest clarification is recorded here; A/F have **not** approved this version and will review the exact updated SHA. Existing formal approvals remain bound to earlier commits (§7). PR #18 remains Draft. This planning update is not implementation approval; no implementation or CI result is claimed.
 **Owner:** B (QinQilun)
 **Requirements baseline reference:** PR #9 merge commit `d36a677d4738efd365b6bbcf6f69f993acf8fd3c`. Joint-validation baseline: PR #21 merge `69e91ff115694f3455196e6a4114d4fe653fbb06`; O6 CLI merged via PR #20 `e4b6f9ac625f39579635c840aed98ab8dfefdaf9`. **Actual baseline verified at this plan update: `origin/main` = `102511dd44ad8779a46e09cbefe50edb8a995b45`**; re-verify and record the actual base SHA at implementation time.
-**Plan update binding:** v0.2-DRAFT based on plan commit `c200512379fb38ddb9215cfb0bd71ea0d16aa241`; this update’s commit SHA is reported in PR #18.
+**Plan update binding:** v0.3-DRAFT based on plan commit `870390d9b7d41f7da7365bc38fa55c76f080aa9d`; this update’s commit SHA is reported in PR #18.
 **Phase 1 implementation:** PR #16 merge commit `808df04f320d95c1ab4ef5a6e88149335cdeff41`.  
 **A scope supplement:** [PR #18 review 5959122354](https://github.com/Caicys297/TradingAgents-CS5351/pull/18#pullrequestreview-5959122354), submitted `2026-11-18T15:00:01Z`.  
 **F formal test-plan approval:** [PR #18 review 5968062524](https://github.com/Caicys297/TradingAgents-CS5351/pull/18#pullrequestreview-5968062524), submitted `2026-11-19T01:41:23Z`.  
@@ -13,9 +13,10 @@
 ## 0. Approval boundary and plan binding
 
 - **A-confirmed implementation scope:** completed normal CLI runs only; no Graph API change; existing legacy report/state/log paths remain; one manifest after analysis and report-save handling; fail-soft analysis result with fail-closed provenance; external saves are preserved but omitted; no broadened file scope and no changes to public interfaces, schema, fingerprint, or redaction rules.
-- **F-confirmed test boundaries:** existing official test IDs only; separation of report-save failure from manifest-write failure; the approved three-platform CI matrix; F owns test review and approved CI workflow changes. Formal F approval of this revision’s new test cases remains required.
-- **C ownership and remaining decisions:** C owns `cli/run.py` integration and must document the actual base SHA and exact file scope before implementation. C7 now specifies the reservation failure as `RunDirectoryUnavailable`, converted by `run_analysis` to `typer.Exit(code=1)`; hook implementation and write-evidence plumbing remain implementation work.
-- **Binding:** this update records v0.2-DRAFT decisions from base plan commit `c200512379fb38ddb9215cfb0bd71ea0d16aa241`. This planning update is not implementation approval unless the recorded approvals expressly say otherwise; existing formal approvals cover earlier commits, not this revision’s new contract text.
+- **A latest clarification:** state-log registration is `shared_mutable` only after `record_decision()` returns normally, at the deterministic path, after write+close, with no `fsync` and no power-loss claim. Report saves, live section reports, and `message_tool.log` require this-invocation write evidence; existence alone is insufficient. Declined or wholly failed optional saves contribute no files from that save directory, including partial leftovers. Custom saves outside `results_dir` remain supported but are omitted from the manifest. C8 records the inventory method for HTML and section files without changing `save_reports()`.
+- **F-confirmed test boundaries:** existing official test IDs only; separation of report-save failure from manifest-write failure; the approved three-platform CI matrix; F owns test review and approved CI workflow changes. Formal F approval of this revision’s new test cases and exact SHA remains required.
+- **C ownership and remaining decisions:** C owns `cli/run.py` integration and must document the actual base SHA and exact file scope before implementation. C7 specifies `RunDirectoryUnavailable` converted by `run_analysis` to `typer.Exit(code=1)`. C8 uses existing `_report_parts(final_state)` only to compute the expected inventory; no `save_reports()`, `write_report_tree()`, `reporting.py`, Graph, schema, or public-interface change.
+- **Binding:** this update records v0.3-DRAFT decisions from base plan commit `870390d9b7d41f7da7365bc38fa55c76f080aa9d`. This planning update is not implementation approval unless the recorded approvals expressly say otherwise; existing formal approvals cover earlier commits, not this revision’s new contract text or exact SHA.
 
 ## 1. Authorization boundary
 
@@ -25,9 +26,9 @@ Stage 2 is limited to completed normal CLI runs, unique run-directory reservatio
 
 C owns shared `cli/run.py` integration and coordinates CLI test integration. B owns the manifest interface and `test/offline/test_o2_cli_manifest.py`. F owns test review and approved CI workflow changes. This batch does not change Graph based on C’s read-only inspection.
 
-### C's confirmed CLI integration contract (A-confirmed)
+### C's CLI integration contract (A-confirmed C1–C7; C8 is the proposed inventory approach)
 
-This revision records A's confirmed contract. Superseded wording from earlier revisions is replaced rather than layered.
+C1–C7 record A's confirmed contract. C8 is the proposed minimal saved-report inventory method, subject to C/A confirmation. Superseded wording from earlier revisions is replaced rather than layered.
 
 **C1 — Graph interface unchanged; state log registered only on success.**
 The Graph's existing interface is kept. The CLI registers the state log **only after `record_decision()` returns successfully**, by checking the path this run expects, and labels it `shared_mutable`. If the call fails — including a failure while writing or closing the file — the file is **not** registered, even if a stale or historical file sits at that path. Existence is never the evidence; the successful return is.
@@ -64,12 +65,23 @@ A user-supplied save path outside `results_dir` keeps its ability to save. When 
 **C7 — Run-directory reservation: 3 attempts, then a clean abort.**
 Reservation uses `mkdir(exist_ok=False)` with **at most 3 attempts in total**. If every attempt collides, the run **terminates before Graph** and reports the failure explicitly. Concretely: print a short red message naming the ticker/date and stating that no run directory could be reserved, then raise `RunDirectoryUnavailable` (a `RuntimeError` subclass); `run_analysis` converts that to `raise typer.Exit(code=1)`, the convention the CLI already uses for an unrecoverable pre-run condition (`cli/run.py:107-110`). **Graph is called zero times, and existing files keep their original values.** A test may assert either the dedicated exception or the `typer.Exit`, but must assert **Graph was never constructed or called** and that pre-existing files are byte-unchanged.
 
+**C8 — Exact saved-report inventory without changing `save_reports()`.**
+Current implementation: `TradingAgentsGraph.save_reports()` calls `write_report_tree()` and returns only `complete_report.md`; it does **not** return HTML or section-file paths. The CLI must not treat that return value as the inventory.
+
+Minimal approach in `cli/run.py`:
+
+1. Before the save, compute the expected writer-owned set from the same `final_state` and `html` choice using the existing read-only `_report_parts(final_state)` helper in `tradingagents/reporting.py`. For each returned `(folder, filename)`, add `save_path/folder/filename`; always add `save_path/complete_report.md`; add `save_path/complete_report.html` only when `html` is true. Do not glob, stat, or use mtime to decide membership.
+2. Call `graph.save_reports(final_state, ticker, save_path, html=html)`. Only if it returns normally (the whole save succeeded) register that precomputed set. On any exception register none from that save directory, including partial leftovers.
+3. A stale file is excluded because it is not in the expected set. A stale file whose path is in the expected set is included because this invocation overwrote it during the successful save. No other file found in the directory is included.
+
+This is reliable because it reuses the writer's own non-empty-section selection and only trusts a normal return from the whole save. It does not infer success from file existence. It requires no change to `save_reports()`, `write_report_tree()`, `reporting.py`, Graph, schema, or public interfaces. If review rejects importing the private `_report_parts` helper, the exact alternative remains pending C/A approval and must not be invented during implementation.
+
 **Order (unchanged):** user choices/config → reserve run directory → Graph → successful completion and O6 display → report-save choice and artifact collection → one manifest attempt.
 
-**Approved TC-05 artifact rules (summary of C1–C7):**
+**Approved TC-05 artifact rules (summary of C1–C7; C8 defines the saved-report inventory):**
 
 1. Live CLI section reports under `results_dir/<ticker>/<date>/reports/` are listed only with evidence that this invocation wrote them; label them `shared_mutable`; never include historical files by directory scan or existence.
-2. The optional saved report tree under `results_dir/reports/<ticker>_<stamp>/` is included only when `_offer_reports()` confirms the whole save succeeded; its `list[Path]` contains only the complete Markdown, HTML when generated, and section files actually written; label them `shared_mutable`.
+2. The optional saved report tree under `results_dir/reports/<ticker>_<stamp>/` is included only when `_offer_reports()` confirms the whole save succeeded; its `list[Path]` contains only the complete Markdown, HTML when generated, and section files actually written; label them `shared_mutable`. The inventory is computed by C8 from `_report_parts(final_state)` plus the complete Markdown and requested HTML; `save_reports()`'s single returned path is not the inventory.
 3. A declined save, or a failed save even with partial files left behind, contributes no files from that optional saved report tree; existing prompt/display behavior is preserved.
 4. Saving to a user-selected path outside `results_dir` remains supported; those files are omitted from the manifest rather than the save path being rejected.
 5. The state log is included only after `record_decision()` returns normally, with its path reconstructed and validated using the same effective config, ticker, and date as the writer; call failure excludes it even if an old file exists. Label `shared_mutable`; no `fsync`/power-loss durability claim; no Graph interface change.
@@ -83,9 +95,9 @@ Both per-section sets — live run-directory reports and the saved report tree �
 
 Only genuinely unspecified items remain:
 
-- **A:** confirmation of the exact file scope C may edit.
+- **A:** confirmation of the exact file scope C may edit; review this exact updated SHA.
 - **F:** formal approval of this revised test plan and its added test cases.
-- **C:** record the actual base SHA and exact `cli/run.py` file scope before implementation; implement the specified hooks and write-evidence plumbing.
+- **C:** record the actual base SHA and exact `cli/run.py` file scope before implementation; confirm the C8 read-only `_report_parts` import or obtain A/C approval for a specific alternative before implementing it; implement the specified hooks and write-evidence plumbing.
 
 The partial-save question is settled by C3: a whole-save failure registers nothing from that directory. The earlier B set-choice question is settled by the approved TC-05 artifact rules: both live and saved per-section sets are included when their own write evidence exists, with the saved set requiring whole-save success.
 
@@ -109,7 +121,7 @@ OpenCode must report all items below and stop if one is unmet:
 1. **Read-only source audit:** Inspect the current CLI lifecycle, results-path consumers, artifact creation times, path validation, test collection, platform CI, and current `main` diff. Report exact candidate files and integration points to A/C/F before editing.
 2. **Run-directory reservation (C-owned `cli/run.py`):** Call `_reserve_run_directory(results_dir, ticker, trade_date) -> RunContext(run_id, run_dir)` exactly once before Graph starts. It reserves `results_dir/<safe ticker>/<date>/runs/<uuid4 hex>/` using `mkdir(exist_ok=False)`, **at most 3 attempts in total**, and does not write the manifest. **Failure behaviour (specified):** after three collisions it raises `RunDirectoryUnavailable` (a `RuntimeError` subclass) after printing a short red message naming the ticker/date; `run_analysis` converts that to `raise typer.Exit(code=1)`, the convention already used at `cli/run.py:107-110`. Graph is called **zero** times and pre-existing files are byte-unchanged.
 3. **Artefact collection at each write site (C-owned `cli/run.py`):**
-   - **Reports (`_offer_reports`):** returns `list[Path]` only when the optional save **as a whole** succeeded — complete Markdown, HTML (if produced), and per-section files. Declined or wholly failed saves register **nothing from that save directory**, including partial leftovers. Display and prompting are unchanged.
+   - **Reports (`_offer_reports`):** returns `list[Path]` only when the optional save **as a whole** succeeded — complete Markdown, HTML (if produced), and per-section files. Compute that set per C8 from `_report_parts(final_state)` before the write, add complete Markdown and requested HTML, and register it only after `save_reports()` returns normally. Do not scan the directory or trust `save_reports()`'s single return value as the full inventory. Declined or wholly failed saves register **nothing from that save directory**, including partial leftovers. Display and prompting are unchanged.
    - **Live per-section reports (`save_report_section_decorator`, `cli/run.py:184`) and `message_tool.log` (`:157`, `:169`):** registered at their own confirmed write, i.e. after the `with open(...)` block returns without raising; a raising write is not registered. Both sit at their previous (unmigrated) locations and are labelled `shared_mutable`.
    - **State log:** registered only after `record_decision()` (`:360`) returns without raising, at the reconstructed path, labelled `shared_mutable`; never registered on a write or close failure.
 4. **Manifest finalisation (C-owned `cli/run.py`; B owns manifest interface):** After successful analysis and after `_offer_reports()` handles the report-save choice, call `_finalize_run_manifest(run_context, *, config, artifacts) -> ManifestWriteResult(success, manifest_path, artifacts, error)` exactly once. It must not rerun Graph or reparse the rating. `_artifact_references` receives **both** `results_dir` (boundary + relative paths) and `run_dir` (`run_unique`); no directory scanning. A successful external save path outside `results_dir` is omitted from the manifest. Pass normalized identity and only Registry-allowlisted effective config, including `input_condensation_audit_note`; retain secret redaction and `actual_input_data_provenance: not_captured`.
@@ -127,6 +139,7 @@ Candidate paths must be checked against the verified base and team ownership bef
 | CLI lifecycle, run directory, manifest invocation | `cli/run.py` | C owns shared integration: `_reserve_run_directory`, `_finalize_run_manifest`, `_offer_reports` returning `list[Path]`, state-log registration, and artifact write evidence; C must document actual base SHA and exact file scope before implementation; B owns manifest interface |
 | Graph context and output paths | `tradingagents/graph/trading_graph.py` | **No Graph changes in this batch** (A-confirmed). If one proves necessary, stop with the exact call chain and proposed diff for A/C approval |
 | Phase 1 writer | `tradingagents/repro/manifest.py` | B owns manifest interface; PR #21 synchronization already merged (`69e91ff1`); schema/fingerprint/redaction unchanged |
+| Report-writer inventory helper | `tradingagents/reporting.py` | **Read-only import only** for C8's `_report_parts(final_state)`; no file changes |
 | Existing Phase 1 tests | `test/offline/test_o2_manifest.py` | Preserve |
 | New CLI integration tests | `test/offline/test_o2_cli_manifest.py` | B owns; tests may be written against the interface specified in §1/§3; implementation publication is not a precondition per this plan |
 | Test discovery/config | `pyproject.toml` or current test config | Change only if audit shows necessary and C/F approve ownership |
@@ -144,6 +157,8 @@ Stop and return evidence for review if implementation requires:
 - writing more than one manifest or writing before analysis completion/report-save handling;
 - changing the approved fail-soft/fail-closed failure behavior or omitting the visible warning/no-success-path requirement;
 - listing files from a declined or failed optional report save, including partial files left behind;
+- changing `save_reports()`, `write_report_tree()`, `tradingagents/reporting.py`, or Graph merely to return a full inventory, instead of using C8;
+- inventing an inventory method based on directory scan, mtime, or file existence if the C8 read-only `_report_parts` approach is rejected;
 - including historical live reports, saved reports, state logs, or message logs based on existence or directory scan;
 - rejecting an external user-selected save path instead of preserving the save and omitting it from the manifest;
 - claiming `fsync` or power-loss durability for the state log;
@@ -157,7 +172,7 @@ Stop and return evidence for review if implementation requires:
 
 ## 6. Required implementation records
 
-Before the first code edit, record the verified base SHA, branch, clean working-tree status, approved plan versions, A/F approval references, C’s actual base SHA and exact file scope, C’s CLI/test ownership confirmation, and actual coding-start timestamp with timezone. Record that this v0.2-DRAFT update is bound to base plan commit `c200512379fb38ddb9215cfb0bd71ea0d16aa241` and that its update commit SHA is reported in PR #18. State whether implementation approval has actually been recorded; this planning update alone is not implementation approval. For each verification, report the exact command and actual output. Do not infer local tests from CI or vice versa. The final PR must not claim full data reproducibility without immutable input snapshots.
+Before the first code edit, record the verified base SHA, branch, clean working-tree status, approved plan versions, A/F approval references, C’s actual base SHA and exact file scope, C’s CLI/test ownership confirmation, and actual coding-start timestamp with timezone. Record that this v0.3-DRAFT update is bound to base plan commit `870390d9b7d41f7da7365bc38fa55c76f080aa9d` and that its update commit SHA is reported in PR #18. State whether implementation approval has actually been recorded; this planning update alone is not implementation approval, and A/F have not approved this version. For each verification, report the exact command and actual output. Do not infer local tests from CI or vice versa. The final PR must not claim full data reproducibility without immutable input snapshots.
 
 ## 7. Approval record
 
@@ -176,6 +191,7 @@ Before the first code edit, record the verified base SHA, branch, clean working-
 - `_artifact_references` taking both `results_dir` and `run_dir` (C4) — new.
 - Live-report and `message_tool.log` write evidence (C5), and external-path omission (C6) — new.
 - Reservation failure exception and CLI exit behaviour (C7) — specifies what A's approval left as "fail clearly".
+- Saved-report HTML/section inventory (C8): `save_reports()` returns only complete Markdown, so the CLI computes the expected writer-owned set with `_report_parts(final_state)` and registers it only after a normal whole-save return.
 - The latest TC-05 artifact rules include both per-section sets when their own write evidence exists; this replaces the earlier pending B set-choice question.
 
 **Recorded decisions:**
@@ -183,12 +199,12 @@ Before the first code edit, record the verified base SHA, branch, clean working-
 - **A Stage 2 scope supplement:** Approved in PR #18 review `5959122354` (bound to `3b60af1`), `2026-11-18T15:00:01Z`
 - **F formal Stage 2 test-plan and CI matrix approval:** Approved in PR #18 review `5968062524` (bound to `e03b67d`), `2026-11-19T01:41:23Z`; **continues to apply to the unchanged TC-ID mapping and CI matrix**, and is **not** an approval of this revision's new contract text
 - **C/F ownership and timing confirmation:** PR #18 review `5968754538`
-- **Latest A/F/C TC-05 artifact decisions:** Recorded in this v0.2-DRAFT update; both live and saved per-section sets are included when their own write evidence exists, with the saved set requiring whole-save success. No additional GitHub review identifier was supplied.
-- **Plan update binding:** Base plan commit `c200512379fb38ddb9215cfb0bd71ea0d16aa241`; this update’s commit SHA is reported in PR #18.
+- **Latest A clarification:** Recorded in this v0.3-DRAFT update; state log, report/live/log write evidence, declined/whole-failure exclusion, external-path omission, and C8 saved-report inventory are specified. A/F version approval is pending review of the exact updated SHA; no review identifier was supplied.
+- **Plan update binding:** Base plan commit `870390d9b7d41f7da7365bc38fa55c76f080aa9d`; this update’s commit SHA is reported in PR #18.
 - **A-confirmed implementation scope:** Completed normal CLI runs only; no Graph API change; legacy paths preserved; no public interface/schema/fingerprint/redaction broadening; artifact rules recorded here.
-- **F-confirmed test boundaries:** Existing official IDs only; report-save and manifest-write failures kept separate; approved CI matrix; F owns test review and CI workflow changes. Formal approval of this revision’s added cases remains pending.
-- **C ownership and remaining decisions:** C owns `cli/run.py` integration; C must document actual base SHA and exact file scope before implementation; C7 reservation failure is specified as `RunDirectoryUnavailable` converted to `typer.Exit(code=1)`.
-- **Pending:** A's confirmation of the exact file scope; F's formal approval of this revised test plan.
+- **F-confirmed test boundaries:** Existing official IDs only; report-save and manifest-write failures kept separate; approved CI matrix; F owns test review and CI workflow changes. Formal approval of this revision’s added cases and exact SHA remains pending.
+- **C ownership and remaining decisions:** C owns `cli/run.py` integration; C must document actual base SHA and exact file scope before implementation; C7 reservation failure is specified as `RunDirectoryUnavailable` converted to `typer.Exit(code=1)`; C8 uses read-only `_report_parts` for inventory and does not change `save_reports()` or `reporting.py`.
+- **Pending:** A's confirmation of the exact file scope and review of this SHA; F's formal approval of this revised test plan and added cases; C/A confirmation of the read-only `_report_parts` import or a specific approved alternative.
 - **PR #21 writer/TC-23 synchronization:** Merged at `69e91ff115694f3455196e6a4114d4fe653fbb06`
 - **O6 CLI integration:** Merged at `e4b6f9ac625f39579635c840aed98ab8dfefdaf9` (PR #20)
 - **Actual baseline at this revision:** `origin/main` `102511dd44ad8779a46e09cbefe50edb8a995b45`
