@@ -2,11 +2,11 @@
 
 | Field | Value |
 |---|---|
-| Plan ID | O4-EXEC-S2-v0.5-DRAFT |
+| Plan ID | O4-EXEC-S2-v0.6-DRAFT |
 | Status | **DRAFT — NOT APPROVED** |
 | Prepared by | Member D |
 | Prepared for | Member A (scope/integration review), Member C (shared-file integration owner), Member F (test/CI) |
-| Companion test plan | `docs/req/O4-Test-Plan-Stage2-DRAFT.md` (O4-TEST-S2-v0.5-DRAFT) |
+| Companion test plan | `docs/req/O4-Test-Plan-Stage2-DRAFT.md` (O4-TEST-S2-v0.6-DRAFT) |
 | Verified baseline | **Integration baseline:** current `origin/main` `102511dd44ad8779a46e09cbefe50edb8a995b45` (includes PR #9 `d36a677`, O2 PR #16 `808df04`, O6 identity-binding PR #19 `6a561ab`, O6 CLI PR #20 merge `e4b6f9a`). **PR #17 base:** `d36a677` (PR #9 merge). **Historical O4 Stage 1 baseline:** `185d18b483ce1e04a9ac649923cbec14707fd9e3`. |
 | Stage 1 checker | `tradingagents/agents/evidence_gate.py` (`check_evidence`, `GateResult`) — merged |
 | Authoritative requirements | `docs/req/requirements.yaml` (PR #2 merged at `4f87e29f…`); `development_contract.o4` |
@@ -42,9 +42,9 @@
 
 **CLI path** — `cli/run.py`:
 - `run_analysis()` (`:99`) streams via `graph.stream_run(...)` (`:241`).
-- **Pre-gate publication** of PM text: report section `"final_trade_decision"` written from streamed chunks at `:310–334` (incl. `"### Portfolio Manager Decision\n{judge}"` at `:333`); messages buffered at `:249–251` — all **before** `record_decision` (`:353`).
+- **Pre-gate publication** of PM text: report section `"final_trade_decision"` written from streamed chunks at `:317–340` (incl. `"### Portfolio Manager Decision\n{judge}"` at `:340`); messages buffered at `:258` — all **before** `record_decision` (`:360`) @ `102511d`.
 - Post-stream copy of `final_state[section]` into sections at `:369–371`.
-- Rating display: `is_review(run_rating(final_state))` at `:380` (ungated). Reports offered at `:388` (`_offer_reports`, `:426`).
+- Rating display: `is_review(run_rating(final_state))` at `:387` (ungated) @ `102511d`. Reports offered at `:401` (`_offer_reports`, `:439`).
 
 **Other readers (ungated `run_rating`):**
 - `tradingagents/reporting.py` `_header()` `:26` (`- Rating: {run_rating(...)}`), `write_report_tree()` `:92`.
@@ -65,9 +65,9 @@
 
 **Verified call-path fact [CONFIRMED by code, `origin/main` `d36a677`]:** both completion paths converge on `record_decision()`:
 - **Programmatic:** `propagate()` (`trading_graph.py:167`) → `_run_graph()` (`:373`) → `self.record_decision(...)` (`:400`) → `return ..., run_rating(...)` (`:405`).
-- **CLI:** `cli/run.py` does **not** call `_run_graph`; after `graph.stream_run(...)` (`:241`) it calls `graph.record_decision(...)` (`:353`) directly.
+- **CLI:** `cli/run.py` does **not** call `_run_graph`; after `graph.stream_run(...)` (`:248`) it calls `graph.record_decision(...)` (`:360`) directly @ `102511d`.
 - **Current signature [CONFIRMED]:** `record_decision(self, company_name, trade_date, final_state)` — it has **no `selected_analysts` parameter**; the selection is available as `self.selected_analysts` (`trading_graph.py:109`), not on `final_state`.
-- **Callers [CONFIRMED by code]:** `trading_graph.py:400` (programmatic) and `cli/run.py:353` (CLI) — plus **existing tests** (`tests/test_cli_memory_log.py` `:29/:37/:190`, `tests/test_memory_log.py` `:966`) that assert current behaviour and the current signature; backward compatibility (T-20) must preserve these.
+- **Callers [CONFIRMED by code @ `102511d`]:** `trading_graph.py:400` (programmatic) and `cli/run.py:360` (CLI) — plus **existing tests** (`tests/test_cli_memory_log.py` `:29/:37/:190`, `tests/test_memory_log.py` `:966`) that assert current behaviour and the current signature; backward compatibility (T-20) must preserve these.
 
 **Member A's architecture decision (direction only, not coding approval) [CONFIRMED direction]:** `record_decision()` is the **shared completion boundary** at which the single authoritative Gate evaluation must occur — **before** state logging, persistence, rating return, or final publication. There must be **exactly one** authoritative evaluation per completed execution, and the Graph and CLI **must not independently invoke the checker again**. A shared completion helper (called by/from `record_decision()`) may be proposed if necessary.
 
@@ -79,7 +79,7 @@
 - **One designated authority:** exactly one evaluation is authoritative per completed execution; every published surface derives its rating from that same `effective_rating`; no consumer recomputes from raw `final_rating`/`final_trade_decision`.
 - **No second authoritative evaluation:** Graph and CLI must not each call `check_evidence()` authoritatively; any incidental `check_evidence()` call elsewhere is diagnostic-only and must not drive publication.
 - **Order:** the Gate runs **before** `_log_state`/persistence, before the rating return value is fixed, and before any authoritative CLI display/report publication.
-- **No publication bypass:** every authoritative publication point (Graph return `:405`; `record_decision` `:360`; CLI display/reports `:380`/`:388`; reporting/HTML/memory readers) observes only the gated effective rating. Any new publication path must route through the same boundary (fail-closed if it cannot).
+- **No publication bypass:** every authoritative publication point (Graph return `:405`; `record_decision` `:360`; CLI display/reports `:387`/`:401`; reporting/HTML/memory readers) observes only the gated effective rating. Any new publication path must route through the same boundary (fail-closed if it cannot).
 - **Checkpoint/resume:** a resumed run that reaches completion must perform the single authoritative gated evaluation on its finalized state before publication (see §K.2). A partial/interrupted run that does **not** reach authoritative publication must publish no authoritative rating (existing behaviour — it skips `record_decision` on mid-stream failure).
 
 ### B.1 Proposed `record_decision()` contract — **[Member C's backward-compatible design; EXACT MECHANISM PENDING C CONFIRMATION]**
@@ -87,7 +87,7 @@
 Member C's proposed contract (adopted as the planning baseline, **subject to final C confirmation**):
 
 1. **Preserve the signature** `record_decision(self, company_name, trade_date, final_state)` — no new required parameters. (`selected_analysts` remains available as `self.selected_analysts`, `trading_graph.py:109`; how it reaches the Gate — read from `self` vs a shared helper — is **pending C**, not a signature change.)
-2. **Preserve its `None` return value** — existing Graph/CLI callers (`trading_graph.py:400`, `cli/run.py:353`) and tests must not depend on a new return.
+2. **Preserve its `None` return value** — existing Graph/CLI callers (`trading_graph.py:400`, `cli/run.py:360` @ `102511d`) and tests must not depend on a new return.
 3. **Mutate `final_state` in place** so existing callers observe the resulting authoritative rating (no separate return channel needed).
 4. **Perform the authoritative Gate BEFORE state logging and memory persistence** (`_log_state` `:362`, `store_decision` `:368–371`).
 5. **Capture `original_rating` BEFORE overwriting `final_rating`** (Stage 1 precedence: `final_rating` else parsed body).
@@ -119,20 +119,50 @@ The guard (however C implements it — in-memory or threaded) is intended to fol
 **Whether this lives inline in `record_decision` or in a shared completion helper is PENDING C CONFIRMATION.** Signature/return compatibility (T-20) must be preserved; existing callers/tests must not break.
 
 ### B.2 CLI path (`cli/run.py`) — **[PROPOSED; C-owned shared edit]**
-- **Verified:** the CLI reaches publication via `stream_run` (`:241`) + `record_decision` (`:353`); since `record_decision` now carries the single authoritative Gate (§B.1), the CLI **consumes** the gated result from there and does **not** call `check_evidence()` again.
+- **Verified:** the CLI reaches publication via `stream_run` (`:248`) + `record_decision` (`:360`); since `record_decision` now carries the single authoritative Gate (§B.1), the CLI **consumes** the gated result from there and does **not** call `check_evidence()` again.
 - The CLI must not display PM rating/text as approved before the Gate. Buffer PM text (B1, §D) and publish the effective rating **after** `record_decision` returns the gated state.
-- Result drives the final rating display (`:380` region), report sections, and reports.
+- Result drives the final rating display (`:387` region), report sections, and reports.
 
-### B.3 CLI stream/resume final-state acquisition — **[PROPOSED; completeness PENDING C CONFIRMATION]**
-**Verified current CLI behaviour [CONFIRMED by code, `cli/run.py`]:** after streaming, the CLI builds `final_state` by merging the accumulated per-node stream chunks — `final_state = {}; for chunk in trace: final_state.update(chunk)` (currently ~`:353–355`) — then calls `graph.record_decision(..., final_state)` (~`:360`). On resume, `checkpoint_input(...)` returns `None` (LangGraph resumes the thread; `checkpoint_input` docstring: "``None`` to resume an existing checkpoint"), and the streamed `values` chunks carry the restored run state.
+### B.3 CLI stream/resume final-state acquisition — **[Member C finding: complete `values` snapshot; residual mechanism PENDING C]**
+**Verified current CLI behaviour [CONFIRMED by code, `cli/run.py` @ `102511d`]:** after streaming, the CLI builds `final_state` by merging the accumulated `values` stream chunks — `final_state = {}; for chunk in trace: final_state.update(chunk)` (~`:353–355`) — then calls `graph.record_decision(..., final_state)` (~`:360`). On resume, `checkpoint_input(...)` returns `None` (LangGraph resumes the thread), and the streamed `values` chunks carry the restored run state. A stream execution failure exits the try before `record_decision` (~`:360`).
 
-**Required clarification / proposed contract:**
-- **The Gate must evaluate the COMPLETE finalized `final_state` (all report fields), never an incomplete stream chunk.** The merged `final_state` passed to `record_decision` must include every required report field (`market_report`/`sentiment_report`/`news_report`/`fundamentals_report`) plus `final_rating`/`final_trade_decision`, **including any report fields restored from a checkpoint** on resume.
-- **Completeness assertion:** before the Gate runs at the boundary, the boundary must not treat a state missing report fields that were populated earlier (or restored) as "evidence missing" due to incomplete stream merging — i.e., stream-merge completeness precedes evidence judgment.
-- **Interrupted/failed executions must NOT publish an authoritative rating:** a mid-stream failure (before a clean merge/completion) skips `record_decision`/publication (existing behaviour); no authoritative rating is produced.
-- **Remaining uncertainty — PENDING C CONFIRMATION:** whether merging only streamed per-node `values` chunks is guaranteed to reconstruct the **complete** state on **resume** (all report fields present, not just those re-emitted after the resume point). C must confirm the exact source of the authoritative complete `final_state` at the boundary (e.g. merged stream chunks vs a checkpoint-restored full state) and, if stream merging can be incomplete, the mechanism to obtain the complete restored state before the Gate.
+**Member C's verified finding [recorded]:** the CLI uses a **complete `values` state snapshot**; that snapshot **can include previously restored reports** (from checkpoint on resume); a **stream execution failure exits before `record_decision()`** (so no authoritative publication on failure).
 
-**Invariant [CONFIRMED, FR-07/INV-03]:** one authoritative Gate evaluation per completed execution at the `record_decision` boundary; no Graph/CLI second authoritative call; no raw PM Buy/Sell published as approved before the Gate completes; no publication path bypasses the gate; the Gate judges the complete finalized state.
+**Contractual final-state source used by O4 [PROPOSED]:** O4 must Gate the **complete `values` snapshot** (the merged `final_state`), including `market_report`/`sentiment_report`/`news_report`/`fundamentals_report` **and report fields restored from a checkpoint** — **never an individual or incomplete streaming chunk**. Evidence judgment follows snapshot completeness.
+
+**Release/publication boundary & failure handling:** PM buffering (§D) covers the entire interval from streaming PM output until the authoritative Gate evaluation + publication authorization completes. Specifically:
+- **Gate REVIEW:** preserved PM text shown **only with a non-authoritative label**.
+- **Invalid configuration (`ValueError`):** **no** authoritative decision publication.
+- **Interrupted/failed stream:** exits before `record_decision`; **no** authoritative decision publication.
+- **State-log or memory persistence failure:** publication follows the approved failure policy (§C retry contract); buffered Buy/Sell content is **not** silently released as approved.
+
+**Residual — PENDING C:** exact handling if a resumed `values` snapshot could omit a field not re-emitted after the resume point (mechanism to guarantee complete restored state before the Gate); exact snapshot-vs-chunk guarantee wording.
+
+**Invariant [CONFIRMED, FR-07/INV-03]:** one authoritative Gate evaluation per completed execution at the `record_decision` boundary; no Graph/CLI second authoritative call; no raw PM Buy/Sell published as approved before the Gate completes; no publication path bypasses the gate; the Gate judges the complete finalized `values` snapshot.
+
+### B.4 Two distinct lifecycle contracts — **[PROPOSED; representation PENDING C]**
+Member C recommends **Graph-instance-scoped, execution-isolated in-memory records**. Documented as **two separate** contracts (they are *not* the same object):
+
+**A. Completion deduplication guard (execution lifecycle) — [PROPOSED]**
+- **Initialized** for a logical execution/completion.
+- **Identifies repeated processing** within that execution.
+- **Tracks** whether the authoritative Gate evaluation has **completed** and whether publication/persistence has **completed** (so a post-Gate persistence retry can reuse the result — §C).
+- **Retained** throughout the window where duplicate completion callbacks or retries remain possible (**not released prematurely** after the first successful Gate evaluation).
+- **Cleaned up** at a safe lifecycle boundary.
+- **Never reused** as authorization for a **new** execution or a **resumed-to-completion** execution that requires fresh evaluation.
+- *(Graph-instance-scoped: must not leak across executions on the same Graph instance.)*
+
+**B. Runtime `GateResult` observation record — [PROPOSED]**
+- **Created** when a Gate evaluation produces a result.
+- **Associated** with the corresponding execution.
+- **Exposes** runtime `verdict`, `effective_rating`, `reason`, and evidence statuses for diagnostics/offline tests.
+- **No durable persistence** of the complete `GateResult` required.
+- **Explicitly defined availability and cleanup** behaviour.
+- **Must not leak** a result from one execution into another execution on the **same** Graph instance.
+
+**Do not invent** an approved execution-ID field, cache implementation, or final cleanup point. The **concrete representation and cleanup points are PENDING MEMBER C CONFIRMATION** for both A and B.
+
+**Invariant [CONFIRMED, FR-07/INV-03]:** one authoritative Gate evaluation per completed execution; record_decision() signature and `None` return preserved; in-place final_state mutation; guard and observation record are distinct, execution-isolated, Graph-instance-scoped in-memory records.
 
 ---
 
@@ -158,6 +188,21 @@ For a newly completed execution, at the shared completion boundary (§B.1), in t
 
 *(Full repeated-completion / checkpoint / resume rules: see §K.2.)*
 
+**Gate success followed by logging/persistence failure — retry contract [PROPOSED behaviour; exact mechanism PENDING C]:** 
+
+Scenario: (1) the authoritative Gate succeeds; (2) `final_state` already holds `effective_rating`/`final_rating = effective_rating`; (3) state logging (`_log_state`) or memory persistence (`store_decision`) then **fails**; (4) the **same logical completion** is retried. Proposed rules:
+
+- **Trustworthy pre-Gate source required:** before modifying `final_rating`, preserve a trustworthy pre-Gate rating source and/or a pre-Gate state snapshot (the value the Gate evaluated). *(Representation/mechanism pending C; do not invent an approved field.)*
+- **Never recapture `original_rating` from an already Gate-downgraded `final_rating`:** once `final_rating` has been set to `effective_rating`, a retry must not treat that downgraded value as "original".
+- **Preserve `original_rating` across retries of the same completion:** the captured pre-Gate value must survive the failed-persist retry.
+- **Prefer reuse of the valid Gate result within the same execution:** when the completion deduplication guard (§B.1/§B.4) confirms the **same finalized input** was already checked, the retry should **reuse** that Gate result rather than re-evaluate.
+- **If re-evaluation is necessary, use the verified original pre-Gate snapshot** — never the already-modified `final_state`.
+- **Fail closed if no trustworthy original input is available:** if neither a valid in-execution Gate result nor the pre-Gate snapshot is available, the checker must **not** publish an authoritative rating (fail closed / withhold publication per the failure policy).
+- **Partial persistence & duplicate risk:** a partially completed state-log or memory write must not cause **duplicate** authoritative persistence on retry; persistence must be idempotent for the same completion (mechanism pending C). A state-log failure vs a memory-write failure are handled separately, and a retry must complete any missing persistence **without** releasing an ungated rating.
+- **Retry must not bypass the Gate for a NEW completion:** retry handling applies only within the *same* logical completion; a **new** completed execution always requires a fresh authoritative Gate evaluation (the guard is never reused as authorization across executions — §B.4).
+
+**Separation:** the above is **proposed behaviour**. The concrete retry/idempotency implementation (how the pre-Gate snapshot is held, how persistence is made idempotent, how partial writes are detected) is **PENDING MEMBER C CONFIRMATION**; no approved field/cache/mechanism is asserted.
+
 **Capture when sources conflict or are absent [PROPOSED; representation to A/C/C]:**
 - **Precedence (from Stage 1):** pre-gate rating = `final_rating` if present, else rating parsed from `final_trade_decision` (`_resolve_original_rating`).
 - **Conflict** (`final_rating` and parsed body both present and disagree): Stage 1 yields `error_kind="rating_conflict"` → effective `REVIEW`; conflict detail is preserved in `gate.reason`. Whether `original_rating` records the primary source, both sources, or a conflict marker is **pending A/C/C** (do not invent a representation).
@@ -172,10 +217,10 @@ For a newly completed execution, at the shared completion boundary (§B.1), in t
 **Policy [CONFIRMED, `o4.publication`]:** buffer PM text in the CLI; display only after the Gate; if `REVIEW`, any preserved body is labelled **unapproved original content**, never an approved recommendation.
 
 **Proposed CLI changes [PROPOSED], `cli/run.py` — BOTH pre-gate areas must buffer/suppress:**
-- **Area 1 — Portfolio Manager message / display area:** messages streamed at `:249–251` that carry PM decision text (and any PM status/message) must not imply an approved rating pre-gate.
-- **Area 2 — Portfolio Manager decision / report section:** the `"final_trade_decision"` report section written from streamed chunks at `:310–334` (incl. `"### Portfolio Manager Decision\n{judge}"` at `:333`) must not be committed as an approved section pre-gate.
+- **Area 1 — Portfolio Manager message / display area:** messages streamed via `add_message` (`:258`) that carry PM decision text (and any PM status/message) must not imply an approved rating pre-gate.
+- **Area 2 — Portfolio Manager decision / report section:** the `"final_trade_decision"` report section written from streamed chunks at `:317–340` (incl. `"### Portfolio Manager Decision\n{judge}"` at `:340`) must not be committed as an approved section pre-gate.
 - **Both areas** buffer or suppress authoritative decision content **before** the Gate executes; after `record_decision` returns the gated state, publish with the effective rating. When `REVIEW`, the preserved body is labelled **non-authoritative**.
-- Replace the current `is_review(run_rating(final_state))` check at `:380` with an effective-rating–based, **cause-neutral** REVIEW message. **The generic CLI REVIEW warning reads `final_state["effective_rating"]` directly** (after the Gate) — it does **not** require the CLI to receive the full `GateResult` merely to display the warning. Internal `reason` is not leaked verbatim to end users unless A/C decide otherwise.
+- **REVIEW display — use the existing `run_rating()`/`is_review()` compatibility path [Member C guidance].** Keep the current warning check shape `is_review(run_rating(final_state))` (verified: `run_rating` returns `final_state.get("final_rating") or parse_rating(final_trade_decision)`; `is_review` is `signal == "REVIEW"` — `rating.py:106`/`:115` @ `102511d`). **After a completed Gate, `final_rating == effective_rating`**, so this path naturally reflects the authoritative Gate-adjusted rating **without** the CLI needing the full `GateResult`. The message remains **cause-neutral**; internal `reason` is not leaked verbatim to end users unless A/C decide otherwise. (This keeps legacy-state read compatibility: a legacy state lacking `effective_rating` still reads via `run_rating`; but legacy read never authorizes a **new** ungated publication — §C.)
 - **Exact insertion points pending A/C / C verification.**
 
 **Cross-surface non-authoritative labelling — ALL enabled rendered outputs [CONFIRMED intent, FR-13]:**
@@ -233,16 +278,28 @@ The **completion notice must never imply an approved trade recommendation** — 
 
 ## H. Proposed shared-file modification scope — **[PROPOSED; exact scope SUBJECT TO A APPROVAL + C VERIFICATION]**
 
-> These files/edits are **proposals**, not authorized scope. Per §I, C owns shared edits; **Member A confirms the exact six shared-file modification scope during final Execution Plan approval**; exact lines pending C's re-verification on the latest main. `effective_rating` is the approved state field; `original_rating` is the approved diagnostic field name (§C). *(The six files below are the proposed set; A may adjust/confirm the exact scope.)*
+> These files/edits are **proposals**, not authorized scope. Per §I, C owns shared edits; **Member A confirms the exact shared-file modification scope during final Execution Plan approval**; exact lines pending C's re-verification on the **shared integration reference baseline `102511d`**. `effective_rating` is the approved state field; `original_rating` is the approved diagnostic field name (§C). *(Listed files are the proposed set; A may adjust/confirm. Do not silently expand scope.)*
 
-| File | Proposed change |
+**The six proposed shared production files [explicit]:**
+1. `tradingagents/graph/trading_graph.py`
+2. `tradingagents/agents/state.py`
+3. `cli/run.py`
+4. `tradingagents/reporting.py`
+5. `tradingagents/report_html.py`
+6. `tradingagents/memory/log.py`
+
+| File | Proposed change (lines @ `102511d`) |
 |---|---|
-| `tradingagents/graph/trading_graph.py` | Single authoritative Gate at/around `record_decision` (`:359`) **before** `_log_state` (`:362`) and `store_decision` (`:368–371`); apply S2 `original_rating`/`final_rating`/`effective_rating`; Graph return (`:405`) reads effective rating (no second call). Exact mechanism (inline vs helper) to C. |
+| `tradingagents/graph/trading_graph.py` | Single authoritative Gate at/around `record_decision` (`:359`) **before** `_log_state` (`:362`)/`store_decision` (`:368–371`); apply `original_rating`/`final_rating`/`effective_rating`; Graph return (`:405`) reads effective rating (no second call). |
 | `tradingagents/agents/state.py` | Add `effective_rating` + **`original_rating`** fields (approved names). |
-| `cli/run.py` | B1 two-area buffering (PM message area `:249–251` + decision/report section `:310–334`); consume gated result from `record_decision` (`:353`); effective rating display (`:380`); cause-neutral REVIEW message; reports (`:388`). Exact points to C. |
-| `tradingagents/reporting.py` | Read effective rating (`:26`, `:92`); additive-only; standalone `decision.md` labelling. |
-| `tradingagents/report_html.py` | Read effective rating (`:251`); non-authoritative labelling. |
-| `tradingagents/memory/log.py` | Persist effective rating (`:32`). |
+| `cli/run.py` | B1 two-area buffering (PM message area + decision/report section); consume gated result from `record_decision` (~`:360`); REVIEW warning via `is_review(run_rating(final_state))` (~`:387`); reports (`_offer_reports` ~`:401`). Exact points to C. |
+| `tradingagents/reporting.py` | Read effective rating (`_header` ~`:25`, `write_report_tree` `:92`); additive-only; standalone **`decision.md`** labelling (`:70–71` "Portfolio Manager" → `decision.md`). |
+| `tradingagents/report_html.py` | Read effective rating (~`:251`); non-authoritative labelling. |
+| `tradingagents/memory/log.py` | Persist effective rating (`store_decision` ~`:32`). |
+
+**Additional publication/display locations requiring verification (NOT silently added to scope) — PENDING A/C:**
+- **Standalone `decision.md`** (emitted by `tradingagents/reporting.py` report parts, `:70–71`) — non-authoritative labelling for REVIEW; verify whether it needs a direct edit or is covered by `reporting.py`.
+- **`cli/display.py`** (PM message/display area + `update_report_section`/`messages`) — the B1 buffering boundary for the *display* area; verify whether the PM message/decision buffering is enforced in `cli/run.py` (calling into `display.py`) or requires a `display.py` change. **Do not expand the approved six-file scope without A confirming.**
 
 **Possible D-owned additive helper [PROPOSED, A/C opt-in]:** a small pure `apply_gate(state, selected_analysts) -> (new_state, GateResult)` in `evidence_gate.py` or a new module, so shared files contain minimal glue. Not assumed approved.
 
@@ -282,7 +339,7 @@ The **completion notice must never imply an approved trade recommendation** — 
 > **Resolved by Member A (do not re-open):** (a) `original_rating` is the approved field name; (b) the S2 new-execution contract order (capture→set `final_rating`→set `effective_rating`→preserve bytes; conflict in `gate.reason`; no full durable `GateResult`); (c) the single-authoritative Gate at the shared completion boundary (`record_decision`), no independent Graph/CLI second evaluation; (d) `Should` latency non-blocking by default.
 
 **Pending C (shared-file integration owner) — exact mechanism is PENDING C CONFIRMATION:**
-1. Confirm C's backward-compatible contract holds against all current callers incl. tests (`trading_graph.py:400`, `cli/run.py:353`, `tests/test_cli_memory_log.py`, `tests/test_memory_log.py`): signature preserved, `None` return preserved, in-place mutation observed by callers.
+1. Confirm C's backward-compatible contract holds against all current callers incl. tests (`trading_graph.py:400`, `cli/run.py:360`, `tests/test_cli_memory_log.py`, `tests/test_memory_log.py`): signature preserved, `None` return preserved, in-place mutation observed by callers.
 2. Confirm how `selected_analysts` reaches the boundary (`self.selected_analysts` vs a shared helper) — no signature change assumed.
 3. **Confirm the same-vs-new execution-identity mechanism** (§B.1): in-memory completion guard vs run-config marker vs caller structuring — **do not invent an approved identity field**.
 4. Confirm the exact implementation mechanism: inline in `record_decision` vs a shared completion helper.
@@ -336,7 +393,7 @@ Rollback/containment [CONFIRMED policy direction]: Gate is fail-closed with no p
 
 ## L. Governance & approval workflow (Member A's required order) — **[CONFIRMED order; no step skipped]**
 
-1. **D** revises and shares the **v0.5** plans (this document + companion test plan). *(O4 planning review proceeds in parallel with the O6 step; it is not blocked by O6.)*
+1. **D** revises and shares the **v0.6** plans (this document + companion test plan). *(O4 planning review proceeds in parallel with the O6 step; it is not blocked by O6.)*
 2. **C — O6 prerequisite (for O4 CLI implementation):** O6 F identity-binding **has merged** (`6a561ab`, PR #19) giving a traceable commit; **C's CLI joint verification must still produce its own traceable evidence**; then re-verify `main` against O2 PR #16 + PR #9 (both merged). *(Sequencing prerequisite, NOT O4 Stage 2 coding approval. Do not claim O6 verification complete until C records it.)*
 3. **C** confirms the shared completion interface, compatibility, O6/O2/PR#9-integrated baseline, and assigned file scope. Exact mechanism/execution-identity **PENDING C CONFIRMATION**.
 4. **F** re-reviews the Stage 2 Test Plan, verifies mandatory cases, and records test approval.
@@ -348,4 +405,4 @@ Additional prerequisites (still required, do not bypass):
 - A read-only OpenCode Stage 2 execution plan approved before the first code edit (D9).
 - AI-use log + redacted session evidence maintained (REQ-GOV-06).
 
-**Member C's v0.5 review comments are architecture/interface feedback, NOT coding approval. This document records no approval and authorizes no code.**
+**Member C's v0.6 review comments are architecture/interface feedback, NOT coding approval. This document records no approval and authorizes no code.**

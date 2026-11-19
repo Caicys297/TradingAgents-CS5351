@@ -2,11 +2,11 @@
 
 | Field | Value |
 |---|---|
-| Plan ID | O4-TEST-S2-v0.5-DRAFT |
+| Plan ID | O4-TEST-S2-v0.6-DRAFT |
 | Status | **DRAFT — NOT APPROVED** |
 | Owner | Member D |
 | Prepared for | Member F (test coordination, CI integration, verification); Member A/C (integration scope) |
-| Companion execution plan | `docs/req/O4-Execution-Plan-Stage2-DRAFT.md` (O4-EXEC-S2-v0.5-DRAFT) |
+| Companion execution plan | `docs/req/O4-Execution-Plan-Stage2-DRAFT.md` (O4-EXEC-S2-v0.6-DRAFT) |
 | Verified baseline | **Integration baseline:** current `origin/main` `102511dd44ad8779a46e09cbefe50edb8a995b45` (includes PR #9 `d36a677`, O2 PR #16 `808df04`, O6 identity-binding PR #19 `6a561ab`, O6 CLI PR #20 merge `e4b6f9a`). **PR #17 base:** `d36a677`. **Historical O4 Stage 1 baseline:** `185d18b483ce1e04a9ac649923cbec14707fd9e3`. C must re-verify the O6/C-integrated baseline before O4 CLI edits. |
 | Stage 1 checker under test | `tradingagents/agents/evidence_gate.py` — `check_evidence()`, `GateResult` (merged, unchanged by Stage 2) |
 | Authoritative requirements | `docs/req/requirements.yaml` (PR #2 `4f87e29f…`); `development_contract.o4` |
@@ -23,10 +23,11 @@
 ## 0. Shared fixtures & harness [PROPOSED]
 
 Proposed location: `test/offline/` (default-collected). Candidate files:
-- `test/offline/test_evidence_gate_integration.py` — T-08, T-19, T-23.
-- `test/offline/test_evidence_gate_graph.py` — T-07/T-18 integration.
+- `test/offline/test_evidence_gate_integration.py` — T-08, T-19, T-23, display-order, §10e PM temporal/complete-snapshot.
+- `test/offline/test_evidence_gate_graph.py` — T-07/T-18 integration, §10a Gate-count, §10b retry/persistence-failure.
 - `test/offline/test_evidence_gate_audit.py` — T-21, T-20 signature diff helper.
 - `test/offline/test_evidence_gate_benchmark.py` — T-16 (non-blocking `Should`).
+- `test/offline/test_evidence_gate_lifecycle.py` — §10 checkpoint/resume + repeated-completion + §10c two-lifecycle isolation.
 
 **Fixtures (all offline, network-blocked):**
 - `complete_state` — four non-empty selected reports + clear rating (e.g. `Buy`).
@@ -223,6 +224,71 @@ Proposed location: `test/offline/` (default-collected). Candidate files:
 
 ---
 
+## 10b. Gate-success / logging-persistence failure & retry — [PROPOSED; mandatory]
+- **Covers:** O4-FR-07, FR-09, INV-01/03 (fail-closed publication; no ungated release; no duplicate persistence).
+- **Fixtures:** a completed run whose Gate succeeds and updates `final_state` (`effective_rating`/`final_rating`), then a **state-log write failure** (monkeypatched `_log_state`) and a **memory-write failure** (monkeypatched `store_decision`) separately; the **same logical completion** retried; counting spy on `check_evidence`; pre-Gate snapshot spy.
+- **Execution:** offline; run → force persistence failure → retry the same completion.
+- **Assertions:**
+  - **state-log failure + retry:** retry does **not** produce a second authoritative Gate evaluation when the guard confirms the same finalized input; `original_rating` preserved across the retry; no ungated Buy/Sell released; missing persistence completed on retry.
+  - **memory-write failure + retry:** same guarantees for the memory path.
+  - **`original_rating` preservation:** not re-captured from the already Gate-downgraded `final_rating`.
+  - **no unintended second authoritative evaluation** for a valid same-execution retry (count == 1);
+  - **no duplicate authoritative publication** (state log / memory entries not duplicated);
+  - **partial persistence** (only one of state-log/memory written) handled safely — the retry completes the missing one without releasing an ungated rating; if no trustworthy original input is available → **fail closed** (no authoritative publication).
+  - retry handling must **not** bypass a required Gate for a **new** completion.
+- **Expected:** `retry→reuse-valid-gate (count==1)`, `original_rating preserved`, `no ungated release`, `no duplicate persistence`, incomplete-and-unrecoverable → `no authoritative publication`.
+- **Owner:** D; F collection/CI.
+- **Dependencies:** pre-Gate snapshot / persistence-idempotency mechanism **PENDING C**. Mandatory (§13).
+
+---
+
+## 10c. Two distinct lifecycles (guard vs GateResult record) — [PROPOSED; mandatory]
+- **Covers:** O4-FR-07, FR-09, INV-01/03; isolation on the SAME Graph instance.
+- **Fixtures:** **one Graph instance** executing **sequential separate** completions; repeated-completion callbacks; failed-persistence retry; resume; cleanup observation.
+- **Execution:** offline; drive multiple executions on the same Graph instance.
+- **Assertions:**
+  - **Guard lifecycle (A):** initialized per execution; blocks repeat within the same execution; tracks Gate-completed and publication/persistence-completed; **not released prematurely** after the first successful Gate (so a post-Gate persistence retry reuses the result); released at safe cleanup; **never reused** as authorization for a new execution or a resumed-to-completion execution needing fresh evaluation.
+  - **GateResult record lifecycle (B):** created when a Gate evaluation produces a result; associated with its execution; exposes verdict/effective/reason/statuses to diagnostics/tests; no durable persistence; explicit availability/cleanup; **must not leak** one execution's result into another execution on the same Graph instance.
+  - **Isolation test:** two sequential executions on the **same** Graph instance each get their **own** guard/record; a duplicate callback in the **same** execution triggers no second authoritative eval; a new execution after cleanup performs a fresh single eval.
+- **Expected:** `guard isolated per execution`, `record not leaked across executions`, `post-Gate retry reuses result`, `cleanup at safe boundary`.
+- **Owner:** D; F collection/CI.
+- **Dependencies:** concrete representation/cleanup **PENDING C** (§B.4). Mandatory (§13).
+
+---
+
+## 10d. REVIEW display & legacy-state compatibility — [PROPOSED; mandatory]
+- **Covers:** O4-FR-07, FR-12, FR-13, FR-16, INV-01/02.
+- **Fixtures:** newly gated REVIEW state; newly gated valid (Buy/Sell/Hold) state; **legacy state lacking `effective_rating`**; legacy checkpoint state **resumed into a new completed execution**.
+- **Execution:** offline; render/read via the real `is_review(run_rating(final_state))` path (`rating.py:106`/`:115`).
+- **Assertions:**
+  - newly gated REVIEW → warning shown; `final_rating == effective_rating`; body labelled non-authoritative;
+  - newly gated valid rating → preserved, no spurious REVIEW;
+  - legacy state lacking `effective_rating` → readable via `run_rating` (no raise), but **reading a legacy state never authorizes a new ungated publication**;
+  - legacy checkpoint resumed into a **new completed execution** → **fresh Gate evaluation** required; not published unggated;
+  - **no fallback to an ungated Buy/Sell** when a new publication requires a Gate result.
+- **Expected:** `REVIEW→warning`, `valid→preserved`, `legacy→readable but not publishing`, `no ungated fallback`.
+- **Owner:** D; F collection/CI.
+- **Dependencies:** none beyond integration; mandatory (§13).
+
+---
+
+## 10e. PM buffering temporal window & complete-snapshot — [PROPOSED; mandatory]
+- **Covers:** O4-FR-07, FR-13, INV-01/03.
+- **Fixtures:** `fake_cli_stream` emitting PM Buy text; capture of **both** CLI areas (message/display area + decision/report section) **BEFORE** Gate completion; forced failure paths (invalid config; interrupted stream; state-log/memory failure); a resumed `values`-snapshot run with restored reports.
+- **Execution:** offline; capture real emitted output at the **pre-Gate** moment and **during each failure path** (not only final rendering).
+- **Assertions:**
+  - **PM buffering covers the entire interval** from streaming PM output until Gate evaluation + publication authorization completes — **both** areas show no approved Buy/Sell before the Gate;
+  - Gate REVIEW → preserved PM text shown **only** with non-authoritative label;
+  - invalid config → **no** authoritative decision publication;
+  - interrupted/failed stream → **no** authoritative decision publication;
+  - state-log/memory failure → publication follows failure policy; buffered Buy/Sell **not** silently released;
+  - **complete `values` snapshot** (incl. restored reports) is the Gated input, not an incomplete chunk.
+- **Expected:** `no pre-gate release in either area`, `failure paths → no authoritative publication`, `REVIEW→non-authoritative label`, `snapshot complete`.
+- **Owner:** D; F collection/CI.
+- **Dependencies:** exact buffering boundary pending C/A; mandatory (§13).
+
+---
+
 ## 11. Cross-surface requirement parts (from existing catalogue)
 For T-02, T-06, T-14, T-17, T-25 the **cross-surface** portions (already validated unit-level in Stage 1) are re-exercised through the real publication path as part of T-08’s surface-consistency matrix (same fixtures, downgraded variants). No new IDs; the unit assertions remain Stage 1.
 
@@ -244,6 +310,10 @@ For T-02, T-06, T-14, T-17, T-25 the **cross-surface** portions (already validat
 | Checkpoint/resume (new) | FR-07, FR-09, INV-01/03 | integration | D/F | resumed→gated-consistent; interrupted→no authoritative rating |
 | Repeated-completion (new) | FR-07, FR-09, INV-01/03 | integration | D/F | repeat→single authoritative publish/persist; `original_rating` not overwritten; stale-fields→re-evaluated |
 | Gate-invocation-count (new) | FR-07, FR-09, INV-01/03 | integration | D/F | exactly one authoritative eval, before publication |
+| Gate-success/log-failure retry (10b) | FR-07, FR-09, INV-01/03 | integration | D/F | retry reuses valid gate, original_rating preserved, no duplicate publish |
+| Two-lifecycle isolation (10c) | FR-07, FR-09, INV-01/03 | integration | D/F | guard per-execution; GateResult record not leaked across executions |
+| REVIEW/legacy display (10d) | FR-07, FR-12, FR-13, FR-16, INV-01/02 | integration | D/F | REVIEW warning; legacy readable but no ungated new publication |
+| PM buffering temporal (10e) | FR-07, FR-13, INV-01/03 | integration | D/F | no pre-gate release in either area; complete values snapshot |
 
 ---
 
@@ -259,6 +329,10 @@ All **mandatory** Stage 2 tests and their **parameterized subcases / sub-scenari
 - **T-23** — pre-Gate observation of **BOTH** the CLI message area **and** the decision/report section (no authoritative publication before the Gate).
 - **Display-order (new)** — completion notice → REVIEW warning (if applicable) → elapsed → O6 stats → report options; completion not implying an approved trade.
 - **Checkpoint/resume (new)** — **completed** (resumed→gated-consistent) and **interrupted** (no authoritative rating) cases.
+- **Gate-success/log-failure retry (§10b, new)** — state-log failure + retry, memory-write failure + retry, `original_rating` preservation, no second authoritative eval on valid retry, no duplicate publication, partial-persistence safe handling; unrecoverable → fail closed.
+- **Two-lifecycle isolation (§10c, new)** — guard vs GateResult record; sequential executions on the SAME Graph instance; no cross-execution leak; post-Gate retry reuses result; cleanup.
+- **REVIEW/legacy display (§10d, new)** — newly gated REVIEW/valid; legacy lacking `effective_rating` readable but no ungated new publication; resumed legacy → fresh Gate; no ungated Buy/Sell fallback.
+- **PM buffering temporal & complete snapshot (§10e, new)** — both CLI areas captured BEFORE Gate; failure paths publish nothing; complete `values` snapshot (incl. restored reports) is the Gated input.
 - **Repeated-completion (new, mandatory)** — repeated `record_decision()` within one completed execution → single authoritative publish/persist; `original_rating` not overwritten by a prior REVIEW; legacy/stale-field checkpoint → re-evaluated, stale `effective_rating` does **not** authorize publication.
 - **Gate-invocation-count** — see below.
 - **T-20 (regression gate)** — historical-state read compatibility **without** allowing an ungated **new** publication; gated-path suite green; additive-only signatures.
@@ -277,7 +351,7 @@ All **mandatory** Stage 2 tests and their **parameterized subcases / sub-scenari
 
 ## 14. Unresolved items blocking finalization
 **Resolved (do not re-open):** `original_rating` field name; S2 capture→set order + conflict in `gate.reason` (no full durable `GateResult`); single authoritative Gate at the `record_decision` shared boundary (no Graph/CLI second authoritative call); **C's backward-compatible `record_decision` contract** (signature + `None` return preserved, in-place mutation); T-16 measures the **pure** checker; `Should` non-blocking by default; T-07 integration **mandatory**. **PR #9: merged (merge commit `d36a677` = PR #17 base) — not a live dependency.**
-- **C (exact mechanism PENDING C CONFIRMATION):** same-vs-new **execution-identity** mechanism + **per-execution guard lifecycle** (§B.1 — lifecycle create/use/preserve/release/never-reuse; do not invent an approved identity field, permanent state field, or cache); inline vs shared helper; `selected_analysts` reaching the boundary; **concrete per-run in-memory `GateResult` observation interface** (CLI REVIEW warning reads `final_state["effective_rating"]` directly, not full `GateResult`); **CLI stream/resume final-state completeness** (§B.3 — merged stream chunks vs checkpoint-restored full state); `original_rating` conflict/absent encoding; effective-rating persistence shape (with B); B1 two-area insertion points; repeated-completion/checkpoint/resume/legacy-stale-field rules + cleanup ordering.
+- **C (exact mechanism PENDING C CONFIRMATION):** **retry/idempotency** mechanism for Gate-success-then-persistence-failure (§C) incl. pre-Gate snapshot + partial-persistence idempotency; **two distinct lifecycles** representation/cleanup — guard (A) vs GateResult record (B), Graph-instance-scoped execution-isolated (§B.4); same-vs-new **execution-identity** mechanism + **per-execution guard lifecycle** (§B.1 — lifecycle create/use/preserve/release/never-reuse; do not invent an approved identity field, permanent state field, or cache); inline vs shared helper; `selected_analysts` reaching the boundary; **concrete per-run in-memory `GateResult` observation interface** (CLI REVIEW warning reads `final_state["effective_rating"]` directly, not full `GateResult`); **complete `values` snapshot** final-state source (§B.3 — merged stream chunks + checkpoint-restored reports; residual if a resumed snapshot omits a field); `original_rating` conflict/absent encoding; effective-rating persistence shape (with B); B1 two-area insertion points; repeated-completion/checkpoint/resume/legacy-stale-field rules + cleanup ordering.
 - **C — O6 prerequisite:** O6 identity-binding **merged** (`6a561ab`/PR #19) **and O6 CLI PR #20 merged** (`e4b6f9a`, ancestor of `origin/main` `102511d`) → traceable commit exists; **C must still record CLI joint-verification evidence**; re-verify O6/O2/PR#9-integrated `main` before O4 CLI edits. *(Verified via Git/API; not claiming C's joint verification done; O6 prerequisite ≠ O4 coding approval.)*
 - **A/C:** enabled-surface contract confirmation; non-authoritative label wording (CLI/MD/`decision.md`/HTML) + cause-neutral REVIEW message + display-order placement; unknown-config abort UX; T-21 observation-point contract.
 - **A:** confirm the **exact six shared-file modification scope** at final Execution Plan approval.
