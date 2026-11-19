@@ -1,7 +1,7 @@
 # O2 Stage 2 Integration — Test Plan
 
-**Document version:** v0.2-DRAFT  
-**Status:** Draft planning record; A scope supplement approved; F formal test plan and CI matrix approved; C ownership confirmed; **A's integration contract confirmed (this revision)**; final artefact set pending B. PR #18 remains Draft. Implementation and test execution are not claimed here.  
+**Document version:** v0.2-DRAFT (filename unchanged: `…-v0.1-DRAFT.md`)  
+**Status:** Draft planning record. A's scope supplement and F's test-plan/CI approval exist but are **bound to earlier commits** (§6); A's contract confirmation is recorded here; **this revision needs A (file scope) and F (revised test plan) review**. PR #18 remains Draft. Implementation is not authorised and no test or CI result is claimed.  
 **Owner:** B (QinQilun)  
 **Requirements baseline reference:** PR #9 merge commit `d36a677d4738efd365b6bbcf6f69f993acf8fd3c`. Joint-validation baseline: PR #21 merge `69e91ff115694f3455196e6a4114d4fe653fbb06`; O6 CLI merged via PR #20 `e4b6f9ac625f39579635c840aed98ab8dfefdaf9`. **Actual baseline verified at this plan update: `origin/main` = `102511dd44ad8779a46e09cbefe50edb8a995b45`**; re-verify and record the actual base SHA at implementation time.  
 **Phase 1 implementation:** PR #16 merge commit `808df04f320d95c1ab4ef5a6e88149335cdeff41`.  
@@ -63,11 +63,11 @@ Use the existing official O2-TC IDs. Do not add a new ID or silently redefine a 
 
 | Existing ID | Stage 2 integration assertion | Mapping |
 |---|---|---|
-| O2-TC-04 | Full CLI success coverage: a completed invocation reserves the approved run path before Graph, writes exactly one manifest after analysis/report-save handling, displays its unique path, and references exactly the artefact set this run produced (state log only on a successful `record_decision()`) | O2-FR-01/02/03/10 |
-| O2-TC-05 | Integrated artefact references match this run's records exactly: only reports `_offer_reports()` confirmed saved plus the state log registered after a successful `record_decision()`; declined saves, error leftovers, and historical files absent; shared paths `shared_mutable`, `run_dir` files `run_unique`, all relative to `results_dir` and inside it | O2-FR-10 |
-| O2-TC-11 | Same-second/concurrent invocations remain distinct; allocation retries at most 3 times; after 3 collisions Graph is never called and pre-existing files remain unchanged | O2-FR-02/03 |
-| O2-TC-13 | **Report-writer failure** (a report file fails to save): verified separately from manifest write; whether other successfully saved files stay referenced is pending B; no success path is shown | O2-FR-01/13/14 |
-| O2-TC-14 | **Manifest write failure** (unwritable destination or promotion failure): leaves no partial `manifest.json`, the run finishes normally with preserved result/rating and no success path | O2-FR-01/13/14 |
+| O2-TC-04 | Full CLI success coverage: a completed invocation reserves the approved run path before Graph, writes exactly one manifest after analysis/report-save handling, displays its unique path, and references exactly the artefact set this run produced | O2-FR-01/02/03/10 |
+| O2-TC-05 | Integrated artefact references match this run's records exactly: only reports `_offer_reports()` confirmed saved plus the state log registered after a successful `record_decision()`; declined saves, save-directory leftovers, and historical files absent; shared paths `shared_mutable`, `run_dir` files `run_unique`, all relative to `results_dir` and inside it | O2-FR-10 |
+| O2-TC-11 | Same-second/concurrent invocations remain distinct; allocation retries at most 3 times; after 3 collisions Graph is never called, pre-existing files remain unchanged, and the run reports the failure explicitly | O2-FR-02/03 |
+| O2-TC-13 | **Manifest write failure (unchanged scope)** — serialization/write/promotion failure in the manifest writer: no partial manifest, completed analysis result and O4 effective rating preserved, no success path | O2-FR-01/13/14 |
+| O2-TC-14 | **Manifest write failure (unchanged scope)** — unwritable destination or promotion failure: no partial `manifest.json`, run finishes normally with preserved result/rating and no success path | O2-FR-01/13/14 |
 | O2-TC-15 | Invalid/traversal identity or artifact path cannot write outside the configured results boundary | O2-FR-03; O2-NFR-05 |
 | O2-TC-19 | Integration tests use fakes and do not call external services | O2-NFR-04 |
 | O2-TC-20 | `pytest -q` regression confirms agreed existing behavior and interfaces | O2-NFR-06 |
@@ -76,24 +76,29 @@ Use the existing official O2-TC IDs. Do not add a new ID or silently redefine a 
 
 ## 4a. A-confirmed contract and required test cases
 
-A's four confirmed points (C1–C4) drive the expected results:
+A's confirmed contract items (C1–C7 in the execution plan) drive the expected results:
 
 | Contract | Confirmed rule | Required test cases |
 |---|---|---|
 | C1 state log | registered only after `record_decision()` returns successfully, by the expected path; not registered on failure even if a stale/historical file exists | success registers the expected path; failure registers nothing; a pre-existing file is not picked up |
 | C2 `_log_state()` boundary | writes and closes without `fsync`; acceptable for normal-run registration | no durability claim asserted; registration depends on the successful return, not on file inspection |
-| C3 `_offer_reports()` | returns `list[Path]` of confirmed-saved reports only; display/prompting unchanged | exact file set and labels; declined save → none; error leftover → none; historical → none |
-| C4 path base | `results_dir` for boundary + relative paths; `run_dir` for `run_unique`; custom path outside `results_dir` saved but omitted | relative paths inside `results_dir`; `run_unique` only under `run_dir`; outside path saved, absent from manifest |
+| C3 `_offer_reports()` | returns `list[Path]` only when the optional save succeeded **as a whole**; whole failure registers nothing from that directory | exact set and labels; declined → none; whole-save failure → none including partial leftovers |
+| C4 artefact base | `results_dir` for boundary + relative paths; `run_dir` for `run_unique`; no scanning | relative paths inside `results_dir`; `run_unique` only under `run_dir`; historical files never appear |
+| C5 live reports & log | each registered on its own confirmed write | live section write succeeds → registered; `message_tool.log` write succeeds → registered; raising write → not registered |
+| C6 external path | saves succeed but the reference is omitted | **two separate assertions**: the save happened, and the manifest omits it |
+| C7 reservation | 3 attempts, then abort | Graph never called; pre-existing files byte-unchanged; failure reported explicitly |
 
-**Required coverage (exact file set and labels):**
-1. **Exact set and labels** — the manifest's `artifacts` equals exactly the confirmed set, one entry each, with the correct `shared_mutable` / `run_unique` label.
-2. **Declined save** — no report entries; other confirmed artefacts follow their own verdicts.
-3. **Partial report-save failure** — the failing file is not claimed; whether other successfully saved files remain referenced is a pending B decision, so the test asserts no *failed* file is referenced and marks the rest as pending.
-4. **Historical-file exclusion** — a stale file pre-created under `results_dir` never appears.
-5. **External path** — a custom save path outside `results_dir` still saves but is omitted from the manifest.
-6. **State log success registration** — appears with `shared_mutable` after a successful `record_decision()`.
-7. **State log failure non-registration** — absent after `record_decision()` raises, even with a leftover file present.
-8. **TC-13 (report writer) vs TC-14 (manifest writer) split** — two distinct tests; a report-writer failure must not be reported as a manifest-write failure.
+**Required coverage, at the level TC-05's success case needs:**
+
+1. **Exact artefact set and per-item stability labels** for a successful run — one entry each, correct label per item (`shared_mutable` for unmigrated shared locations, `run_unique` only under `run_dir`).
+2. **Whole report-save failure** — no file from that save directory is registered, including partial leftovers.
+3. **Manifest write failure (TC-13 / TC-14)** — keeps its **existing** meaning: the manifest writer fails; no partial manifest, result and rating preserved, no success path.
+4. **Report-writer partial failure — independent case** — a report file fails to save; verified in its own test, not folded into TC-13/14, so the approved TC-13/14 mapping is unchanged.
+5. **State log write and close failure** — not registered, even with a leftover file present.
+6. **Historical-file exclusion** — a stale file pre-created under `results_dir` never appears.
+7. **Declined save** — no report entries.
+8. **External save path** — saves successfully, reference omitted; both asserted separately.
+9. **Three reservation collisions** — Graph called zero times, existing files unchanged, failure reported.
 
 All driven through the real `run_analysis()` with a fake Graph; real file writes and real JSON parsing are retained, with the manifest writer exercised against a temporary directory.
 
@@ -103,39 +108,41 @@ All driven through the real `run_analysis()` with a fake Graph; real file writes
 
 - Run directory: `results_dir/<safe ticker>/<date>/runs/<uuid4 hex>/`, reserved before Graph with `mkdir(exist_ok=False)`, up to 3 total attempts, then a clear failure before Graph without changing existing files.
 - Existing report, state, and log paths remain in place; shared unmigrated paths are `shared_mutable`; files under `run_dir` may be `run_unique`; declined report saves are not listed.
-- **A's confirmed contract (C1–C4):** Graph interface unchanged; state log registered only after a successful `record_decision()`, by the expected path; `_log_state()` writes and closes without `fsync`, accepted for this batch; `_offer_reports()` returns `list[Path]` of confirmed-saved reports with display unchanged; `results_dir` for boundary/relative paths, `run_dir` for `run_unique`, out-of-boundary custom saves saved but unreferenced.
-- Exactly one manifest after normal CLI analysis completes and after report-save handling; failure behavior is fail-soft for the analysis result and fail-closed for provenance claims. Report-writer failure (TC-13) and manifest-write failure (TC-14) are verified separately.
-- Keep existing test IDs; no new ID. Full CLI success is TC-04; failures are TC-13/14.
+- **A's confirmed contract (C1–C7):** Graph interface unchanged; state log registered only after a successful `record_decision()`, by the expected path; `_log_state()` writes and closes without `fsync`, accepted for this batch; `_offer_reports()` returns `list[Path]` only on whole-save success, display unchanged; `_artifact_references` takes both `results_dir` and `run_dir`; live reports and `message_tool.log` stand on their own write evidence; out-of-boundary custom saves saved but unreferenced; reservation aborts after 3 collisions with Graph uncalled.
+- Exactly one manifest after normal CLI analysis completes and after report-save handling; failure behaviour is fail-soft for the analysis result and fail-closed for provenance claims.
+- Keep existing test IDs; no new ID. Full CLI success is TC-04. **TC-13/14 keep their original manifest-write failure meaning**; the report-writer partial failure is an independent case.
 - C owns shared `cli/run.py` integration and coordinates CLI test integration. B owns manifest interface and `test/offline/test_o2_cli_manifest.py`. F owns test review and approved CI workflow changes.
 - No Graph change for this batch. If a Graph dependency is found, stop with the exact call chain and proposed diff for A/C approval.
 - PR #21 merge `69e91ff...` is the joint-validation baseline.
 - F CI matrix: Ubuntu Python 3.11–3.14 full regression plus Python 3.12 non-UTC job; macOS/Windows Python 3.12 writer and CLI manifest target tests.
 - O2-TC-23 maps to O2-FR-05, O2-FR-11, and O2-NFR-03.
 
-### Pending B's confirmation
+### Pending confirmation
 
-These are open in this revision and are not decided here:
+Only genuinely unspecified items remain:
 
-- The **final artefact set**: whether live per-section reports, the complete-report directory, the state log, and `message_tool.log` are all included.
-- The **write evidence required for each** of those artefacts.
-- **Partial report-save failure**: whether references to the other successfully saved files are kept.
+- **B:** whether both per-section report sets (the live run-directory set and the saved report tree) are in the expected manifest set, or whether one is sufficient. Everything else in the artefact list is settled by C1–C7.
+- **A:** confirmation of the exact file scope.
+- **F:** approval of this revised test plan.
 
 ### Remaining before implementation results are claimed
 
 - Verify current `origin/main` at implementation time, record the actual base SHA, and confirm it contains PR #9 merge `d36a677...` and PR #21 merge `69e91ff...`.
-- C must make the approved `cli/run.py` contract/order available before B adds `test/offline/test_o2_cli_manifest.py`; the current `main` does not yet contain the Stage 2 CLI integration.
+- The interface B tests against is specified in the execution plan (§1 C1–C7, §3); publishing implementation code first is not required by this plan.
 - Implement and verify the Stage 2 TC-23 CLI expectation in the separate implementation PR.
 - Record actual test and CI results after execution; none are claimed here.
 
 ## 6. Approval and evidence record
 
-- **A Stage 2 scope supplement:** Approved in PR #18 review `5959122354`, `2026-11-18T15:00:01Z`
-- **F formal Stage 2 test-plan and CI matrix approval:** Approved in PR #18 review `5968062524`, `2026-11-19T01:41:23Z`
-- **C/F ownership and timing confirmation:** Recorded in PR #18 review `5968754538`, `2026-11-19T03:08:27Z`
-- **A integration contract (C1–C4):** Confirmed; see §4a for the resulting test cases
-- **Final artefact set / write evidence / partial-save rule:** Pending B
+**Binding of existing approvals (see execution plan §7 for the full table):** A's approval `5959122354` is bound to `3b60af1`; F's approval `5968062524` is bound to `e03b67d`; F's `5968754538` is a supplement, not a re-approval. **F's approval covers the unchanged TC-ID mapping and CI matrix; it does not approve this revision's new contract cases (C1–C7) or the independent report-writer case.**
+
+- **A Stage 2 scope supplement:** Approved in PR #18 review `5959122354` (bound to `3b60af1`), `2026-11-18T15:00:01Z`
+- **F formal Stage 2 test-plan and CI matrix approval:** Approved in PR #18 review `5968062524` (bound to `e03b67d`), `2026-11-19T01:41:23Z`; still applies to TC-ID mapping and CI matrix only
+- **C/F ownership and timing confirmation:** PR #18 review `5968754538`
+- **A integration contract (C1–C7):** Confirmed; see §4a
+- **Pending:** F's approval of this revised test plan; A's file-scope confirmation; B's per-section-set choice
 - **PR #21 writer/TC-23 synchronization:** Merged at `69e91ff115694f3455196e6a4114d4fe653fbb06`
 - **O6 CLI integration:** Merged at `e4b6f9ac625f39579635c840aed98ab8dfefdaf9` (PR #20)
 - **Actual baseline at this revision:** `origin/main` `102511dd44ad8779a46e09cbefe50edb8a995b45`
-- **Implementation/test execution/CI results:** Not claimed in this planning PR
+- **Implementation/test execution/CI results:** Not claimed
 - **Reapproval:** Any material scope, expected-result, path, test-ID, or ownership change requires an updated plan and renewed approval before implementation.
