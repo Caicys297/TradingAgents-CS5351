@@ -3,14 +3,14 @@
 | Field | Value |
 |---|---|
 | Plan ID | O4-EXEC-S2-v0.6-DRAFT |
-| Status | **DRAFT — NOT APPROVED** |
+| Status | **DRAFT — NOT APPROVED as implemented code.** (Implementation scope + pre-implementation test design are approved at `6275725`; Stage 2 code/tests/CI/merge NOT done.) |
 | Prepared by | Member D |
 | Prepared for | Member A (scope/integration review), Member C (shared-file integration owner), Member F (test/CI) |
 | Companion test plan | `docs/req/O4-Test-Plan-Stage2-DRAFT.md` (O4-TEST-S2-v0.6-DRAFT) |
 | Verified baseline | **Integration baseline:** current `origin/main` `102511dd44ad8779a46e09cbefe50edb8a995b45` (includes PR #9 `d36a677`, O2 PR #16 `808df04`, O6 identity-binding PR #19 `6a561ab`, O6 CLI PR #20 merge `e4b6f9a`). **PR #17 base:** `d36a677` (PR #9 merge). **Historical O4 Stage 1 baseline:** `185d18b483ce1e04a9ac649923cbec14707fd9e3`. |
 | Stage 1 checker | `tradingagents/agents/evidence_gate.py` (`check_evidence`, `GateResult`) — merged |
 | Authoritative requirements | `docs/req/requirements.yaml` (PR #2 merged at `4f87e29f…`); `development_contract.o4` |
-| Approval | **NONE.** Stage 2 is NOT approved. Shared-file ownership for Stage 2 has NOT been newly granted by this document. This is a proposal for A/C/F review. |
+| Approval | **Approved at commit `6275725796e618f15d4794ddc61526963bb41c35`** — (1) **Member F pre-implementation test-design approval** (review `5974514410`, `2026-11-19T11:55:11Z`, bound to `6275725`; supplements earlier F `5971672933`/`5972448586`); (2) **Member A execution-scope approval** (review `5973684411`, `2026-11-19T10:56:49Z`, bound to `6275725`) — the six shared production files only. This authorizes **implementation scope + pre-implementation test design**, NOT Stage 2 code, test execution, CI, acceptance, or merge (none has occurred). |
 
 > **Document intent.** This is a *planning* document only. It proposes how to wire the already-merged Stage 1 checker into the runtime. It does **not** implement Stage 2, does **not** modify code, and does **not** claim any new approval. Every line number was re-verified against `main` `185d18b`; numbers may drift as other PRs merge and must be re-confirmed at implementation time.
 
@@ -361,16 +361,16 @@ The **completion notice must never imply an approved trade recommendation** — 
   - **The O6 prerequisite is NOT equivalent to O4 Stage 2 coding approval** — it is a sequencing prerequisite; O4 Stage 2 still requires C interface confirmation → F test approval → A execution-plan approval.
 - **O6 PR #20 [VERIFIED merged]:** PR #20 ("CLI per-analyst usage with single callback registration") is **merged** (GitHub API: `merged: true`, merge commit `e4b6f9a`, ancestor of `origin/main` `102511d`). Its CLI changes do **not** alter `record_decision` or the final-state merge structure. *(This supersedes any prior "PR #20 pending A/F review/merge" status — verified against Git, not assumed.)*
 - **PR #9 dependency [RESOLVED — merged]:** PR #9 (`codex/o2-fr14-trace-fix`) is **already merged**; its merge commit **is `d36a677`** (the current PR #17 base), and it changed `docs/req/requirements.yaml` (6 lines) + `Team-O1-O6-Test-Case-Catalog-v2.0-DRAFT.md` (4 lines) under **PR #9's own review record** (not newly authored/approved under O4). **PR #17 does *not* carry PR #9's changes as its own** — verified: PR #17's diff vs its base is exactly the two O4 Stage 2 DRAFT files (no registry/catalogue changes). PR #9 is **not a live dependency**; it is in the base. *(Member A need take no merge-ordering action for PR #9; recorded for provenance only.)*
-- **O2 PR #16 [merged; merge commit `808df04`, ancestor of `d36a677` and `origin/main`]:** added **`tradingagents/repro/manifest.py`** (isolated `build_manifest`/`write_manifest`), **not yet wired** into `cli/run.py`/`trading_graph.py`. Per `A-Requirements-Decisions`, O2 will write `manifest.json` **at run start** in `cli/run.py`, with **manifest failure not altering O4's gated result** (visible provenance-failed warning, no success claim). When O2's CLI wiring lands, C must reconcile O2 run-start manifest writing with O4's completion-boundary Gate and B1 buffering.
+- **O2 PR #16 [merged; merge commit `808df04`, ancestor of `d36a677` and `origin/main`]:** added **`tradingagents/repro/manifest.py`** (isolated `build_manifest`/`write_manifest`). **O2 integration contract — current (PR #18), supersedes the old "run-start manifest" description [per Member A review `5973684411`]:** (1) **before Graph execution, reserve the output directory only**; (2) **after analysis and the save-selection decision, write the manifest once**. O2 manifest failure does **not** alter O4's gated result (visible provenance-failed warning, no success claim). C must reconcile O2's directory-reservation (pre-Graph) and post-analysis single manifest write with O4's completion-boundary Gate and B1 buffering. *(The earlier "write manifest at run start" text is obsolete and must not be described as current behaviour.)*
 - **Ordering rule:** O4 CLI shared-file edits occur only after (a) O6 traceable commit + C's joint CLI verification evidence, (b) C re-verifies the O6/O2/PR#9-integrated `main`, (c) C confirms the shared completion interface + compatibility, and (d) F jointly verifies O6 CLI before O4 CLI edits.
 
 ---
 
-## J. Remaining technical confirmations (C) and approvals (A/F)
+## J. Remaining technical confirmations (C) and approvals (A/F) — **[A/F approvals recorded at `6275725`; C interface confirmed; internal mechanism still C's choice]**
 
 > **Resolved by Member A (do not re-open):** (a) `original_rating` is the approved field name; (b) the S2 new-execution contract order (capture→set `final_rating`→set `effective_rating`→preserve bytes; conflict in `gate.reason`; no full durable `GateResult`); (c) the single-authoritative Gate at the shared completion boundary (`record_decision`), no independent Graph/CLI second evaluation; (d) `Should` latency non-blocking by default.
 
-**Pending C (shared-file integration owner) — exact mechanism is PENDING C CONFIRMATION:**
+**Member C — interface confirmed at `6275725`; internal mechanism is C's to choose within the six files (no renewed A/F round needed for internal detail; per A `5973684411`). Remaining C items below are implementation-level, not new approvals:**
 1. Confirm C's backward-compatible contract holds against all current callers incl. tests (`trading_graph.py:400`, `cli/run.py:360`, `tests/test_cli_memory_log.py`, `tests/test_memory_log.py`): signature preserved, `None` return preserved, in-place mutation observed by callers.
 2. Confirm how `selected_analysts` reaches the boundary (`self.selected_analysts` vs a shared helper) — no signature change assumed.
 3. **Confirm the same-vs-new execution-identity mechanism** (§B.1): in-memory completion guard vs run-config marker vs caller structuring — **do not invent an approved identity field**.
@@ -423,18 +423,19 @@ Rollback/containment [CONFIRMED policy direction]: Gate is fail-closed with no p
 
 ---
 
-## L. Governance & approval workflow (Member A's required order) — **[CONFIRMED order; no step skipped]**
+## L. Governance & approval status (Member A's ordered workflow) — **[scope + pre-impl test design approved; code NOT implemented]**
 
-1. **D** revises and shares the **v0.6** plans (this document + companion test plan). *(O4 planning review proceeds in parallel with the O6 step; it is not blocked by O6.)*
-2. **C — O6 prerequisite (for O4 CLI implementation):** O6 F identity-binding **has merged** (`6a561ab`, PR #19) giving a traceable commit; **C's CLI joint verification must still produce its own traceable evidence**; then re-verify `main` against O2 PR #16 + PR #9 (both merged). *(Sequencing prerequisite, NOT O4 Stage 2 coding approval. Do not claim O6 verification complete until C records it.)*
-3. **C** confirms the shared completion interface, compatibility, O6/O2/PR#9-integrated baseline, and assigned file scope. Exact mechanism/execution-identity **PENDING C CONFIRMATION**.
-4. **F** re-reviews the Stage 2 Test Plan, verifies mandatory cases, and records test approval.
-5. **A** formally approves the updated Stage 2 Execution Plan **and confirms the exact six shared-file modification scope**.
-6. **Only after** all required approvals (and the O6/C verification evidence) may approved Stage 2 code implementation begin.
+**Status of the ordered workflow at commit `6275725`:**
+1. **D** revised and shared the **v0.6** plans — **DONE**.
+2. **C — interface confirmation:** **C has confirmed the shared interface bound to `6275725`** (per the task record). *(Original source link is awaiting traceability — no GitHub review link is recorded here; do not invent one.)*
+3. **F — test-design approval:** **DONE** — review `5974514410` (`2026-11-19T11:55:11Z`, bound to `6275725`; supplements `5971672933`/`5972448586`). F authorized administrative updates to outdated approval-status text without a renewed F approval.
+4. **A — execution-scope approval:** **DONE** — review `5973684411` (`2026-11-19T10:56:49Z`, bound to `6275725`); six shared files only.
+5. **O6 prerequisite:** O6 F identity-binding merged (`6a561ab`, PR #19); **C's CLI joint-verification evidence still to be recorded** before O4 CLI implementation.
+6. **Not yet done (require separate steps, NOT covered by these approvals):** Stage 2 **code implementation**, **test execution**, **CI acceptance**, and **merge** have **not** occurred and are **not** approved by these reviews.
 
-Additional prerequisites (still required, do not bypass):
-- Record a completed Stage 2 Test Approval entry (per `docs/test-approvals/TEMPLATE.md`) with real comment links/timestamps before the first Stage 2 code edit.
-- A read-only OpenCode Stage 2 execution plan approved before the first code edit (D9).
+Additional prerequisites before the first Stage 2 code edit (still required):
+- Record a completed Stage 2 Test Approval entry (per `docs/test-approvals/TEMPLATE.md`) with real comment links/timestamps (F approval `5974514410` bound to `6275725`).
+- A read-only OpenCode Stage 2 execution plan approved before the first code edit (D9); record actual main/branch SHA, chosen mechanism, O2 `cli/run.py` insertion order, and O6 joint-verification basis in the implementation PR (per Member A).
 - AI-use log + redacted session evidence maintained (REQ-GOV-06).
 
-**Member C's v0.6 review comments are architecture/interface feedback, NOT coding approval. This document records no approval and authorizes no code.**
+**Scope boundary [per Member A review `5973684411`]:** approvals cover the six shared production files + D's offline tests. They do **not** extend to `cli/display.py`, new files beyond the six, public API changes, or automatic retry. If full state gating / PM two-area buffering / safe post-failure publication cannot be achieved within the six files, **stop and report** the specific path and minimal diff — do not substitute an ungated rating. **These reviews are a pre-code execution-plan approval; they are not implementation, CI, or final-merge approval.** No code is authorized to be *merged* by this document.

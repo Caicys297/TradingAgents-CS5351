@@ -3,6 +3,7 @@
 | Field | Value |
 |---|---|
 | Plan ID | O4-TEST-S2-v0.6-DRAFT |
+| Approved at | **`6275725796e618f15d4794ddc61526963bb41c35`** (F test-design `5974514410`; A execution-scope `5973684411`) — approvals cover design/scope only; no code/test/CI/merge. |
 | Status | **DRAFT — NOT APPROVED** |
 | Owner | Member D |
 | Prepared for | Member F (test coordination, CI integration, verification); Member A/C (integration scope) |
@@ -10,7 +11,7 @@
 | Verified baseline | **Integration baseline:** current `origin/main` `102511dd44ad8779a46e09cbefe50edb8a995b45` (includes PR #9 `d36a677`, O2 PR #16 `808df04`, O6 identity-binding PR #19 `6a561ab`, O6 CLI PR #20 merge `e4b6f9a`). **PR #17 base:** `d36a677`. **Historical O4 Stage 1 baseline:** `185d18b483ce1e04a9ac649923cbec14707fd9e3`. C must re-verify the O6/C-integrated baseline before O4 CLI edits. |
 | Stage 1 checker under test | `tradingagents/agents/evidence_gate.py` — `check_evidence()`, `GateResult` (merged, unchanged by Stage 2) |
 | Authoritative requirements | `docs/req/requirements.yaml` (PR #2 `4f87e29f…`); `development_contract.o4` |
-| Approval | **NONE — DRAFT.** This plan requests approval; it does not grant it. No test below exists yet. |
+| Approval | **Member F pre-implementation test-design approval** — review `5974514410` (`2026-11-19T11:55:11Z`, bound to `6275725`; supplements `5971672933`/`5972448586`). This approves the **test design**; **no Stage 2 test is written/executed, no CI/acceptance/merge** is approved. DRAFT — NOT APPROVED as implemented code. |
 
 > **Status labels:** **PROPOSED** (specified, not written); **NOT YET IMPLEMENTED** (file/fixture absent); **UNVERIFIED** (path/command not yet executed for Stage 2). No CI result, benchmark measurement, or passing test is claimed here.
 
@@ -325,7 +326,7 @@ For T-02, T-06, T-14, T-17, T-25 the **cross-surface** portions (already validat
 
 ---
 
-## 13. Mandatory collection & safety acceptance — **[CONFIRMED rule; final mandatory classification pending F]**
+## 13. Mandatory collection & safety acceptance — **[mandatory set approved by F at `6275725` (`5974514410`)]**
 
 All **mandatory** Stage 2 tests and their **parameterized subcases / sub-scenarios** must be **collected, actually executed, and passed** for final safety acceptance. None may be **skipped, xfailed, errored, or missing from the collection manifest**; a missing mandatory node blocks acceptance (and merge, under the proposed Safety CI Gate).
 
@@ -353,17 +354,17 @@ All **mandatory** Stage 2 tests and their **parameterized subcases / sub-scenari
 - **all** cases: the evaluation occurs **before** any authoritative publication; interrupted/error cases perform **no** authoritative publication;
 - **S2 state assertions** in each: `original_rating` captured pre-gate (never overwritten by a downgraded effective), `final_rating == effective_rating`, `final_trade_decision` byte-preserved.
 
-**F’s authority preserved:** the exact mandatory/conditional classification and any parameterized-subcase boundaries are **pending F’s confirmation**; this plan does not invent approval. T-16 remains non-blocking `Should` (measurement/reporting only).
+**F’s test-design approval recorded:** the mandatory set + parameterized boundaries were approved by F at `6275725` (`5974514410`). F authorized administrative updates to outdated approval text without a renewed approval. T-16 remains non-blocking `Should` (measurement/reporting only). No Stage 2 test is written/executed; no CI/acceptance/merge approved.
 
 ---
 
 ## 14. Unresolved items blocking finalization
-**Resolved (do not re-open):** `original_rating` field name; S2 capture→set order + conflict in `gate.reason` (no full durable `GateResult`); single authoritative Gate at the `record_decision` shared boundary (no Graph/CLI second authoritative call); **C's backward-compatible `record_decision` contract** (signature + `None` return preserved, in-place mutation); T-16 measures the **pure** checker; `Should` non-blocking by default; T-07 integration **mandatory**. **PR #9: merged (merge commit `d36a677` = PR #17 base) — not a live dependency.**
-- **C (exact mechanism PENDING C CONFIRMATION):** **retry/idempotency** mechanism for Gate-success-then-persistence-failure (§C) incl. pre-Gate snapshot + partial-persistence idempotency; **two distinct lifecycles** representation/cleanup — guard (A) vs GateResult record (B), Graph-instance-scoped execution-isolated (§B.4); same-vs-new **execution-identity** mechanism + **per-execution guard lifecycle** (§B.1 — lifecycle create/use/preserve/release/never-reuse; do not invent an approved identity field, permanent state field, or cache); inline vs shared helper; `selected_analysts` reaching the boundary; **concrete per-run in-memory `GateResult` observation interface** (CLI REVIEW warning reads `final_state["effective_rating"]` directly, not full `GateResult`); **complete `values` snapshot** final-state source (§B.3 — merged stream chunks + checkpoint-restored reports; residual if a resumed snapshot omits a field); `original_rating` conflict/absent encoding; effective-rating persistence shape (with B); B1 two-area insertion points; **real-time sectional Markdown buffer/release point** (PM `final_trade_decision.md` withheld until Gate + authorization; ordinary Analyst streaming unchanged — §D.1); **trusted pre-Gate original-rating provenance representation** (pre-Gate `final_rating` field vs parsed original body; fail-closed if none); duplicate-vs-new execution rules; repeated-completion/checkpoint/resume/legacy-stale-field rules + cleanup ordering.
+**Approvals recorded at `6275725`:** F test-design (`5974514410`) and A execution-scope (`5973684411`); C interface confirmed (link awaiting traceability). **Resolved (do not re-open):** `original_rating` field name; S2 capture→set order + conflict in `gate.reason` (no full durable `GateResult`); single authoritative Gate at the `record_decision` shared boundary (no Graph/CLI second authoritative call); **C's backward-compatible `record_decision` contract** (signature + `None` return preserved, in-place mutation); T-16 measures the **pure** checker; `Should` non-blocking by default; T-07 integration **mandatory**. **PR #9: merged (merge commit `d36a677` = PR #17 base) — not a live dependency.**
+- **C (interface confirmed at `6275725`; original evidence link awaiting traceability — internal mechanism is C's choice):** **retry/idempotency** mechanism for Gate-success-then-persistence-failure (§C) incl. pre-Gate snapshot + partial-persistence idempotency; **two distinct lifecycles** representation/cleanup — guard (A) vs GateResult record (B), Graph-instance-scoped execution-isolated (§B.4); same-vs-new **execution-identity** mechanism + **per-execution guard lifecycle** (§B.1 — lifecycle create/use/preserve/release/never-reuse; do not invent an approved identity field, permanent state field, or cache); inline vs shared helper; `selected_analysts` reaching the boundary; **concrete per-run in-memory `GateResult` observation interface** (CLI REVIEW warning reads `final_state["effective_rating"]` directly, not full `GateResult`); **complete `values` snapshot** final-state source (§B.3 — merged stream chunks + checkpoint-restored reports; residual if a resumed snapshot omits a field); `original_rating` conflict/absent encoding; effective-rating persistence shape (with B); B1 two-area insertion points; **real-time sectional Markdown buffer/release point** (PM `final_trade_decision.md` withheld until Gate + authorization; ordinary Analyst streaming unchanged — §D.1); **trusted pre-Gate original-rating provenance representation** (pre-Gate `final_rating` field vs parsed original body; fail-closed if none); duplicate-vs-new execution rules; repeated-completion/checkpoint/resume/legacy-stale-field rules + cleanup ordering.
 - **C — O6 prerequisite:** O6 identity-binding **merged** (`6a561ab`/PR #19) **and O6 CLI PR #20 merged** (`e4b6f9a`, ancestor of `origin/main` `102511d`) → traceable commit exists; **C must still record CLI joint-verification evidence**; re-verify O6/O2/PR#9-integrated `main` before O4 CLI edits. *(Verified via Git/API; not claiming C's joint verification done; O6 prerequisite ≠ O4 coding approval.)*
 - **A/C:** enabled-surface contract confirmation; non-authoritative label wording (CLI/MD/`decision.md`/HTML) + cause-neutral REVIEW message + display-order placement; unknown-config abort UX; T-21 observation-point contract.
 - **A:** confirm the **exact six shared-file modification scope** at final Execution Plan approval.
 - **A/F:** whether the `Should` (≤10 ms) target may ever be CI-blocking (default non-blocking).
-- **F:** confirm the mandatory Stage 2 set + parameterized sub-scenarios and record test approval.
+- **F:** test-design approval **recorded** (`5974514410`, bound to `6275725`); F authorized administrative updates to outdated approval text without a renewed approval.
 
-**This is a DRAFT for A/C/F review. No test is written or approved.**
+**Test design approved by Member F at `6275725` (`5974514410`). No Stage 2 test is written or executed; no CI/acceptance/merge is approved. DRAFT.**
