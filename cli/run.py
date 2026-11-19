@@ -438,6 +438,9 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
         # interrupted run instead of re-appending the initial state (#1249); the
         # try/finally tears the checkpointer down even if the stream raises.
         trace = []
+        # O4: the Portfolio Manager's decision text, held back until the Gate has
+        # judged it. Remains empty when the run never produced one.
+        pm_decision_text = ""
         try:
             for messages, chunk in graph.stream_run(graph.checkpoint_input(init_agent_state), **args):
                 for message in messages:
@@ -530,8 +533,12 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
                         )
                     if judge and message_buffer.agent_status.get("Portfolio Manager") != "completed":
                         message_buffer.update_agent_status("Portfolio Manager", "in_progress")
+                        # O4: hold the PM decision back until the Gate has judged
+                        # it, so no approved Buy/Sell is published before then.
+                        # Only the status marker goes to the live section now.
+                        pm_decision_text = judge
                         message_buffer.update_report_section(
-                            "final_trade_decision", f"### Portfolio Manager Decision\n{judge}"
+                            "final_trade_decision", "### Portfolio Manager Decision\n"
                         )
                         message_buffer.update_agent_status("Aggressive Analyst", "completed")
                         message_buffer.update_agent_status("Conservative Analyst", "completed")
@@ -555,6 +562,21 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
             # Only a normal return proves this run's state log was written and
             # closed; a raise propagates out of the try before this line.
             state_log_written = True
+            # O4: the Gate has judged the run, so the buffered decision may be
+            # published now. A REVIEW is labelled as unapproved original content
+            # rather than presented as the run's recommendation.
+            if pm_decision_text:
+                if is_review(run_rating(final_state)):
+                    message_buffer.update_report_section(
+                        "final_trade_decision",
+                        "### Portfolio Manager Decision (unapproved original content; "
+                        f"withheld from the run's rating)\n{pm_decision_text}",
+                    )
+                else:
+                    message_buffer.update_report_section(
+                        "final_trade_decision",
+                        f"### Portfolio Manager Decision\n{pm_decision_text}",
+                    )
             graph.clear_checkpoint_on_success(
                 selections["ticker"], selections["analysis_date"], selections["asset_type"], portfolio
             )
