@@ -14,8 +14,10 @@ W-1..W-14 are outside this batch and are not collected here.
 """
 
 import copy
+import io
 import re
 import sys
+from contextlib import contextmanager
 
 import pytest
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -327,15 +329,32 @@ def _build_fixture_graph(script, record=None, monkeypatch=None, wrap_up_analysts
             workflow = self.graph_setup.setup_graph(selected)
 
             def fixture_final(state):
-                # Test fixture only: no model call, no tool call.
+                # Test fixture only: no model call, no tool call. It records the
+                # state it was handed so the test can prove it ran as a fan-in
+                # after *both* Analysts, not after whichever finished first.
+                record["final_state_seen"] = {
+                    "market_report": state.get("market_report"),
+                    "news_report": state.get("news_report"),
+                }
+                record["fixture_final_runs"] = record.get("fixture_final_runs", 0) + 1
                 return {"final_trade_decision": FIXTURE_DECISION}
 
             workflow.add_node("fixture_final", fixture_final)
             plan = setup_mod.build_analyst_execution_plan(selected)
             analysts = [spec.agent_node for spec in plan.specs]
+            # One edge from each Analyst; LangGraph runs a node only after every
+            # incoming edge has fired, so this is an explicit fan-in.
             for node in analysts:
                 workflow.add_edge(node, "fixture_final")
             workflow.add_edge("fixture_final", END)
+
+            # The fan-in shape, recorded from the compiled graph the run uses:
+            # every Analyst contributes an edge into ``fixture_final``.
+            record["fan_in_sources"] = [
+                edge.source
+                for edge in workflow.compile().get_graph().edges
+                if edge.target == "fixture_final"
+            ]
 
             real_compile = workflow.compile
 
@@ -376,27 +395,36 @@ def _noop_node(name):
 # ---------------------------------------------------------------------------
 
 
-def _footer_text(run_mod, stats_handler):
-    """The footer line the CLI renders for this handler, minus the elapsed time."""
-    from cli.display import format_tokens
+def _rendered_footer_text(run_mod, layout):
+    """The footer the production ``update_display`` actually wrote into ``layout``.
 
-    buffer = run_mod.message_buffer
-    agents_completed = sum(1 for s in buffer.agent_status.values() if s == "completed")
-    parts = [f"Agents: {agents_completed}/{len(buffer.agent_status)}"]
-    stats = stats_handler.get_stats()
-    parts.append(f"LLM: {stats['llm_calls']}")
-    parts.append(f"Tools: {stats['tool_calls']}")
-    if stats["tokens_in"] > 0 or stats["tokens_out"] > 0:
-        parts.append(
-            f"Tokens: {format_tokens(stats['tokens_in'])}\u2191 "
-            f"{format_tokens(stats['tokens_out'])}\u2193"
-        )
-    else:
-        parts.append("Tokens: --")
-    parts.append(
-        f"Reports: {buffer.get_completed_reports_count()}/{len(buffer.report_sections)}"
+    ``update_display`` ends by installing a Panel holding the statistics line
+    into ``layout["footer"]``. This reads that renderable back -- not a string
+    rebuilt from the buffer and the handler -- so the assertion is on what the
+    live view would show. The only thing removed is the elapsed-time segment,
+    which is wall-clock and therefore not a fixed expectation.
+    """
+    from rich.console import Console
+
+    buffer = io.StringIO()
+    console = Console(
+        file=buffer, width=200, color_system=None, force_terminal=False, legacy_windows=False
     )
-    return " | ".join(parts)
+    console.print(layout["footer"])
+    # The footer is a single statistics line inside a bordered Panel. Pull that
+    # line out -- the one carrying ``Agents:`` -- and drop only the elapsed-time
+    # segment, which is wall-clock and so not a fixed expectation.
+    for line in buffer.getvalue().splitlines():
+        if "Agents:" not in line:
+            continue
+        start = line.index("Agents:")
+        text = line[start:]
+        end = text.rfind("Reports:")
+        if end != -1:
+            tail = text.find(" | ", end)
+            text = text if tail == -1 else text[:tail]
+        return text.strip()
+    raise AssertionError("the rendered footer carried no statistics line")
 
 
 @pytest.fixture
@@ -430,6 +458,10 @@ def _harness_fixture(monkeypatch):
     real_update = run_mod.update_display
 
     def recording_update_display(layout, spinner_text=None, stats_handler=None, start_time=None):
+        # Run production first; the capture is of what it actually installed.
+        result = real_update(
+            layout, spinner_text, stats_handler=stats_handler, start_time=start_time
+        )
         if stats_handler is not None:
             harness["displays"].append(
                 {
@@ -441,10 +473,10 @@ def _harness_fixture(monkeypatch):
                         for name, body in run_mod.message_buffer.report_sections.items()
                         if body is not None
                     ),
-                    "footer": _footer_text(run_mod, stats_handler),
+                    "footer": _rendered_footer_text(run_mod, layout),
                 }
             )
-        return real_update(layout, spinner_text, stats_handler=stats_handler, start_time=start_time)
+        return result
 
     monkeypatch.setattr(run_mod, "update_display", recording_update_display)
 
@@ -672,8 +704,54 @@ def _table_rows(table):
 # ---------------------------------------------------------------------------
 
 
+@contextmanager
+def _live_refresh_recorder(monkeypatch, harness):
+    """Record the final in-``Live`` refresh, including the rendered footer.
+
+    ``cli.run`` builds its layout and hands it to ``rich.live.Live``. This wraps
+    that ``Live`` to keep a handle on the layout, so the last statistics refresh
+    can be read back *after* production rendered it -- ``agent_status``, the
+    completed-report count and the actual footer text the run ended on.
+    """
+    from rich.live import Live
+
+    from cli import run as run_mod
+
+    real_live = Live
+    state = {"live": None}
+
+    def recording_live(*args, **kwargs):
+        live = real_live(*args, **kwargs)
+        state["live"] = live
+        return live
+
+    monkeypatch.setattr(run_mod, "Live", recording_live)
+    try:
+        yield state
+    finally:
+        # After the run: read what the live view held at its last refresh.
+        live = state["live"]
+        assert live is not None, "the CLI never opened a live view"
+        layout = live.renderable
+        footer = _rendered_footer_text(run_mod, layout)
+        harness["live_footer"] = footer
+        harness["live_rendered"] = _render_layout(layout)
+
+
+def _render_layout(layout):
+    """The whole live layout rendered to plain text, as a terminal would show it."""
+    from rich.console import Console
+
+    buffer = io.StringIO()
+    console = Console(
+        file=buffer, width=200, color_system=None, force_terminal=False, legacy_windows=False
+    )
+    console.print(layout)
+    return buffer.getvalue()
+
+
 def test_w15a_ordinary_path_statistics_and_footer(monkeypatch):
-    """W-15a: the final live refresh carries the fixed totals and footer."""
+    """W-15a: the final live refresh carries the fixed totals and rendered footer."""
     from cli import run as run_mod
 
     record = {}
@@ -683,17 +761,25 @@ def test_w15a_ordinary_path_statistics_and_footer(monkeypatch):
     monkeypatch.setattr(run_mod, "TradingAgentsGraph", graph_cls)
 
     harness = _make_harness(monkeypatch, ["market", "news"])
-    run_mod.run_analysis(checkpoint=False, flags=dict(RUN_FLAGS))
+    with _live_refresh_recorder(monkeypatch, harness):
+        run_mod.run_analysis(checkpoint=False, flags=dict(RUN_FLAGS))
 
     snap = _last_live_display(harness)
     assert snap["stats"] == W15_STATS
+    # The model really executed three times: Market twice, News once.
     assert len(record["model"].executions) == 3
+    assert sorted(record["model"].executions) == ["market", "market", "news"]
     assert snap["agent_status"] and all(v == "completed" for v in snap["agent_status"].values())
     assert snap["completed_reports"] == 3
     assert {"market_report", "news_report", "final_trade_decision"} <= set(
         snap["sections_with_content"]
     )
-    assert snap["footer"] == W15_FOOTER
+
+    # The footer is what production wrote into ``layout["footer"]``, then
+    # rendered -- not a string rebuilt from the handler and the buffer.
+    assert harness["live_footer"] == W15_FOOTER
+    # And the same text is present in the layout as a terminal would draw it.
+    assert W15_FOOTER in re.sub(r"\s+", " ", harness["live_rendered"])
 
 
 # ---------------------------------------------------------------------------
@@ -702,8 +788,9 @@ def test_w15a_ordinary_path_statistics_and_footer(monkeypatch):
 
 
 def test_w15b_new_checkpoint_persists_state(monkeypatch, tmp_path):
-    """W-15b: a new checkpoint is written and readable, with the same totals."""
+    """W-15b: a new checkpoint is written by the real saver and readable before cleanup."""
     from cli import run as run_mod
+    from tradingagents.graph.checkpointer import _db_path
 
     record = {}
     graph_cls = _build_fixture_graph(
@@ -713,59 +800,100 @@ def test_w15b_new_checkpoint_persists_state(monkeypatch, tmp_path):
 
     harness = _make_harness(monkeypatch, ["market", "news"])
     real_build = run_mod._build_run_config
-    signatures = []
+    cache_dir = tmp_path / "cache"
+    graph_instances = []
 
     def build_with_tmp_cache(selections, checkpoint_flag):
         config = real_build(selections, checkpoint_flag)
-        config["data_cache_dir"] = str(tmp_path / "cache")
+        config["data_cache_dir"] = str(cache_dir)
         config["results_dir"] = str(tmp_path / "results")
         return config
 
-    real_begin = graph_cls.begin_checkpoint
-    observed = {}
-
-    def begin_and_capture(self, company_name, trade_date, asset_type="stock", portfolio=None):
-        signatures.append(self._run_signature(asset_type, portfolio))
-        return real_begin(self, company_name, trade_date, asset_type, portfolio)
-
-    # The CLI drops a completed run's checkpoint (``clear_checkpoint_on_success``,
-    # run.py:354), so the persisted record is read at the boundary immediately
-    # before that deletion -- still inside ``begin_checkpoint``/``end_checkpoint``
-    # and before the saver connection closes.
+    # ``clear_checkpoint_on_success`` runs after ``record_decision``. We read
+    # the checkpoint at that boundary -- same thread, before the delete -- so
+    # the evidence is of what the run actually saved.
     real_clear = graph_cls.clear_checkpoint_on_success
+    real_begin = graph_cls.begin_checkpoint
+    observed = {"pre": None, "step": None, "tuple": None, "cleared": False}
+
+    def begin_and_remember(self, company_name, trade_date, asset_type="stock", portfolio=None):
+        graph_instances.append(self)
+        signature = self._run_signature(asset_type, portfolio)
+        # Before the run: no checkpoint for this exact run's thread.
+        observed["pre"] = checkpoint_step(
+            self.config["data_cache_dir"], company_name, str(trade_date), signature
+        )
+        tid = real_begin(self, company_name, trade_date, asset_type, portfolio)
+        observed["tid"] = tid
+        observed["signature"] = signature
+        observed["resuming"] = self._resuming
+        observed["resume_input"] = self.checkpoint_input({"marker": "init"})
+        observed["compiled_graph"] = self.graph
+        return tid
 
     def read_then_clear(self, company_name, trade_date, asset_type="stock", portfolio=None):
-        sig = self._run_signature(asset_type, portfolio)
+        signature = self._run_signature(asset_type, portfolio)
         cache = self.config["data_cache_dir"]
-        tid = thread_id(company_name, str(trade_date), sig)
-        observed["step"] = checkpoint_step(cache, company_name, str(trade_date), sig)
+        tid = thread_id(company_name, str(trade_date), signature)
+        observed["step"] = checkpoint_step(cache, company_name, str(trade_date), signature)
         with get_checkpointer(cache, company_name) as saver:
             observed["tuple"] = saver.get_tuple({"configurable": {"thread_id": tid}})
-        return real_clear(self, company_name, trade_date, asset_type, portfolio)
+        result = real_clear(self, company_name, trade_date, asset_type, portfolio)
+        observed["cleared"] = (
+            checkpoint_step(cache, company_name, str(trade_date), signature) is None
+        )
+        return result
 
-    monkeypatch.setattr(graph_cls, "begin_checkpoint", begin_and_capture)
+    monkeypatch.setattr(graph_cls, "begin_checkpoint", begin_and_remember)
     monkeypatch.setattr(graph_cls, "clear_checkpoint_on_success", read_then_clear)
     monkeypatch.setattr(run_mod, "_build_run_config", build_with_tmp_cache)
-    cache_dir = tmp_path / "cache"
 
-    assert checkpoint_step(cache_dir, TICKER, TRADE_DATE, "") is None
+    # Run before we start: the thread database does not exist yet.
+    assert not _db_path(cache_dir, TICKER).exists()
 
-    run_mod.run_analysis(checkpoint=True, flags=dict(RUN_FLAGS))
+    with _live_refresh_recorder(monkeypatch, harness):
+        run_mod.run_analysis(checkpoint=True, flags=dict(RUN_FLAGS))
 
     snap = _last_live_display(harness)
     assert snap["stats"] == W15_STATS
-    assert snap["footer"] == W15_FOOTER
+    assert len(record["model"].executions) == 3
+    assert sorted(record["model"].executions) == ["market", "market", "news"]
+    assert harness["live_footer"] == W15_FOOTER
 
-    # A checkpoint existed for this run before the CLI cleared it.
+    # Before the run: this run's thread had no checkpoint.
+    assert observed["pre"] is None
+    # After ``begin_checkpoint``: this is a fresh run, not a resume, so the
+    # initial state is what gets streamed.
+    assert observed["resuming"] is False
+    assert observed["resume_input"] == {"marker": "init"}
+    # The graph was recompiled with the real saver, using the fixture workflow.
+    assert len(record["compiled_with_saver"]) == 1
+    assert record["compiled_with_saver"][0] is record["workflows"][0]
+    # And ``begin_checkpoint`` returned this run's exact thread id.
+    assert observed["tid"] == thread_id(TICKER, TRADE_DATE, observed["signature"])
+
+    # Before cleanup: the real saver's database holds this thread's checkpoint.
     assert observed["step"] is not None and observed["step"] >= 1
     cp = observed["tuple"]
     assert cp is not None
-    assert len(signatures) == 1
-    assert cp.config["configurable"]["thread_id"] == thread_id(TICKER, TRADE_DATE, signatures[0])
+    assert cp.config["configurable"]["thread_id"] == thread_id(
+        TICKER, TRADE_DATE, observed["signature"]
+    )
     values = cp.checkpoint["channel_values"]
     assert values.get("market_report")
     assert values.get("news_report")
     assert values.get("final_trade_decision") == FIXTURE_DECISION
+    # And only after that read did the CLI clear it.
+    assert observed["cleared"] is True
+
+    # ``fixture_final`` ran as an explicit fan-in: both Analysts have an edge
+    # into it, it ran exactly once, and when it saw the state both Analysts'
+    # reports were already present. So it did not fire after just one of them.
+    assert sorted(record["fan_in_sources"]) == ["Market Analyst", "News Analyst"]
+    assert record.get("fixture_final_runs") == 1
+    fan_in = record["final_state_seen"]
+    assert fan_in["market_report"]
+    assert fan_in["news_report"]
 
 
 # ---------------------------------------------------------------------------
