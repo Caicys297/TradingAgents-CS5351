@@ -394,3 +394,23 @@ def test_resume_is_fresh_execution_for_gate(tmp_path):
     assert g.last_completion.original_rating == "Sell"
     assert g.last_completion.gate.effective_rating == "Sell"
     g.end_checkpoint()
+
+
+# ---------------------------------------------------------------------------
+# T-08 (Graph entrypoint): the returned rating is the Gate-authoritative one.
+# Graph entrypoint has NO save/show/html flags (inapplicable — CLI-only options).
+# ---------------------------------------------------------------------------
+def test_t08_graph_entrypoint_return_value_is_gated(tmp_path):
+    """The programmatic completion returns ``run_rating(final_state)`` where, after
+    the in-window Gate, ``final_rating == effective_rating``. Graph has no
+    save/show/html surfaces (those are CLI entrypoint options only)."""
+    from tradingagents.agents.rating import run_rating
+
+    g = _make_graph(tmp_path)
+    _begin(g)
+    state = _full_state("Buy", "Rating: Buy")
+    g.record_decision(_TICKER, _DATE, state)
+    # The Graph return surface (``_run_graph`` returns run_rating(final_state)):
+    assert run_rating(state) == "Buy"
+    assert state["final_rating"] == state["effective_rating"] == "Buy"
+    g.end_checkpoint()

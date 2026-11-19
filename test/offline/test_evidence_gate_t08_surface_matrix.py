@@ -420,3 +420,49 @@ def test_default_user_memory_dir_untouched(monkeypatch, tmp_path):
     )
     after = {p for p in home.rglob("*") if p.is_file()} if home.exists() else set()
     assert after == before, f"default user memory/log dir was written: {after - before}"
+
+
+# ---------------------------------------------------------------------------
+# CLI `show` is a real branch: it renders the GATED final_state to the terminal.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    "variant,final_rating,body,news,expected_eff",
+    [
+        ("valid", "Buy", "**Rating**: Buy\n\nBuy NVDA.", "News: neutral.", "Buy"),
+        ("review", "Buy", "**Rating**: Buy\n\nBuy NVDA.", "", "REVIEW"),
+    ],
+)
+def test_t08_cli_show_renders_gated_state(
+    monkeypatch, tmp_path, variant, final_rating, body, news, expected_eff
+):
+    """show=True calls display_complete_report(final_state) with the GATE-ADJUSTED
+    state (save/show/html flags answered; no persistent artefact asserted here)."""
+    state = _state(final_rating, body, news)
+    h, buf, console, saved_dir = _install(
+        monkeypatch, tmp_path, state, save=False, show=True, html=False, memory_enabled=False
+    )
+
+    shown = {}
+
+    def fake_display(fs):
+        shown["state"] = fs
+
+    monkeypatch.setattr(run_mod, "display_complete_report", fake_display)
+
+    run_mod.run_analysis(
+        checkpoint=False,
+        flags={
+            "ticker": TICKER,
+            "date": TRADE_DATE,
+            "analysts": ["market", "news"],
+            "save": False,
+            "show": True,
+            "html": False,
+        },
+    )
+
+    assert "state" in shown, "show=True must render the complete report"
+    assert shown["state"]["effective_rating"] == expected_eff
+    assert shown["state"]["final_rating"] == expected_eff
+    # No persistent save surfaces when save=False.
+    assert not (saved_dir / "complete_report.md").exists()
