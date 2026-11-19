@@ -17,6 +17,15 @@ Stage 2 is limited to completed normal CLI runs, unique run-directory reservatio
 
 C owns shared `cli/run.py` integration and coordinates CLI test integration. B owns the manifest interface and `test/offline/test_o2_cli_manifest.py`. F owns test review and approved CI workflow changes. This batch does not change Graph based on C’s read-only inspection.
 
+### C’s approved CLI contract
+
+- Before Graph starts, `cli/run.py` calls `_reserve_run_directory(results_dir, ticker, trade_date) -> RunContext(run_id, run_dir)` exactly once. It reserves a UUID directory and does not write the manifest.
+- After successful analysis and after `_offer_reports()` handles the report-save choice, `cli/run.py` calls `_finalize_run_manifest(run_context, *, config, artifacts) -> ManifestWriteResult(success, manifest_path, artifacts, error)` exactly once. It must not rerun Graph or reparse the rating.
+- `_offer_reports()` returns only artifact paths actually saved successfully. Unsaved or failed saves are excluded.
+- Order: user choices/config → reserve directory → Graph → successful completion/O6 display → report save choice and artifact collection → one manifest attempt.
+- B tests mainly through real `run_analysis()` with a fake Graph, verifies order, call counts, unique directory, actual artifact list, and write-failure behavior, may spy on the two hooks, and keeps the real manifest writer in the success path using a temporary directory.
+- No Graph changes are made in this batch.
+
 ## 2. Preconditions before implementation
 
 OpenCode must report all items below and stop if one is unmet:
@@ -25,17 +34,18 @@ OpenCode must report all items below and stop if one is unmet:
 - Work is on a dedicated Stage 2 implementation branch created from that verified base, not the PR #8 documentation branch, PR #18 planning branch, or retired Phase 1 branch.
 - Working tree is clean before branch creation, or existing user changes are preserved and explicitly excluded.
 - PR #16 and PR #21 changes remain present; approved files are not rewritten or discarded.
-- C’s approved `cli/run.py` contract/order is available before B adds `test/offline/test_o2_cli_manifest.py`.
+- C’s approved hooks `_reserve_run_directory` and `_finalize_run_manifest` are implemented and published on an available branch/PR before B opens a PR containing the CLI integration tests.
+- C specifies the run-directory reservation failure behavior before B encodes its expected result; until then, that assertion remains pending.
 - No Graph change is made. If implementation finds a necessary Graph dependency, stop and provide the exact source call chain and proposed diff for A/C approval.
 - F’s approved CI matrix is used; F owns CI workflow changes.
 
 ## 3. Proposed sequence
 
 1. **Read-only source audit:** Inspect the current CLI lifecycle, results-path consumers, artifact creation times, path validation, test collection, platform CI, and current `main` diff. Report exact candidate files and integration points to A/C/F before editing.
-2. **Run-directory reservation (C-owned `cli/run.py`):** Reserve `results_dir/<safe ticker>/<date>/runs/<uuid4 hex>/` before Graph starts using `mkdir(exist_ok=False)`. Retry at most 3 times. If all attempts collide, fail clearly before Graph starts, never call Graph, and preserve existing files.
-3. **Manifest lifecycle integration (C-owned `cli/run.py`; B owns manifest interface):** Write exactly one manifest after normal CLI analysis completes and after the report-save choice is handled. Keep existing report, state, and log paths in place. Reference only artifacts that actually exist at write time; label existing legacy artifacts `shared_mutable`; if the user declines report saving, do not list that report. Pass normalized identity and only Registry-allowlisted effective config, including merged `input_condensation_audit_note`; retain secret redaction and `actual_input_data_provenance: not_captured`.
+2. **Run-directory reservation (C-owned `cli/run.py`):** Call `_reserve_run_directory(results_dir, ticker, trade_date) -> RunContext(run_id, run_dir)` exactly once before Graph starts. It reserves `results_dir/<safe ticker>/<date>/runs/<uuid4 hex>/` using `mkdir(exist_ok=False)`, retries at most 3 times, and does not write the manifest. Reservation failure behavior remains pending C’s specification; once C specifies it, tests must prove Graph is never called and existing files are preserved.
+3. **Manifest lifecycle integration (C-owned `cli/run.py`; B owns manifest interface):** After successful analysis and after `_offer_reports()` handles the report-save choice, call `_finalize_run_manifest(run_context, *, config, artifacts) -> ManifestWriteResult(success, manifest_path, artifacts, error)` exactly once. It must not rerun Graph or reparse the rating. `_offer_reports()` returns only artifact paths actually saved successfully; unsaved or failed saves are excluded. Keep existing report, state, and log paths in place; reference only artifacts that actually exist at write time; label legacy artifacts `shared_mutable`. Pass normalized identity and only Registry-allowlisted effective config, including `input_condensation_audit_note`; retain secret redaction and `actual_input_data_provenance: not_captured`.
 4. **Failure behavior:** On manifest write failure, preserve the completed analysis result and O4 effective rating, finish normally, show a short warning that the manifest was not saved and the run’s provenance record is unavailable, show no success path, and leave no partial manifest. Retain the Phase 1 atomic-write guarantee. Assert behavior, not an exact English warning string.
-5. **Offline integration tests:** B adds `test/offline/test_o2_cli_manifest.py` only after C’s approved CLI contract/order is available. Keep existing O2-TC IDs: TC-04 for full CLI success, TC-13/14 for failure, TC-11 for bounded allocation/collision, and TC-05/15/19/20/21/23 for their assigned coverage. Do not add a new ID.
+5. **Offline integration tests:** B prepares `test/offline/test_o2_cli_manifest.py` against C’s contract, mainly through real `run_analysis()` with a fake Graph. Verify the call order, hook call counts, unique directory, actual artifact list, and write-failure behavior; spying on the two hooks is allowed, and the real manifest writer remains in the success path using a temporary directory. Do not open a PR containing these tests until C’s hooks are available. Keep existing O2-TC IDs: TC-04 for full CLI success, TC-13/14 for failure, TC-11 for bounded allocation/collision, and TC-05/15/19/20/21/23 for their assigned coverage. Do not add a new ID.
 6. **Regression and CI (F owns CI):** Run targeted O2 tests and `pytest -q`. Ubuntu keeps the existing Python 3.11–3.14 full regression plus the Python 3.12 non-UTC job; macOS and Windows run `test/offline/test_o2_manifest.py` and `test/offline/test_o2_cli_manifest.py` on Python 3.12. Record commit SHA, commands, workflow URLs, Python/OS versions, and actual outcomes.
 7. **Review handoff:** Report changed files, diff, test/CI evidence, limitations, and plan/approval references. Open a PR for review; do not approve or merge on behalf of A/F.
 
@@ -45,7 +55,7 @@ Candidate paths must be checked against the verified base and team ownership bef
 
 | Area | Candidate paths | Owner / guard |
 |---|---|---|
-| CLI lifecycle, run directory, manifest invocation | `cli/run.py` | C owns shared integration and coordinates CLI test integration; B owns manifest interface |
+| CLI lifecycle, run directory, manifest invocation | `cli/run.py` | C owns shared integration, `_reserve_run_directory`, `_finalize_run_manifest`, and CLI test integration; B owns manifest interface |
 | Graph context and output paths | `tradingagents/graph/trading_graph.py` | No Graph changes for this batch; if necessary, stop with exact call chain and proposed diff for A/C approval |
 | Phase 1 writer | `tradingagents/repro/manifest.py` | B owns manifest interface; PR #21 synchronization already merged |
 | Existing Phase 1 tests | `test/offline/test_o2_manifest.py` | Preserve |
@@ -67,6 +77,7 @@ Stop and return evidence for review if implementation requires:
 - changing Graph or public APIs without the exact dependency and proposed diff approved by A/C;
 - changing ownership assignments;
 - adding a runtime dependency;
+- writing CLI tests before C’s hooks are available or before C specifies reservation failure behavior;
 - editing CI without F’s confirmed ownership;
 - an unresolved CI platform/version or missing test-to-requirement mapping;
 - rebasing, resetting, or rewriting existing Phase 1, PR #21, or PR #20 history.
@@ -80,6 +91,8 @@ Before the first code edit, record the verified base SHA, branch, clean working-
 - **A Stage 2 scope supplement:** Approved in PR #18 review `5959122354`, `2026-11-18T15:00:01Z`
 - **F formal Stage 2 test-plan and CI matrix approval:** Approved in PR #18 review `5968062524`, `2026-11-19T01:41:23Z`
 - **C/F ownership and timing confirmation:** Recorded in PR #18 review `5968754538`, `2026-11-19T03:08:27Z`
+- **C CLI contract:** Provided in the team instruction: `_reserve_run_directory` and `_finalize_run_manifest`; hook implementation is not yet available on a fetched branch/PR
+- **Reservation failure behavior:** Pending C’s specification
 - **PR #21 writer/TC-23 synchronization:** Merged at `69e91ff115694f3455196e6a4114d4fe653fbb06`
 - **Implementation status:** Separate B/C implementation work; no implementation or CI result claimed in this planning PR
 - **Tests, CI, PR, commit:** None claimed for Stage 2 implementation
