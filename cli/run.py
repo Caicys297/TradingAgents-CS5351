@@ -3,7 +3,9 @@
 import os
 import sys
 import time
+import uuid
 import webbrowser
+from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
 
@@ -32,6 +34,8 @@ from tradingagents.graph.analyst_execution import (
     build_analyst_execution_plan,
 )
 from tradingagents.graph.trading_graph import TradingAgentsGraph
+from tradingagents.reporting import _report_parts as report_parts
+from tradingagents.repro import manifest as manifest_module
 
 
 def _run_directory(config: dict, ticker: str, trade_date: str) -> Path:
@@ -41,6 +45,161 @@ def _run_directory(config: dict, ticker: str, trade_date: str) -> Path:
     ".." here would place the run outside the results directory.
     """
     return Path(config["results_dir"]) / safe_ticker_component(ticker) / trade_date
+
+
+class RunDirectoryUnavailable(RuntimeError):
+    """No per-run directory could be reserved for this run."""
+
+
+def _state_log_path(config: dict, ticker: str, trade_date: str) -> Path:
+    """Where the graph writes this run's state log.
+
+    Reconstructed with the same config root, ticker safety and date the writer
+    uses, so a normal return means the file is exactly here.
+    """
+    return (
+        Path(config["results_dir"])
+        / safe_ticker_component(ticker)
+        / "TradingAgentsStrategy_logs"
+        / f"full_states_log_{trade_date}.json"
+    )
+
+
+def _artifact_name(path: Path) -> str:
+    """A stable artifact name for a saved report file."""
+    stem = path.stem if path.suffix else path.name
+    return f"saved_{stem}"
+
+
+@dataclass(frozen=True)
+class RunContext:
+    """The directory reserved for one run, before the graph starts."""
+
+    run_id: str
+    run_dir: Path
+
+
+@dataclass(frozen=True)
+class ManifestWriteResult:
+    """What happened to this run's manifest: written, or not, and why."""
+
+    success: bool
+    manifest_path: Path | None
+    artifacts: list[dict]
+    error: BaseException | None
+
+
+def _reserve_run_directory(results_dir, ticker: str, trade_date: str) -> RunContext:
+    """Reserve a fresh directory for this run, at most three attempts.
+
+    The directory is created with ``exist_ok=False`` so two runs of the same
+    ticker and date never share one. When all three attempts collide the caller
+    is told loudly and the run stops before the graph starts; nothing existing is
+    touched.
+    """
+    base = Path(results_dir) / safe_ticker_component(ticker) / trade_date / "runs"
+    base.mkdir(parents=True, exist_ok=True)
+    for _attempt in range(3):
+        run_id = uuid.uuid4().hex
+        run_dir = base / run_id
+        try:
+            run_dir.mkdir(exist_ok=False)
+        except FileExistsError:
+            continue
+        return RunContext(run_id=run_id, run_dir=run_dir)
+    raise RunDirectoryUnavailable(
+        f"could not reserve a run directory for {ticker} on {trade_date} "
+        f"after 3 attempts under {base}"
+    )
+
+
+def _artifact_references(
+    artifact_files,
+    *,
+    results_dir,
+    run_dir,
+) -> list[dict]:
+    """Phase 1 references for the files this run wrote, relative to ``results_dir``.
+
+    ``results_dir`` decides containment: a path that resolves outside it is
+    rejected by the writer rather than silently trimmed. ``run_dir`` only
+    decides the stability label, so a file inside this run's own directory is
+    ``run_unique`` and everything else is ``shared_mutable``.
+    """
+    results_root = Path(results_dir).resolve()
+    run_root = Path(run_dir).resolve()
+    references = []
+    for path, name in artifact_files:
+        candidate = Path(path).resolve()
+        try:
+            candidate.relative_to(results_root)
+        except ValueError:
+            # A separately chosen save path outside the results root keeps its
+            # files on disk but is not referenced from the manifest.
+            continue
+        try:
+            candidate.relative_to(run_root)
+            stability = "run_unique"
+        except ValueError:
+            stability = "shared_mutable"
+        references.append(
+            manifest_module.make_artifact_reference(
+                name, candidate, stability, base=results_root
+            )
+        )
+    return references
+
+
+def _expected_report_files(final_state: dict, save_path: Path, html: bool) -> list[Path]:
+    """The files a successful ``write_report_tree`` writes for this run.
+
+    Computed before the write from the writer's own section selection, so a stale
+    file left in the directory is never mistaken for one this run produced.
+    """
+    expected = []
+    for _heading, folder, written in report_parts(final_state):
+        for _agent, filename, _value in written:
+            expected.append(save_path / folder / filename)
+    expected.append(save_path / "complete_report.md")
+    if html:
+        expected.append(save_path / "complete_report.html")
+    return expected
+
+
+def _finalize_run_manifest(
+    run_context: RunContext,
+    *,
+    config: dict,
+    artifacts,
+) -> ManifestWriteResult:
+    """Write this run's manifest once, and report what happened to it.
+
+    ``artifacts`` are Phase 1 artifact references built by the caller with
+    ``_artifact_references``. A failure here never disturbs the analysis: the
+    result and its rating are already on screen and on disk. The manifest is
+    written atomically, so a failure leaves no half file.
+    """
+    try:
+        manifest = manifest_module.build_manifest(
+            ticker=config["ticker"],
+            asset_type=config["asset_type"],
+            analysis_date=config["analysis_date"],
+            analysts=config["analysts"],
+            config=config,
+            artifacts=artifacts,
+        )
+        path = manifest_module.write_manifest(run_context.run_dir / "manifest.json", manifest)
+    except Exception as exc:  # noqa: BLE001 - reported, never raised into the run
+        console.print(
+            "[yellow]Manifest not saved: this run's provenance record is "
+            f"unavailable ({exc}).[/yellow]"
+        )
+        return ManifestWriteResult(
+            success=False, manifest_path=None, artifacts=list(artifacts), error=exc
+        )
+    return ManifestWriteResult(
+        success=True, manifest_path=path, artifacts=list(artifacts), error=None
+    )
 
 
 def _announce_checkpoint_state(graph, ticker: str, trade_date: str) -> None:
@@ -128,6 +287,20 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
     selected_spec_keys = [spec.key for spec in analyst_execution_plan.specs]
     stats_handler = StatsCallbackHandler(selected_spec_keys)
 
+    start_time = time.time()
+
+    results_dir = _run_directory(config, selections["ticker"], selections["analysis_date"])
+    results_dir.mkdir(parents=True, exist_ok=True)
+
+    # O2: reserve this run's own directory before the graph is even built, so two
+    # runs of the same ticker and date never share one. A failure stops the run
+    # here, before any graph work, and leaves existing files untouched.
+    try:
+        run_context = _reserve_run_directory(results_dir, selections["ticker"], selections["analysis_date"])
+    except RunDirectoryUnavailable as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
     graph = TradingAgentsGraph(
         selected_analyst_keys,
         config=config,
@@ -136,15 +309,28 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
 
     message_buffer.init_for_analysis(selected_analyst_keys)
 
-    # Track start time for elapsed display
-    start_time = time.time()
-
-    results_dir = _run_directory(config, selections["ticker"], selections["analysis_date"])
-    results_dir.mkdir(parents=True, exist_ok=True)
     report_dir = results_dir / "reports"
     report_dir.mkdir(parents=True, exist_ok=True)
     log_file = results_dir / "message_tool.log"
     log_file.touch(exist_ok=True)
+
+    # Files this run actually wrote. Each entry is (path, artifact name); an
+    # entry is added only after the write that produced it succeeded.
+    produced_files: list[tuple[Path, str]] = []
+    state_log_written = False
+
+    def _register(path: Path, name: str) -> None:
+        produced_files.append((Path(path), name))
+
+    # The message/tool log gets one entry for the whole file, once any write
+    # has landed; registering per write would repeat the same path.
+    log_registered = False
+
+    def _note_log_write() -> None:
+        nonlocal log_registered
+        if not log_registered:
+            _register(log_file, "message_tool_log")
+            log_registered = True
 
     def save_message_decorator(obj, func_name):
         func = getattr(obj, func_name)
@@ -156,6 +342,7 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
             content = content.replace("\n", " ")  # Replace newlines with spaces
             with open(log_file, "a", encoding="utf-8") as f:
                 f.write(f"{timestamp} [{message_type}] {content}\n")
+            _note_log_write()
         return wrapper
 
     def save_tool_call_decorator(obj, func_name):
@@ -168,7 +355,12 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
             args_str = ", ".join(f"{k}={v}" for k, v in args.items())
             with open(log_file, "a", encoding="utf-8") as f:
                 f.write(f"{timestamp} [Tool Call] {tool_name}({args_str})\n")
+            _note_log_write()
         return wrapper
+
+    # Section files this run wrote, by name; one registry entry each even when
+    # a section is rewritten as the run progresses.
+    section_files: dict[str, Path] = {}
 
     def save_report_section_decorator(obj, func_name):
         func = getattr(obj, func_name)
@@ -181,8 +373,10 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
                 if content:
                     file_name = f"{section_name}.md"
                     text = "\n".join(str(item) for item in content) if isinstance(content, list) else content
-                    with open(report_dir / file_name, "w", encoding="utf-8") as f:
+                    target = report_dir / file_name
+                    with open(target, "w", encoding="utf-8") as f:
                         f.write(text)
+                    section_files[section_name] = target
         return wrapper
 
     message_buffer.add_message = save_message_decorator(message_buffer, "add_message")
@@ -358,6 +552,9 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
             # later run starts fresh. A mid-stream failure skips both, keeping
             # the checkpoint for resume.
             graph.record_decision(selections["ticker"], selections["analysis_date"], final_state)
+            # Only a normal return proves this run's state log was written and
+            # closed; a raise propagates out of the try before this line.
+            state_log_written = True
             graph.clear_checkpoint_on_success(
                 selections["ticker"], selections["analysis_date"], selections["asset_type"], portfolio
             )
@@ -398,8 +595,34 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
     # The live footer is three lines and cannot hold per-analyst rows.
     display_agent_summary(stats_handler)
 
-    _offer_reports(final_state, graph, selections["ticker"],
-                   save=flags.get("save"), show=flags.get("show"), html=flags.get("html"))
+    saved_reports = _offer_reports(final_state, graph, selections["ticker"],
+                                   save=flags.get("save"), show=flags.get("show"), html=flags.get("html"))
+
+    # O2: one manifest for this run, after the save choice has been handled.
+    # Only files whose own write succeeded are recorded. A caller that replaces
+    # _offer_reports and returns nothing contributes no saved reports.
+    for path in saved_reports or ():
+        _register(path, _artifact_name(path))
+    for section, path in section_files.items():
+        _register(path, f"live_{section}")
+    # The state log counts only if record_decision() returned without raising;
+    # the flag is set at that call, not inferred from the file being present.
+    if state_log_written:
+        _register(_state_log_path(config, selections["ticker"], selections["analysis_date"]), "state_log")
+
+    manifest_config = {
+        **config,
+        "ticker": selections["ticker"],
+        "asset_type": selections["asset_type"],
+        "analysis_date": selections["analysis_date"],
+        "analysts": [analyst.value for analyst in selections["analysts"]],
+    }
+    references = _artifact_references(
+        produced_files,
+        results_dir=config["results_dir"],
+        run_dir=run_context.run_dir,
+    )
+    _finalize_run_manifest(run_context, config=manifest_config, artifacts=references)
 
 
 def _yes(question: str) -> bool:
@@ -442,7 +665,12 @@ def _offer_reports(final_state, graph, ticker, save=None, show=None, html=None):
     A saved report includes the HTML page unless ``html`` is False. Someone
     answering the save question at the prompt is also asked about the page and
     offered to open it; a run whose flags answer the save question asks neither.
+
+    Returns the files this call actually wrote, so the caller never has to guess
+    from what happens to be on disk. A declined save, or one that fails partway,
+    returns nothing: a half-written tree is not a saved report.
     """
+    written: list[Path] = []
     asked = save is None
     if asked:
         save = typer.prompt("Save report?", default="Y").strip().upper() in ("Y", "YES", "")
@@ -457,6 +685,10 @@ def _offer_reports(final_state, graph, ticker, save=None, show=None, html=None):
             ).strip())
         if html is None:
             html = _yes("Also save it as an HTML page?") if asked else True
+        # The files the writer will produce, decided before it runs: save_reports
+        # returns only the complete report, so this is what makes the inventory
+        # exact without scanning the directory afterwards.
+        expected = _expected_report_files(final_state, Path(save_path), html)
         saved = False
         try:
             report_file = graph.save_reports(final_state, ticker, save_path, html=html)
@@ -465,6 +697,8 @@ def _offer_reports(final_state, graph, ticker, save=None, show=None, html=None):
             console.print(f"  [dim]Complete report:[/dim] {report_file.name}")
         except Exception as e:
             console.print(f"[red]Error saving report: {e}[/red]")
+        if saved:
+            written = expected
         if saved and html:
             page = (save_path / "complete_report.html").resolve()
             console.print(f"  [dim]HTML report:[/dim] {page.name}")
@@ -475,3 +709,4 @@ def _offer_reports(final_state, graph, ticker, save=None, show=None, html=None):
         show = typer.prompt("\nDisplay full report on screen?", default="Y").strip().upper() in ("Y", "YES", "")
     if show:
         display_complete_report(final_state)
+    return written
