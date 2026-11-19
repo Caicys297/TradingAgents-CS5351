@@ -140,29 +140,35 @@ The guard (however C implements it — in-memory or threaded) is intended to fol
 
 **Invariant [CONFIRMED, FR-07/INV-03]:** one authoritative Gate evaluation per completed execution at the `record_decision` boundary; no Graph/CLI second authoritative call; no raw PM Buy/Sell published as approved before the Gate completes; no publication path bypasses the gate; the Gate judges the complete finalized `values` snapshot.
 
-### B.4 Two distinct lifecycle contracts — **[PROPOSED; representation PENDING C]**
+### B.4 Two distinct lifecycle contracts + duplicate-vs-new execution rules — **[PROPOSED; representation PENDING C]**
 Member C recommends **Graph-instance-scoped, execution-isolated in-memory records**. Documented as **two separate** contracts (they are *not* the same object):
 
 **A. Completion deduplication guard (execution lifecycle) — [PROPOSED]**
-- **Initialized** for a logical execution/completion.
-- **Identifies repeated processing** within that execution.
-- **Tracks** whether the authoritative Gate evaluation has **completed** and whether publication/persistence has **completed** (so a post-Gate persistence retry can reuse the result — §C).
-- **Retained** throughout the window where duplicate completion callbacks or retries remain possible (**not released prematurely** after the first successful Gate evaluation).
-- **Cleaned up** at a safe lifecycle boundary.
-- **Never reused** as authorization for a **new** execution or a **resumed-to-completion** execution that requires fresh evaluation.
-- *(Graph-instance-scoped: must not leak across executions on the same Graph instance.)*
+- **Creation:** initialized for a logical execution/completion.
+- **Execution/thread association:** associated with the current execution (and its thread, where applicable).
+- **Reuse within the duplicate window:** identifies repeated processing within that execution and **reuses a valid same-execution Gate result**.
+- **Protection:** prevents duplicate authoritative Gate, duplicate persistence, and duplicate publication.
+- **Retention:** kept while same-execution retries remain possible (**not released prematurely** after the first successful Gate — §C).
+- **Cleanup:** released after a safe lifecycle boundary.
+- **No authorization reuse:** never carries publication authorization to a **new** execution or a **Resume**.
 
 **B. Runtime `GateResult` observation record — [PROPOSED]**
-- **Created** when a Gate evaluation produces a result.
-- **Associated** with the corresponding execution.
-- **Exposes** runtime `verdict`, `effective_rating`, `reason`, and evidence statuses for diagnostics/offline tests.
+- **Creation:** when a Gate evaluation produces a result.
+- **Per-execution isolation:** associated with, and scoped to, that execution.
+- **Runtime access:** exposes `verdict`, `effective_rating`, `reason`, and evidence statuses for diagnostics/offline tests, available during completion handling.
+- **Cleanup:** released when no longer needed (safe boundary).
+- **No cross-execution leakage:** must not leak a result from one execution into another on the same Graph instance.
 - **No durable persistence** of the complete `GateResult` required.
-- **Explicitly defined availability and cleanup** behaviour.
-- **Must not leak** a result from one execution into another execution on the **same** Graph instance.
 
-**Do not invent** an approved execution-ID field, cache implementation, or final cleanup point. The **concrete representation and cleanup points are PENDING MEMBER C CONFIRMATION** for both A and B.
+**Duplicate-vs-new execution rules — four distinct cases [PROPOSED]:**
+- **(A) Repeated completion callbacks in the SAME logical execution:** **exactly one** authoritative Gate evaluation; **preserve the first captured `original_rating`**; **reuse** valid same-execution Gate results; **prevent** duplicate logging, memory persistence, and authoritative publication.
+- **(B) A NEW execution after a CLI persistence failure:** this is **NOT** a duplicate completion callback; it **must perform a new authoritative Gate evaluation**; it **must not reuse** a previous execution's publication authorization. *(This batch does NOT require implementing automatic CLI retry — the rule defines correctness if a new run occurs.)*
+- **(C) Checkpoint/Resume:** treat the **resumed-to-completion** run as a **new execution** for Gate authorization; evaluate the **complete restored final state, including restored reports**; **never** reuse stale checkpoint Gate authorization.
+- **(D) Sequential runs on the same Graph instance:** each new execution has **isolated** Gate evaluation and runtime records. **Existing execution/thread identifiers may be reused where appropriate**, but **thread reuse must not be equated with execution identity**. Each sequential execution gets its own fresh authoritative evaluation.
 
-**Invariant [CONFIRMED, FR-07/INV-03]:** one authoritative Gate evaluation per completed execution; record_decision() signature and `None` return preserved; in-place final_state mutation; guard and observation record are distinct, execution-isolated, Graph-instance-scoped in-memory records.
+**Do not invent** an approved permanent identifier or public interface, execution-ID field, cache implementation, or final cleanup point. The **concrete representation and cleanup points are PENDING MEMBER C CONFIRMATION** for both A and B.
+
+**Invariant [CONFIRMED, FR-07/INV-03]:** one authoritative Gate evaluation per completed execution; record_decision() signature and `None` return preserved; in-place final_state mutation; guard and observation record are distinct, execution-isolated, Graph-instance-scoped in-memory records; duplicate callbacks are deduplicated within an execution while new executions (incl. Resume) always re-evaluate.
 
 ---
 
@@ -188,6 +194,16 @@ For a newly completed execution, at the shared completion boundary (§B.1), in t
 
 *(Full repeated-completion / checkpoint / resume rules: see §K.2.)*
 
+**Trusted pre-Gate original-rating provenance [PROPOSED; mechanism PENDING C]:**
+- **Capture the original source BEFORE the Gate changes `final_rating`.**
+- **Distinguish two candidate original sources:** (i) the pre-Gate **`final_rating` field** value, and (ii) the **rating parsed from the original `final_trade_decision`** (`extract_rating`/`parse_rating`). Capture which is the pre-Gate original (Stage 1 precedence: `final_rating` if present, else parsed body).
+- **Preserve sufficient trustworthy provenance** for safe same-execution handling (so a retry/repeat need not recapture from a mutated field).
+- **Preserve the original decision body unchanged** (`final_trade_decision` bytes; FR-12).
+- **Never recapture a previously downgraded `final_rating` as the original rating.**
+- **On a new run or Resume, use a trusted current-execution original source or a verified pre-Gate source** — not a value that a previous Gate already overwrote.
+- **Do not automatically trust stale `original_rating`/`effective_rating`/`final_rating` from a checkpoint** as the current-execution original.
+- **Fail closed if no trustworthy original input can be established** (do not publish an unsupported Buy/Sell). *(Representation of the pre-Gate snapshot pending C; do not invent an approved field.)*
+
 **Gate success followed by logging/persistence failure — retry contract [PROPOSED behaviour; exact mechanism PENDING C]:** 
 
 Scenario: (1) the authoritative Gate succeeds; (2) `final_state` already holds `effective_rating`/`final_rating = effective_rating`; (3) state logging (`_log_state`) or memory persistence (`store_decision`) then **fails**; (4) the **same logical completion** is retried. Proposed rules:
@@ -199,7 +215,7 @@ Scenario: (1) the authoritative Gate succeeds; (2) `final_state` already holds `
 - **If re-evaluation is necessary, use the verified original pre-Gate snapshot** — never the already-modified `final_state`.
 - **Fail closed if no trustworthy original input is available:** if neither a valid in-execution Gate result nor the pre-Gate snapshot is available, the checker must **not** publish an authoritative rating (fail closed / withhold publication per the failure policy).
 - **Partial persistence & duplicate risk:** a partially completed state-log or memory write must not cause **duplicate** authoritative persistence on retry; persistence must be idempotent for the same completion (mechanism pending C). A state-log failure vs a memory-write failure are handled separately, and a retry must complete any missing persistence **without** releasing an ungated rating.
-- **Retry must not bypass the Gate for a NEW completion:** retry handling applies only within the *same* logical completion; a **new** completed execution always requires a fresh authoritative Gate evaluation (the guard is never reused as authorization across executions — §B.4).
+- **Retry must not bypass the Gate for a NEW completion:** retry handling applies only within the *same* logical completion; a **new** completed execution (incl. a new run after a CLI persistence failure, and a Resume) always requires a fresh authoritative Gate evaluation (the guard is never reused as authorization across executions — §B.4). *(This batch does NOT require implementing automatic CLI retry.)*
 
 **Separation:** the above is **proposed behaviour**. The concrete retry/idempotency implementation (how the pre-Gate snapshot is held, how persistence is made idempotent, how partial writes are detected) is **PENDING MEMBER C CONFIRMATION**; no approved field/cache/mechanism is asserted.
 
@@ -222,6 +238,22 @@ Scenario: (1) the authoritative Gate succeeds; (2) `final_state` already holds `
 - **Both areas** buffer or suppress authoritative decision content **before** the Gate executes; after `record_decision` returns the gated state, publish with the effective rating. When `REVIEW`, the preserved body is labelled **non-authoritative**.
 - **REVIEW display — use the existing `run_rating()`/`is_review()` compatibility path [Member C guidance].** Keep the current warning check shape `is_review(run_rating(final_state))` (verified: `run_rating` returns `final_state.get("final_rating") or parse_rating(final_trade_decision)`; `is_review` is `signal == "REVIEW"` — `rating.py:106`/`:115` @ `102511d`). **After a completed Gate, `final_rating == effective_rating`**, so this path naturally reflects the authoritative Gate-adjusted rating **without** the CLI needing the full `GateResult`. The message remains **cause-neutral**; internal `reason` is not leaked verbatim to end users unless A/C decide otherwise. (This keeps legacy-state read compatibility: a legacy state lacking `effective_rating` still reads via `run_rating`; but legacy read never authorizes a **new** ungated publication — §C.)
 - **Exact insertion points pending A/C / C verification.**
+
+### D.1 Real-time sectional Markdown publication boundary — **[PROPOSED; exact points PENDING C]**
+
+**Verified current Stream/CLI Markdown-writing path [CONFIRMED by code, `cli/run.py` @ `102511d`]:** during streaming, `save_report_section_decorator` (`cli/run.py:173–190`) wraps `message_buffer.update_report_section` so that **every** section update writes `report_dir/{section_name}.md` immediately (including the PM decision into the `final_trade_decision` section at `:339`). This means the PM decision Markdown (`final_trade_decision.md`) can be written **pre-Gate** — the leak member C identified.
+
+**Proposed boundary (do not change ordinary Analyst streaming):**
+- **Ordinary Analyst sections** (`market_report`, `sentiment_report`, `news_report`, `fundamentals_report`, `investment_plan`, `trader_investment_plan`, and the risk analysts' sub-fragments) **retain their normal streaming write behaviour** — unchanged.
+- **Any section or fragment containing the Portfolio Manager's final trade decision** (the `final_trade_decision` section / `final_trade_decision.md`) **must be withheld from authoritative publication** until Gate evaluation **and** publication authorization complete. The PM-related Markdown buffering interval extends from its **earliest streamed appearance** until publication is authorized.
+- **Exact proposed buffer/release point [PROPOSED; PENDING C]:** defer/redirect the PM section's Markdown write (e.g. buffer the `final_trade_decision` section content instead of writing `final_trade_decision.md` during streaming; write it only after `record_decision` authorizes publication). Whether implemented by special-casing the section name in the decorator or by a separate buffered writer is **pending C**.
+- **After Gate completion:** the authoritative `effective_rating` drives the final rating; the PM Markdown is then written with the effective rating context (identical to the other enabled surfaces, §D cross-surface).
+- **REVIEW decisions:** the preserved PM body is written/rendered with the **unapproved/non-authoritative** label (§D cross-surface assertions); never as an approved recommendation.
+- **Invalid Analyst configuration (`ValueError`):** **no** authoritative decision Markdown publication; a clear error is surfaced; a partial `final_trade_decision.md` must not remain as an authorized recommendation.
+- **Stream interruption:** exits before `record_decision`; **no** authoritative decision Markdown publication.
+- **State-log or memory persistence failure:** publication follows the approved failure policy (§C retry); buffered PM Markdown is **not** silently released as approved; a partially created Markdown file must not leave an unauthorized authoritative recommendation (it is withheld/removed or labelled non-authoritative pending the failure-policy outcome).
+
+*(Ordinary Analyst `.md` sections written mid-stream are normal streaming behaviour and are not the PM decision; only the PM decision fragment is the buffering concern. Exact mechanism PENDING C.)*
 
 **Cross-surface non-authoritative labelling — ALL enabled rendered outputs [CONFIRMED intent, FR-13]:**
 When the effective rating is `REVIEW`, any preserved Buy/Sell text from `final_trade_decision` must **not** appear as an approved recommendation on any enabled rendered output:

@@ -163,14 +163,18 @@ Proposed location: `test/offline/` (default-collected). Candidate files:
 
 ---
 
-## 8. O4-T-23 — CLI buffering before gate (real CLI)
+## 8. O4-T-23 — CLI buffering before gate (real CLI, incl. real-time Markdown)
 - **Covers:** O4-FR-07, FR-13, INV-01, INV-03.
-- **Fixtures:** `fake_cli_stream` emits a PM `Buy` body **and** a PM message before the Gate sees a missing required report; exercise **BOTH** CLI write areas — the PM **message/display area** and the PM **decision/report section**.
-- **Execution:** offline CLI integration (LLM/network replaced by fixtures; network blocked). Capture output **BEFORE the Gate executes** (real emitted output at that point), not only the final screenshot.
-- **Assertions:** before gate, **both** the PM message area and the decision/report section show no approved Buy/Sell (buffered/suppressed); after gate, enabled surfaces `REVIEW`; preserved body non-authoritative on all enabled outputs.
-- **Expected:** `not pre_gate_published_in(message_area AND report_section) and post_gate=="REVIEW" and body_non_authoritative`.
+- **Fixtures:** `fake_cli_stream` emits a PM `Buy` body **and** a PM message before the Gate sees a missing required report; isolated `report_dir` (`tmp_path`) so real-time Markdown writes are observable; exercise **BOTH** CLI display areas — the PM **message/display area** and the PM **decision/report section** — **and the real-time sectional Markdown** (`final_trade_decision.md` via `save_report_section_decorator`, `cli/run.py:173–190`).
+- **Execution:** offline CLI integration (LLM/network replaced by fixtures; network blocked). Capture output **BEFORE the Gate executes**, **after authorized release**, and **on failure paths** — real emitted output / file contents at those moments, not only the final screenshot.
+- **Assertions:**
+  - **before Gate:** neither CLI area shows an approved Buy/Sell, AND `final_trade_decision.md` does **not** contain an authorized PM Buy/Sell (PM Markdown withheld pre-Gate);
+  - **ordinary Analyst `.md` sections** still stream normally (unchanged behaviour);
+  - **after authorized release:** PM content published with effective rating; `REVIEW` → preserved body labelled non-authoritative on all enabled outputs;
+  - **failure paths** (invalid config / interrupted stream / persistence failure): no authoritative PM decision published — no leftover `final_trade_decision.md` containing an authorized recommendation.
+- **Expected:** `not pre_gate_published_in(message_area AND report_section AND final_trade_decision.md)`, `ordinary_analyst_stream_unchanged`, `post_gate=="REVIEW" → body_non_authoritative`, failure → `no authorized PM publication`.
 - **Owner:** D; F collection/CI.
-- **Dependencies:** integration point (Q4) A/C-confirmed; B1 two-area scope confirmed by C (§D).
+- **Dependencies:** integration point (Q4) A/C-confirmed; real-time Markdown buffer/release point confirmed by C (§D.1).
 
 ---
 
@@ -207,13 +211,16 @@ Proposed location: `test/offline/` (default-collected). Candidate files:
 
 ## 10a. Gate-invocation-count & ordering (mandatory) — [PROPOSED]
 - **Covers:** O4-FR-07, FR-09, INV-01/03 (one authoritative evaluation, before publication).
-- **Fixtures:** instrument `check_evidence` via a counting seam (wrap/spy) around the **authoritative** call; programmatic completion, CLI completion, resume-to-completion, and repeated-completion fixtures; interrupted/error fixture.
+- **Fixtures:** instrument `check_evidence` via a counting seam (wrap/spy) around the **authoritative** call; fixtures for: duplicate completion callbacks (same execution), **new CLI run after a persistence failure**, **Resume-to-completion**, and **sequential executions on one Graph instance**; interrupted/error fixture.
 - **Execution:** run each entrypoint offline; count authoritative `check_evidence()` evaluations and record the order relative to `record_decision`/publication.
 - **Assertions:**
   - normal programmatic completion → **exactly one** authoritative evaluation;
   - CLI completion → **exactly one** authoritative evaluation (must **not** re-invoke authoritatively after `record_decision`);
   - resume-to-completion → **exactly one** authoritative evaluation **before** publication;
-  - repeated `record_decision()` → still **exactly one** authoritative evaluation total (no duplicate);
+  - **duplicate completion callbacks (same execution)** → exactly one authoritative evaluation (deduplicated);
+  - **new CLI run after persistence failure** → a **new** authoritative evaluation (NOT deduplicated with the prior execution);
+  - **Resume-to-completion** → a **new** authoritative evaluation on the complete restored state (never reuses checkpoint authorization);
+  - **sequential executions on one Graph instance** → each new execution has its **own** single authoritative evaluation (thread reuse ≠ execution identity);
   - the evaluation precedes any authoritative publication in every case; interrupted/error cases publish **no** authoritative rating;
   - S2 state per case: `original_rating` captured pre-gate (never the downgraded effective), `final_rating == effective_rating`, `final_trade_decision` byte-preserved.
   - **Per-execution completion-guard lifecycle [PROPOSED; mechanism pending C]:** the guard is created for the current completion, blocks duplicate authoritative work while the same execution can fire again, is released when the execution terminates (after successful gated logging + checkpoint cleanup, or clean abort), and is **never reused** for a new execution. Test: a **new** execution after a completed one performs its **own** single authoritative evaluation (guard not reused); a duplicate callback within the **same** execution performs none.
@@ -232,6 +239,7 @@ Proposed location: `test/offline/` (default-collected). Candidate files:
   - **state-log failure + retry:** retry does **not** produce a second authoritative Gate evaluation when the guard confirms the same finalized input; `original_rating` preserved across the retry; no ungated Buy/Sell released; missing persistence completed on retry.
   - **memory-write failure + retry:** same guarantees for the memory path.
   - **`original_rating` preservation:** not re-captured from the already Gate-downgraded `final_rating`.
+  - **original-rating provenance:** capture happens **before** the Gate mutates `final_rating`; the pre-Gate `final_rating` field is distinguished from the rating parsed from the original `final_trade_decision`; provenance is preserved for same-execution reuse; `final_trade_decision` bytes unchanged.
   - **no unintended second authoritative evaluation** for a valid same-execution retry (count == 1);
   - **no duplicate authoritative publication** (state log / memory entries not duplicated);
   - **partial persistence** (only one of state-log/memory written) handled safely — the retry completes the missing one without releasing an ungated rating; if no trustworthy original input is available → **fail closed** (no authoritative publication).
@@ -305,7 +313,7 @@ For T-02, T-06, T-14, T-17, T-25 the **cross-surface** portions (already validat
 | T-19 (integration) | FR-07, FR-12, FR-13, INV-01 | integration | D/F | body unapproved (CLI/MD/HTML), no approved Buy |
 | T-20 | NFR-05 | regression + manual + legacy/checkpoint | F/D | suite green; additive-only; legacy/checkpoint back-compat |
 | T-21 | NFR-06 | artefact inspection | D/F | recoverable + consistent effective; runtime GateResult in-memory |
-| T-23 | FR-07, FR-13, INV-01, INV-03 | CLI integration | D/F | no pre-gate publish (message area **and** report section) |
+| T-23 | FR-07, FR-13, INV-01, INV-03 | CLI integration | D/F | no pre-gate publish (message area **and** report section **and** real-time `final_trade_decision.md`); ordinary Analyst streaming unchanged |
 | Display-order (new) | FR-07, FR-13, INV-03 | CLI integration | D/F | completion→REVIEW→elapsed→O6→reports; completion not implying trade |
 | Checkpoint/resume (new) | FR-07, FR-09, INV-01/03 | integration | D/F | resumed→gated-consistent; interrupted→no authoritative rating |
 | Repeated-completion (new) | FR-07, FR-09, INV-01/03 | integration | D/F | repeat→single authoritative publish/persist; `original_rating` not overwritten; stale-fields→re-evaluated |
@@ -351,7 +359,7 @@ All **mandatory** Stage 2 tests and their **parameterized subcases / sub-scenari
 
 ## 14. Unresolved items blocking finalization
 **Resolved (do not re-open):** `original_rating` field name; S2 capture→set order + conflict in `gate.reason` (no full durable `GateResult`); single authoritative Gate at the `record_decision` shared boundary (no Graph/CLI second authoritative call); **C's backward-compatible `record_decision` contract** (signature + `None` return preserved, in-place mutation); T-16 measures the **pure** checker; `Should` non-blocking by default; T-07 integration **mandatory**. **PR #9: merged (merge commit `d36a677` = PR #17 base) — not a live dependency.**
-- **C (exact mechanism PENDING C CONFIRMATION):** **retry/idempotency** mechanism for Gate-success-then-persistence-failure (§C) incl. pre-Gate snapshot + partial-persistence idempotency; **two distinct lifecycles** representation/cleanup — guard (A) vs GateResult record (B), Graph-instance-scoped execution-isolated (§B.4); same-vs-new **execution-identity** mechanism + **per-execution guard lifecycle** (§B.1 — lifecycle create/use/preserve/release/never-reuse; do not invent an approved identity field, permanent state field, or cache); inline vs shared helper; `selected_analysts` reaching the boundary; **concrete per-run in-memory `GateResult` observation interface** (CLI REVIEW warning reads `final_state["effective_rating"]` directly, not full `GateResult`); **complete `values` snapshot** final-state source (§B.3 — merged stream chunks + checkpoint-restored reports; residual if a resumed snapshot omits a field); `original_rating` conflict/absent encoding; effective-rating persistence shape (with B); B1 two-area insertion points; repeated-completion/checkpoint/resume/legacy-stale-field rules + cleanup ordering.
+- **C (exact mechanism PENDING C CONFIRMATION):** **retry/idempotency** mechanism for Gate-success-then-persistence-failure (§C) incl. pre-Gate snapshot + partial-persistence idempotency; **two distinct lifecycles** representation/cleanup — guard (A) vs GateResult record (B), Graph-instance-scoped execution-isolated (§B.4); same-vs-new **execution-identity** mechanism + **per-execution guard lifecycle** (§B.1 — lifecycle create/use/preserve/release/never-reuse; do not invent an approved identity field, permanent state field, or cache); inline vs shared helper; `selected_analysts` reaching the boundary; **concrete per-run in-memory `GateResult` observation interface** (CLI REVIEW warning reads `final_state["effective_rating"]` directly, not full `GateResult`); **complete `values` snapshot** final-state source (§B.3 — merged stream chunks + checkpoint-restored reports; residual if a resumed snapshot omits a field); `original_rating` conflict/absent encoding; effective-rating persistence shape (with B); B1 two-area insertion points; **real-time sectional Markdown buffer/release point** (PM `final_trade_decision.md` withheld until Gate + authorization; ordinary Analyst streaming unchanged — §D.1); **trusted pre-Gate original-rating provenance representation** (pre-Gate `final_rating` field vs parsed original body; fail-closed if none); duplicate-vs-new execution rules; repeated-completion/checkpoint/resume/legacy-stale-field rules + cleanup ordering.
 - **C — O6 prerequisite:** O6 identity-binding **merged** (`6a561ab`/PR #19) **and O6 CLI PR #20 merged** (`e4b6f9a`, ancestor of `origin/main` `102511d`) → traceable commit exists; **C must still record CLI joint-verification evidence**; re-verify O6/O2/PR#9-integrated `main` before O4 CLI edits. *(Verified via Git/API; not claiming C's joint verification done; O6 prerequisite ≠ O4 coding approval.)*
 - **A/C:** enabled-surface contract confirmation; non-authoritative label wording (CLI/MD/`decision.md`/HTML) + cause-neutral REVIEW message + display-order placement; unknown-config abort UX; T-21 observation-point contract.
 - **A:** confirm the **exact six shared-file modification scope** at final Execution Plan approval.
