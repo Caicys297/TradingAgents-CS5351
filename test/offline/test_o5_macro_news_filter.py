@@ -109,12 +109,19 @@ def id_of(fixture: dict, key: str) -> str:
     return fixture["fixture_key_to_id"][key]
 
 
-def assert_common_contract(result, supplied_ids, supplied_records=None):
+def assert_common_contract(result, supplied_records):
     """Shared selector assertions from inventory section 6a.
 
-    ``supplied_records`` is the ordered input; when given, selected business
-    fields are compared to their source records and every position is checked.
+    ``supplied_records`` is the exact ordered input passed to
+    ``select_macro_news``. Selected business fields are compared to their source
+    records, and every input position is checked.
     """
+
+    supplied_ids = [
+        record.candidate_id if isinstance(record, o5.MacroNewsCandidate)
+        else (record.get("candidate_id") if isinstance(record, dict) else None)
+        for record in supplied_records
+    ]
 
     counts = result.counts()
     assert counts["input_count"] == sum(counts[key] for key in COUNT_KEYS if key != "input_count")
@@ -126,16 +133,15 @@ def assert_common_contract(result, supplied_ids, supplied_records=None):
     assert len(ids) == len(set(ids))
     assert set(ids).issubset(set(supplied_ids))
 
-    if supplied_records is not None:
-        by_id = {record.candidate_id: record for record in supplied_records
-                 if isinstance(record, o5.MacroNewsCandidate)}
-        for record in result.selected:
-            source = by_id[record.candidate_id]
-            assert record.title == source.title
-            assert record.summary == (source.summary or "")
-            assert record.source == source.source
-            assert record.url == source.url
-            assert record.published_at == source.published_at
+    by_id = {record.candidate_id: record for record in supplied_records
+             if isinstance(record, o5.MacroNewsCandidate)}
+    for record in result.selected:
+        source = by_id[record.candidate_id]
+        assert record.title == source.title
+        assert record.summary == (source.summary or "")
+        assert record.source == source.source
+        assert record.url == source.url
+        assert record.published_at == source.published_at
 
     for decision in result.decisions:
         if decision.disposition == o5.SELECTED:
@@ -161,7 +167,8 @@ def fixture():
 
 @pytest.mark.unit
 def test_t01_dev20_k20(fixture):
-    result = o5.select_macro_news(dev20_candidates(fixture), request(limit=20))
+    supplied = dev20_candidates(fixture)
+    result = o5.select_macro_news(supplied, request(limit=20))
     expected_keys = fixture["expected"]["k20_expected_selected_set"]
     expected_ids = {id_of(fixture, key) for key in expected_keys}
     assert set(selected_ids(result)) == expected_ids
@@ -176,7 +183,7 @@ def test_t01_dev20_k20(fixture):
     rejected = {decision.candidate_id for decision in result.decisions
                 if decision.disposition == o5.REJECTED}
     assert rejected == {id_of(fixture, f"N0{i}") for i in range(1, 9)}
-    assert_common_contract(result, [record.candidate_id for record in dev20_candidates(fixture)])
+    assert_common_contract(result, supplied)
 
 
 @pytest.mark.unit
@@ -398,8 +405,9 @@ def test_t07e_selector_does_not_mutate_inputs(fixture):
 )
 def test_t08_negative_and_multitopic_controls(case_id, title, summary, expected_topics,
                                               expected_primary):
-    result = o5.select_macro_news([P(case_id, title, summary)], request(limit=1))
-    assert_common_contract(result, [case_id])
+    supplied = [P(case_id, title, summary)]
+    result = o5.select_macro_news(supplied, request(limit=1))
+    assert_common_contract(result, supplied)
     if expected_topics:
         assert selected_ids(result) == [case_id]
         record = result.selected[0]
@@ -548,7 +556,7 @@ def test_t12_one_decision_per_position():
     dispositions = [decision.disposition for decision in result.decisions]
     assert dispositions == [o5.SELECTED, o5.INVALID, o5.OUT_OF_WINDOW, o5.DUPLICATE_ID, o5.REJECTED]
     assert counts_of(result) == (5, 1, 0, 1, 1, 1, 1, 0)
-    assert_common_contract(result, [p.candidate_id for p in pool])
+    assert_common_contract(result, pool)
 
 
 # --------------------------------------------------------------------------- determinism
@@ -667,8 +675,15 @@ def test_t19_requested_topic_subset_reorders_primary(fixture):
     decisions = decision_map(result)
     m01_index = next(d.input_index for d in result.decisions
                      if d.candidate_id == id_of(fixture, "M01"))
+    i01_index = next(d.input_index for d in result.decisions
+                     if d.candidate_id == id_of(fixture, "I01"))
+    # Pinned independently: request (INFLATION, MONETARY_POLICY).
     assert decisions[m01_index].matched_topics == (IN, MP)
+    assert decisions[m01_index].matched_rule_ids == ("R2-IN", "R1-MP")
     assert decisions[m01_index].topic == IN
+    assert decisions[i01_index].matched_topics == (IN,)
+    assert decisions[i01_index].matched_rule_ids == ("R2-IN",)
+    assert decisions[i01_index].topic == IN
     assert selected_ids(result) == [id_of(fixture, "M01"), id_of(fixture, "I01")]
 
 
@@ -686,5 +701,8 @@ def test_t19_single_topic_subset_filters_matched_topics(fixture):
     for decision in result.decisions:
         assert decision.matched_topics in ((), (IN,))
         if decision.disposition == o5.SELECTED:
+            # Pinned independently: INFLATION-only subset -> ("R2-IN",).
             assert decision.matched_topics == (IN,)
+            assert decision.matched_rule_ids == ("R2-IN",)
+            assert decision.topic == IN
     assert selected_ids(result) == [id_of(fixture, "M01"), id_of(fixture, "I01")]
