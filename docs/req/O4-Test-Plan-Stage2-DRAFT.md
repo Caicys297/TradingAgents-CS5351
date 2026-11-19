@@ -7,7 +7,7 @@
 | Owner | Member D |
 | Prepared for | Member F (test coordination, CI integration, verification); Member A/C (integration scope) |
 | Companion execution plan | `docs/req/O4-Execution-Plan-Stage2-DRAFT.md` (O4-EXEC-S2-v0.5-DRAFT) |
-| Verified baseline | **Integration baseline:** current `origin/main` `bbc888126f2a4a645d2006b9cda49259e9a56efd` (includes PR #9 `d36a677`, O2 PR #16 `808df04`, O6 identity-binding PR #19 `6a561ab`). **PR #17 base:** `d36a677`. **Historical O4 Stage 1 baseline:** `185d18b483ce1e04a9ac649923cbec14707fd9e3`. C must re-verify the O6/C-integrated baseline before O4 CLI edits. |
+| Verified baseline | **Integration baseline:** current `origin/main` `102511dd44ad8779a46e09cbefe50edb8a995b45` (includes PR #9 `d36a677`, O2 PR #16 `808df04`, O6 identity-binding PR #19 `6a561ab`, O6 CLI PR #20 merge `e4b6f9a`). **PR #17 base:** `d36a677`. **Historical O4 Stage 1 baseline:** `185d18b483ce1e04a9ac649923cbec14707fd9e3`. C must re-verify the O6/C-integrated baseline before O4 CLI edits. |
 | Stage 1 checker under test | `tradingagents/agents/evidence_gate.py` — `check_evidence()`, `GateResult` (merged, unchanged by Stage 2) |
 | Authoritative requirements | `docs/req/requirements.yaml` (PR #2 `4f87e29f…`); `development_contract.o4` |
 | Approval | **NONE — DRAFT.** This plan requests approval; it does not grant it. No test below exists yet. |
@@ -154,11 +154,11 @@ Proposed location: `test/offline/` (default-collected). Candidate files:
 - **Covers:** O4-NFR-06.
 - **Fixtures:** a completed downgraded run (`tmp_results_dir`, memory enabled).
 - **Execution:** artefact inspection (state log, memory log, and the return value / consumer surfaces).
-- **Runtime `GateResult` observation [PROPOSED, no unapproved persistence]:** the runtime `GateResult` (verdict, effective rating, per-item statuses, diagnostic `reason`) is observed at the Gate capture point **in-memory** — via the gate helper's returned value or an injectable observation seam — **without** requiring the full structured verdict to be durably persisted (not required in v1). Persistence of the complete verdict is a §J decision and is not assumed.
-- **Assertions:** `effective_rating` recoverable from enabled authoritative outputs **and** all enabled authoritative rating outputs == `effective_rating`; the runtime `GateResult.verdict`/`effective_rating`/`reason` observed in-memory match the published effective rating.
-- **Expected:** recoverable + consistent. Full structured-verdict durability **not** required (v1).
+- **Runtime `GateResult` observation [PROPOSED, no unapproved persistence]:** the runtime `GateResult` (verdict, effective rating, per-item statuses, diagnostic `reason`) is observed **in-memory via the proposed per-run observation mechanism** (a lightweight observer/hook or per-run accessor — concrete interface **pending C**) **without** changing `record_decision()`'s signature/`None` return and **without** requiring the full structured verdict to be durably persisted (not required in v1). **The generic CLI REVIEW warning does not consume `GateResult`** — it reads `final_state["effective_rating"]` directly; this test verifies the diagnostic observation seam, not CLI display.
+- **Assertions:** `effective_rating` recoverable from enabled authoritative outputs **and** all enabled authoritative rating outputs == `effective_rating`; the runtime `GateResult.verdict`/`effective_rating`/`reason` observed **in-memory** match the published effective rating; the observation does **not** require durable verdict persistence; the CLI REVIEW warning (when `REVIEW`) is derivable from `final_state["effective_rating"]` alone.
+- **Expected:** recoverable + consistent; in-memory observation available; CLI warning independent of `GateResult`. Full structured-verdict durability **not** required (v1).
 - **Owner:** D; F collection/CI.
-- **Dependencies:** Stage 2 shared integration; A/C confirm the observation seam.
+- **Dependencies:** Stage 2 shared integration; C confirms the concrete in-memory observation interface.
 
 ---
 
@@ -215,7 +215,9 @@ Proposed location: `test/offline/` (default-collected). Candidate files:
   - repeated `record_decision()` → still **exactly one** authoritative evaluation total (no duplicate);
   - the evaluation precedes any authoritative publication in every case; interrupted/error cases publish **no** authoritative rating;
   - S2 state per case: `original_rating` captured pre-gate (never the downgraded effective), `final_rating == effective_rating`, `final_trade_decision` byte-preserved.
-- **Expected:** `count == 1` per completed execution; `gate_before_publication == True`; interrupted → `no_authoritative_publication`.
+  - **Per-execution completion-guard lifecycle [PROPOSED; mechanism pending C]:** the guard is created for the current completion, blocks duplicate authoritative work while the same execution can fire again, is released when the execution terminates (after successful gated logging + checkpoint cleanup, or clean abort), and is **never reused** for a new execution. Test: a **new** execution after a completed one performs its **own** single authoritative evaluation (guard not reused); a duplicate callback within the **same** execution performs none.
+  - **CLI final-state completeness [PROPOSED; completeness pending C]:** the state passed to `record_decision` from the CLI stream-merge path contains **all four report fields** (incl. those restored from a checkpoint on resume) — not an incomplete stream delta; a resumed run whose restored reports are complete is not spuriously downgraded for "missing" evidence.
+- **Expected:** `count == 1` per completed execution; `gate_before_publication == True`; interrupted → `no_authoritative_publication`; guard-not-reused across executions; CLI final_state complete.
 - **Owner:** D; F collection/CI.
 - **Dependencies:** the observation seam / counting mechanism to C (§J). This is a **mandatory** test (enumerated in §13).
 
@@ -275,8 +277,8 @@ All **mandatory** Stage 2 tests and their **parameterized subcases / sub-scenari
 
 ## 14. Unresolved items blocking finalization
 **Resolved (do not re-open):** `original_rating` field name; S2 capture→set order + conflict in `gate.reason` (no full durable `GateResult`); single authoritative Gate at the `record_decision` shared boundary (no Graph/CLI second authoritative call); **C's backward-compatible `record_decision` contract** (signature + `None` return preserved, in-place mutation); T-16 measures the **pure** checker; `Should` non-blocking by default; T-07 integration **mandatory**. **PR #9: merged (merge commit `d36a677` = PR #17 base) — not a live dependency.**
-- **C (exact mechanism PENDING C CONFIRMATION):** same-vs-new **execution-identity** mechanism (§B.1 — do not invent an approved identity field); inline vs shared helper; `selected_analysts` reaching the boundary; `GateResult` runtime availability; `original_rating` conflict/absent encoding; effective-rating persistence shape (with B); B1 two-area insertion points; repeated-completion/checkpoint/resume/legacy-stale-field rules + cleanup ordering.
-- **C — O6 prerequisite:** O6 identity-binding **merged** (`6a561ab`/PR #19) → traceable commit exists; **C's CLI joint verification evidence still required**; re-verify O6/O2/PR#9-integrated `main` before O4 CLI edits. *(Not claimed passed; no invented SHA; O6 prerequisite ≠ O4 coding approval.)*
+- **C (exact mechanism PENDING C CONFIRMATION):** same-vs-new **execution-identity** mechanism + **per-execution guard lifecycle** (§B.1 — lifecycle create/use/preserve/release/never-reuse; do not invent an approved identity field, permanent state field, or cache); inline vs shared helper; `selected_analysts` reaching the boundary; **concrete per-run in-memory `GateResult` observation interface** (CLI REVIEW warning reads `final_state["effective_rating"]` directly, not full `GateResult`); **CLI stream/resume final-state completeness** (§B.3 — merged stream chunks vs checkpoint-restored full state); `original_rating` conflict/absent encoding; effective-rating persistence shape (with B); B1 two-area insertion points; repeated-completion/checkpoint/resume/legacy-stale-field rules + cleanup ordering.
+- **C — O6 prerequisite:** O6 identity-binding **merged** (`6a561ab`/PR #19) **and O6 CLI PR #20 merged** (`e4b6f9a`, ancestor of `origin/main` `102511d`) → traceable commit exists; **C must still record CLI joint-verification evidence**; re-verify O6/O2/PR#9-integrated `main` before O4 CLI edits. *(Verified via Git/API; not claiming C's joint verification done; O6 prerequisite ≠ O4 coding approval.)*
 - **A/C:** enabled-surface contract confirmation; non-authoritative label wording (CLI/MD/`decision.md`/HTML) + cause-neutral REVIEW message + display-order placement; unknown-config abort UX; T-21 observation-point contract.
 - **A:** confirm the **exact six shared-file modification scope** at final Execution Plan approval.
 - **A/F:** whether the `Should` (≤10 ms) target may ever be CI-blocking (default non-blocking).

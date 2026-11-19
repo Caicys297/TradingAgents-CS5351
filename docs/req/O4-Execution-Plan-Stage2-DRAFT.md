@@ -7,7 +7,7 @@
 | Prepared by | Member D |
 | Prepared for | Member A (scope/integration review), Member C (shared-file integration owner), Member F (test/CI) |
 | Companion test plan | `docs/req/O4-Test-Plan-Stage2-DRAFT.md` (O4-TEST-S2-v0.5-DRAFT) |
-| Verified baseline | **Integration baseline:** current `origin/main` `bbc888126f2a4a645d2006b9cda49259e9a56efd` (includes PR #9 `d36a677`, O2 PR #16 `808df04`, and O6 identity-binding PR #19 `6a561ab`). **PR #17 base:** `d36a677` (PR #9 merge). **Historical O4 Stage 1 baseline:** `185d18b483ce1e04a9ac649923cbec14707fd9e3`. |
+| Verified baseline | **Integration baseline:** current `origin/main` `102511dd44ad8779a46e09cbefe50edb8a995b45` (includes PR #9 `d36a677`, O2 PR #16 `808df04`, O6 identity-binding PR #19 `6a561ab`, O6 CLI PR #20 merge `e4b6f9a`). **PR #17 base:** `d36a677` (PR #9 merge). **Historical O4 Stage 1 baseline:** `185d18b483ce1e04a9ac649923cbec14707fd9e3`. |
 | Stage 1 checker | `tradingagents/agents/evidence_gate.py` (`check_evidence`, `GateResult`) — merged |
 | Authoritative requirements | `docs/req/requirements.yaml` (PR #2 merged at `4f87e29f…`); `development_contract.o4` |
 | Approval | **NONE.** Stage 2 is NOT approved. Shared-file ownership for Stage 2 has NOT been newly granted by this document. This is a proposal for A/C/F review. |
@@ -93,17 +93,28 @@ Member C's proposed contract (adopted as the planning baseline, **subject to fin
 5. **Capture `original_rating` BEFORE overwriting `final_rating`** (Stage 1 precedence: `final_rating` else parsed body).
 6. **Set `final_rating` and `effective_rating` to `GateResult.effective_rating`.**
 7. **Preserve `final_trade_decision` unchanged** (bytes; FR-12).
-8. **Keep `GateResult.reason` accessible at runtime** (in-memory at the boundary) for diagnostics/integration tests — **without** requiring full durable `GateResult` persistence. Exact access/return vehicle **pending C**.
+8. **Runtime `GateResult` access [PROPOSED; interface PENDING C CONFIRMATION]:** diagnostic code and offline integration tests need `GateResult` (verdict/effective/statuses/`reason`) **without** durable persistence and **without** changing the `record_decision()` signature or `None` return. Proposed: a **per-run in-memory observation mechanism** — e.g. the boundary records the `GateResult` on an in-memory, per-run accessor (a lightweight observer/hook or a per-run attribute on the graph object) that tests and diagnostics can read during/after the run. **Concrete interface PENDING C CONFIRMATION**; no durable verdict persistence is required. **The generic CLI REVIEW warning must NOT depend on receiving the full `GateResult`** — see §D (it reads `final_state["effective_rating"]` directly).
 9. **Propagate invalid analyst configuration errors** (`ValueError`) rather than converting them into an ordinary `REVIEW` (see §G).
 
 **Same vs new logical completion — execution identity [PROPOSED; telemetry mechanism PENDING C CONFIRMATION]:**
 The runtime must distinguish **repeated processing of the *same* logical completion** from a **NEW completed execution**. Finding `effective_rating`/`original_rating` already in a state does **not** prove the Gate ran for the *current* completion (see §C, §K.2).
 
-- **Do NOT invent an approved execution-identity field.** Candidate mechanisms — choose **one**, pending C: (a) an in-memory per-call/per-graph completion guard (e.g. a sentinel set/flag scoped to the completed execution), (b) a completion nonce/marker threaded through the (already-threaded) run config, or (c) C structuring callers so the boundary is invoked exactly once. **Exact mechanism PENDING C CONFIRMATION.**
+- **Do NOT invent an approved execution-identity field or a permanent state field/cache.** Candidate mechanisms — choose **one**, pending C: (a) an in-memory per-call/per-graph completion guard (e.g. a sentinel set/flag scoped to the completed execution), (b) a completion nonce/marker threaded through the (already-threaded) run config, or (c) C structuring callers so the boundary is invoked exactly once. **Execution identity, storage mechanism and cleanup point PENDING C CONFIRMATION.**
 - **For repeated processing of the same logical completion:**
   - never perform a **second authoritative Gate evaluation**;
   - never overwrite `original_rating` with the already-downgraded rating;
   - never duplicate authoritative publication or persistence.
+
+**Per-execution completion guard — proposed lifecycle [PROPOSED; PENDING C CONFIRMATION]:**
+The guard (however C implements it — in-memory or threaded) is intended to follow this lifecycle:
+1. **Created/initialized** for the **current logical completion** (once the execution reaches the completion boundary).
+2. **Used** to prevent repeated authoritative Gate evaluation and duplicate logging/persistence/publication for that execution.
+3. **Preserved** while duplicate completion callbacks for the *same* execution remain possible (so a re-entrant/duplicate `record_decision()` is a no-op).
+4. **Released** when the execution lifecycle is **safely terminated** (after successful gated logging/persistence + checkpoint cleanup, or after a clean abort) — the cleanup point is **PENDING C CONFIRMATION**.
+5. **Never reused** for a separate **new** execution (a new completion must initialize a fresh guard/identity).
+6. **Interrupted/resumed executions** must **not** treat stale checkpoint Gate fields as *current* completion authorization (§K.2), and the resumed completion must re-initialize its own guard.
+
+*(Exact execution-identity representation, storage mechanism and cleanup point are **PENDING MEMBER C CONFIRMATION**; no permanent state field/cache or approved identity field is asserted here.)*
 
 **Whether this lives inline in `record_decision` or in a shared completion helper is PENDING C CONFIRMATION.** Signature/return compatibility (T-20) must be preserved; existing callers/tests must not break.
 
@@ -112,7 +123,16 @@ The runtime must distinguish **repeated processing of the *same* logical complet
 - The CLI must not display PM rating/text as approved before the Gate. Buffer PM text (B1, §D) and publish the effective rating **after** `record_decision` returns the gated state.
 - Result drives the final rating display (`:380` region), report sections, and reports.
 
-**Invariant [CONFIRMED, FR-07/INV-03]:** one authoritative Gate evaluation per completed execution at the `record_decision` boundary; no Graph/CLI second authoritative call; no raw PM Buy/Sell published as approved before the Gate completes; no publication path bypasses the gate.
+### B.3 CLI stream/resume final-state acquisition — **[PROPOSED; completeness PENDING C CONFIRMATION]**
+**Verified current CLI behaviour [CONFIRMED by code, `cli/run.py`]:** after streaming, the CLI builds `final_state` by merging the accumulated per-node stream chunks — `final_state = {}; for chunk in trace: final_state.update(chunk)` (currently ~`:353–355`) — then calls `graph.record_decision(..., final_state)` (~`:360`). On resume, `checkpoint_input(...)` returns `None` (LangGraph resumes the thread; `checkpoint_input` docstring: "``None`` to resume an existing checkpoint"), and the streamed `values` chunks carry the restored run state.
+
+**Required clarification / proposed contract:**
+- **The Gate must evaluate the COMPLETE finalized `final_state` (all report fields), never an incomplete stream chunk.** The merged `final_state` passed to `record_decision` must include every required report field (`market_report`/`sentiment_report`/`news_report`/`fundamentals_report`) plus `final_rating`/`final_trade_decision`, **including any report fields restored from a checkpoint** on resume.
+- **Completeness assertion:** before the Gate runs at the boundary, the boundary must not treat a state missing report fields that were populated earlier (or restored) as "evidence missing" due to incomplete stream merging — i.e., stream-merge completeness precedes evidence judgment.
+- **Interrupted/failed executions must NOT publish an authoritative rating:** a mid-stream failure (before a clean merge/completion) skips `record_decision`/publication (existing behaviour); no authoritative rating is produced.
+- **Remaining uncertainty — PENDING C CONFIRMATION:** whether merging only streamed per-node `values` chunks is guaranteed to reconstruct the **complete** state on **resume** (all report fields present, not just those re-emitted after the resume point). C must confirm the exact source of the authoritative complete `final_state` at the boundary (e.g. merged stream chunks vs a checkpoint-restored full state) and, if stream merging can be incomplete, the mechanism to obtain the complete restored state before the Gate.
+
+**Invariant [CONFIRMED, FR-07/INV-03]:** one authoritative Gate evaluation per completed execution at the `record_decision` boundary; no Graph/CLI second authoritative call; no raw PM Buy/Sell published as approved before the Gate completes; no publication path bypasses the gate; the Gate judges the complete finalized state.
 
 ---
 
@@ -155,7 +175,7 @@ For a newly completed execution, at the shared completion boundary (§B.1), in t
 - **Area 1 — Portfolio Manager message / display area:** messages streamed at `:249–251` that carry PM decision text (and any PM status/message) must not imply an approved rating pre-gate.
 - **Area 2 — Portfolio Manager decision / report section:** the `"final_trade_decision"` report section written from streamed chunks at `:310–334` (incl. `"### Portfolio Manager Decision\n{judge}"` at `:333`) must not be committed as an approved section pre-gate.
 - **Both areas** buffer or suppress authoritative decision content **before** the Gate executes; after `record_decision` returns the gated state, publish with the effective rating. When `REVIEW`, the preserved body is labelled **non-authoritative**.
-- Replace the current `is_review(run_rating(final_state))` check at `:380` with an effective-rating–based, **cause-neutral** REVIEW message (do not leak internal `reason` verbatim to end users unless A/C decide otherwise).
+- Replace the current `is_review(run_rating(final_state))` check at `:380` with an effective-rating–based, **cause-neutral** REVIEW message. **The generic CLI REVIEW warning reads `final_state["effective_rating"]` directly** (after the Gate) — it does **not** require the CLI to receive the full `GateResult` merely to display the warning. Internal `reason` is not leaked verbatim to end users unless A/C decide otherwise.
 - **Exact insertion points pending A/C / C verification.**
 
 **Cross-surface non-authoritative labelling — ALL enabled rendered outputs [CONFIRMED intent, FR-13]:**
@@ -241,15 +261,16 @@ The **completion notice must never imply an approved trade recommendation** — 
 - **F:** collection/CI/T-16 harness + mandatory-case confirmation.
 - **A:** approve architecture + final execution plan; resolve §J.
 
-**Cross-feature coordination — latest state [verified `origin/main` `bbc8881`; PR #17 base `d36a677`]:**
+**Cross-feature coordination — latest state [verified; local facts from `origin/main` `102511d`; PR #17 base `d36a677`]:**
 - **O6 prerequisite (Member C's review requirement) [CONFIRMED sequencing rule]:** Before any O4 Stage 2 **CLI implementation**:
-  1. **O6 F identity binding + C's CLI joint verification must produce a traceable commit** (and review evidence). **Status now:** O6 identity binding **has merged** (`6a561ab`, PR #19, into `main` `bbc8881`, touching `tradingagents/graph/setup.py` + tests) — so a *traceable O6 commit exists*; **C's CLI joint verification is a separate step and is NOT yet evidenced** — do not claim O6 verification complete until C records it.
-  2. **O4 planning review can continue in parallel** with the O6 step (this v0.5 review does not block on it).
-  3. **Re-verify current `main` against O2 PR #16 and PR #9 dependencies** (both already merged — see below) before O4 CLI changes.
-  4. **Use the confirmed O6/O2/PR#9-integrated baseline for O4 CLI changes.** *(Local facts are from `origin/main` `bbc8881`; exact post-integration lines pending C.)*
+  1. **A traceable O6 commit must exist and C's CLI joint verification must be recorded.** **Status [VERIFIED by Git/API]:** O6 identity binding merged (`6a561ab`, PR #19); **O6 CLI PR #20 is also MERGED** (head `a6f12ab`, merge commit `e4b6f9a`, ancestor of `origin/main` `102511d`; changed `cli/display.py`, `cli/run.py`, `test/offline/test_o6_cli_wiring.py`). So a traceable O6 commit now exists; **C must still record its CLI joint-verification evidence** — do not claim O6 verification complete until C records it.
+  2. **O4 planning review can continue in parallel** with the O6 step (this revision is not blocked by O6).
+  3. **Re-verify current `main` against O2 PR #16 and PR #9 dependencies** (both merged — see below) before O4 CLI changes.
+  4. **Use the confirmed O6/O2/PR#9-integrated baseline for O4 CLI changes.** *(Local facts are from `origin/main` `102511d`; exact post-integration lines pending C.)*
   5. **Member C remains responsible for shared integration code** (shared-file ownership coordinated by C).
   6. **The exact six shared-file modification scope is confirmed by Member A during final Execution Plan approval** (§H).
   - **The O6 prerequisite is NOT equivalent to O4 Stage 2 coding approval** — it is a sequencing prerequisite; O4 Stage 2 still requires C interface confirmation → F test approval → A execution-plan approval.
+- **O6 PR #20 [VERIFIED merged]:** PR #20 ("CLI per-analyst usage with single callback registration") is **merged** (GitHub API: `merged: true`, merge commit `e4b6f9a`, ancestor of `origin/main` `102511d`). Its CLI changes do **not** alter `record_decision` or the final-state merge structure. *(This supersedes any prior "PR #20 pending A/F review/merge" status — verified against Git, not assumed.)*
 - **PR #9 dependency [RESOLVED — merged]:** PR #9 (`codex/o2-fr14-trace-fix`) is **already merged**; its merge commit **is `d36a677`** (the current PR #17 base), and it changed `docs/req/requirements.yaml` (6 lines) + `Team-O1-O6-Test-Case-Catalog-v2.0-DRAFT.md` (4 lines) under **PR #9's own review record** (not newly authored/approved under O4). **PR #17 does *not* carry PR #9's changes as its own** — verified: PR #17's diff vs its base is exactly the two O4 Stage 2 DRAFT files (no registry/catalogue changes). PR #9 is **not a live dependency**; it is in the base. *(Member A need take no merge-ordering action for PR #9; recorded for provenance only.)*
 - **O2 PR #16 [merged; merge commit `808df04`, ancestor of `d36a677` and `origin/main`]:** added **`tradingagents/repro/manifest.py`** (isolated `build_manifest`/`write_manifest`), **not yet wired** into `cli/run.py`/`trading_graph.py`. Per `A-Requirements-Decisions`, O2 will write `manifest.json` **at run start** in `cli/run.py`, with **manifest failure not altering O4's gated result** (visible provenance-failed warning, no success claim). When O2's CLI wiring lands, C must reconcile O2 run-start manifest writing with O4's completion-boundary Gate and B1 buffering.
 - **Ordering rule:** O4 CLI shared-file edits occur only after (a) O6 traceable commit + C's joint CLI verification evidence, (b) C re-verifies the O6/O2/PR#9-integrated `main`, (c) C confirms the shared completion interface + compatibility, and (d) F jointly verifies O6 CLI before O4 CLI edits.
@@ -327,4 +348,4 @@ Additional prerequisites (still required, do not bypass):
 - A read-only OpenCode Stage 2 execution plan approved before the first code edit (D9).
 - AI-use log + redacted session evidence maintained (REQ-GOV-06).
 
-**Member C's v0.4 review comments are architecture/interface feedback, NOT coding approval. This document records no approval and authorizes no code.**
+**Member C's v0.5 review comments are architecture/interface feedback, NOT coding approval. This document records no approval and authorizes no code.**
