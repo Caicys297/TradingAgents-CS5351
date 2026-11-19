@@ -8,6 +8,7 @@ inventory/DEV20 fixture, never from the implementation's own output.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from datetime import UTC, datetime
 from pathlib import Path
@@ -20,7 +21,9 @@ MP = "MONETARY_POLICY"
 IN = "INFLATION"
 EA = "ECONOMIC_ACTIVITY"
 TOPICS = (MP, IN, EA)
-RULES = o5.RULES_VERSION
+# Pinned independently of the production constant: an accidental change to the
+# selector's literal must not silently update the expected test input.
+RULES = "o5-rules-v1.1-draft"
 
 WINDOW_START = datetime(2026, 9, 20, 0, 0, 0, tzinfo=UTC)
 WINDOW_END = datetime(2026, 9, 27, 23, 59, 59, 999999, tzinfo=UTC)
@@ -28,7 +31,9 @@ WINDOW_END = datetime(2026, 9, 27, 23, 59, 59, 999999, tzinfo=UTC)
 FIXTURE_PATH = (
     Path(__file__).resolve().parent / "fixtures" / "o5" / "O5-Dev20-Fixtures-v0.5.3-DRAFT.json"
 )
+# Approved Registry bytes (d36a677): 24,291 bytes with CRLF line endings.
 FIXTURE_SHA256 = "a6f65bf271d9c9ac555f5d9f81cde5cbdb4ff526f46772c065cfe2653f0231f6"
+FIXTURE_BYTES = 24291
 
 COUNT_KEYS = (
     "input_count",
@@ -47,6 +52,15 @@ COUNT_KEYS = (
 
 def load_fixture() -> dict:
     return json.loads(FIXTURE_PATH.read_text(encoding="utf-8"))
+
+
+def test_dev20_fixture_is_the_approved_bytes():
+    """The shipped copy must be the Registry file byte-for-byte, not a rewrite."""
+
+    raw = FIXTURE_PATH.read_bytes()
+    assert len(raw) == FIXTURE_BYTES
+    assert hashlib.sha256(raw).hexdigest() == FIXTURE_SHA256
+    assert b"\r\n" in raw  # CRLF preserved, so no checkout/commit conversion slipped in
 
 
 def dev20_candidates(fixture: dict) -> list[o5.MacroNewsCandidate]:
@@ -95,8 +109,12 @@ def id_of(fixture: dict, key: str) -> str:
     return fixture["fixture_key_to_id"][key]
 
 
-def assert_common_contract(result, supplied_ids):
-    """Shared selector assertions from inventory section 6a."""
+def assert_common_contract(result, supplied_ids, supplied_records=None):
+    """Shared selector assertions from inventory section 6a.
+
+    ``supplied_records`` is the ordered input; when given, selected business
+    fields are compared to their source records and every position is checked.
+    """
 
     counts = result.counts()
     assert counts["input_count"] == sum(counts[key] for key in COUNT_KEYS if key != "input_count")
@@ -107,13 +125,30 @@ def assert_common_contract(result, supplied_ids):
     ids = [record.candidate_id for record in result.selected]
     assert len(ids) == len(set(ids))
     assert set(ids).issubset(set(supplied_ids))
+
+    if supplied_records is not None:
+        by_id = {record.candidate_id: record for record in supplied_records
+                 if isinstance(record, o5.MacroNewsCandidate)}
+        for record in result.selected:
+            source = by_id[record.candidate_id]
+            assert record.title == source.title
+            assert record.summary == (source.summary or "")
+            assert record.source == source.source
+            assert record.url == source.url
+            assert record.published_at == source.published_at
+
     for decision in result.decisions:
         if decision.disposition == o5.SELECTED:
             assert decision.reason_code == o5.SELECTED
             assert decision.matched_topics
             assert decision.topic in decision.matched_topics
+            assert decision.topic == decision.matched_topics[0]
+        elif decision.disposition == o5.NOT_SELECTED_LIMIT:
+            assert decision.reason_code == o5.NOT_SELECTED_LIMIT
+            assert decision.matched_topics
         else:
             assert decision.reason_code
+            assert decision.reason_code != o5.SELECTED
 
 
 @pytest.fixture(scope="module")
@@ -152,8 +187,17 @@ def test_t02_dev20_k6(fixture):
 
 
 @pytest.mark.unit
-def test_t03a_dev20_k0(fixture):
+def test_t03a_dev20_k0(fixture, monkeypatch):
+    calls = []
+    original = o5.classify
+
+    def trap(*args, **kwargs):
+        calls.append(args)
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(o5, "classify", trap)
     result = o5.select_macro_news(dev20_candidates(fixture), request(limit=0))
+    assert calls == []  # K=0 short-circuits before classification
     assert result.status == o5.STATUS_LIMIT_ZERO
     assert all(decision.disposition == o5.ZERO_LIMIT for decision in result.decisions)
     assert counts_of(result) == (20, 0, 0, 0, 0, 0, 0, 20)
@@ -260,19 +304,27 @@ def test_t20_no_padding_beyond_available():
 
 
 @pytest.mark.unit
-def test_t07a_structural_invalid_first_does_not_reserve_id():
-    class WrongTitle:
-        candidate_id = "dup-1"
-        title = 123
-        summary = ""
-        published_at = datetime(2026, 9, 25, tzinfo=UTC)
-        source = None
-        url = None
+@pytest.mark.parametrize("supported", ["dataclass", "mapping"])
+def test_t07a_structural_invalid_first_does_not_reserve_id(supported):
+    """A supported record with title=123 is INVALID_RECORD and must not reserve its ID."""
 
-    pool = [WrongTitle(), P("dup-1", at=datetime(2026, 9, 26, tzinfo=UTC))]
+    at_first = datetime(2026, 9, 25, tzinfo=UTC)
+    at_second = datetime(2026, 9, 26, tzinfo=UTC)
+    if supported == "dataclass":
+        # The accepted dataclass representation still gets structural validation.
+        bad = o5.MacroNewsCandidate("dup-1", 123, "", at_first, None, None)
+        good = P("dup-1", at=at_second)
+    else:
+        bad = {"candidate_id": "dup-1", "title": 123, "summary": "",
+               "published_at": at_first, "source": None, "url": None}
+        good = P("dup-1", at=at_second)
+
+    pool = [bad, good]
     result = o5.select_macro_news(pool, request(limit=2))
+    assert decision_map(result)[0].disposition == o5.INVALID
     assert decision_map(result)[0].reason_code == o5.REASON_INVALID_RECORD
     assert decision_map(result)[1].disposition == o5.SELECTED
+    assert decision_map(result)[1].candidate_id == "dup-1"
     assert counts_of(result) == (2, 1, 0, 0, 1, 0, 0, 0)
 
 
@@ -432,16 +484,22 @@ def test_t10_request_rejections(case_id, override):
 
 @pytest.mark.unit
 def test_t10k2_absent_and_null_optionals_agree():
-    absent = {"candidate_id": "v", "title": "Fed holds rates", "summary": "",
-              "published_at": datetime(2026, 9, 25, tzinfo=UTC)}
-    nulls = {"candidate_id": "v", "title": "Fed holds rates", "summary": "",
-             "published_at": datetime(2026, 9, 25, tzinfo=UTC), "source": None, "url": None}
-    first = o5.select_macro_news([dict(absent)], request())
-    second = o5.select_macro_news([dict(nulls)], request())
+    at = datetime(2026, 9, 25, tzinfo=UTC)
+    # summary, source and url are entirely absent in this record ...
+    absent = {"candidate_id": "v", "title": "Fed holds rates", "published_at": at}
+    # ... and all three are explicitly null in this one.
+    nulls = {"candidate_id": "v", "title": "Fed holds rates", "published_at": at,
+             "summary": None, "source": None, "url": None}
+    absent_snapshot = copy.deepcopy(absent)
+    nulls_snapshot = copy.deepcopy(nulls)
+    first = o5.select_macro_news([absent], request())
+    second = o5.select_macro_news([nulls], request())
     assert selected_ids(first) == selected_ids(second) == ["v"]
     assert counts_of(first) == counts_of(second)
-    assert absent == {"candidate_id": "v", "title": "Fed holds rates", "summary": "",
-                      "published_at": datetime(2026, 9, 25, tzinfo=UTC)}
+    assert decision_map(first)[0].matched_topics == decision_map(second)[0].matched_topics
+    # Defaults are applied; neither input object is mutated.
+    assert absent == absent_snapshot
+    assert nulls == nulls_snapshot
 
 
 @pytest.mark.unit
@@ -500,29 +558,50 @@ def test_t12_one_decision_per_position():
 def test_t14a_hundred_identical_runs(fixture):
     candidates = dev20_candidates(fixture)
     baseline = o5.select_macro_news(candidates, request(limit=6))
-    expected_ids = selected_ids(baseline)
-    expected_counts = counts_of(baseline)
     for _ in range(99):
         repeat = o5.select_macro_news(candidates, request(limit=6))
-        assert selected_ids(repeat) == expected_ids
-        assert counts_of(repeat) == expected_counts
-        assert [d.disposition for d in repeat.decisions] == [d.disposition for d in baseline.decisions]
+        # Complete result equality: selected records, decisions, status, metadata.
+        assert repeat.selected == baseline.selected
+        assert repeat.decisions == baseline.decisions
+        assert repeat.status == baseline.status
+        assert repeat.rules_version == baseline.rules_version
+        assert repeat.topic_order == baseline.topic_order
+        assert repeat.counts() == baseline.counts()
+
+
+PERMUTATION = [19, 0, 18, 1, 17, 2, 16, 3, 15, 4, 14, 5, 13, 6, 12, 7, 11, 8, 10, 9]
 
 
 @pytest.mark.unit
-def test_t14b_permutation_invariance(fixture):
+@pytest.mark.parametrize("order", ["original", "reversed", "permutation"])
+def test_t14b_permutation_invariance(fixture, order):
+    """Original, reversed and fixed permutations select the same IDs by input order."""
+
     candidates = dev20_candidates(fixture)
     baseline = o5.select_macro_news(candidates, request(limit=6))
-    permutation = [19, 0, 18, 1, 17, 2, 16, 3, 15, 4, 14, 5, 13, 6, 12, 7, 11, 8, 10, 9]
-    permuted = [candidates[index] for index in permutation]
-    again = o5.select_macro_news(permuted, request(limit=6))
-    assert selected_ids(again) == selected_ids(baseline)
-    assert counts_of(again) == counts_of(baseline)
-    by_id = {d.candidate_id: d for d in again.decisions}
+
+    if order == "original":
+        indices = list(range(len(candidates)))
+    elif order == "reversed":
+        indices = list(reversed(range(len(candidates))))
+    else:
+        indices = list(PERMUTATION)
+    inputs = [candidates[index] for index in indices]
+
+    result = o5.select_macro_news(inputs, request(limit=6))
+    assert selected_ids(result) == selected_ids(baseline)
+    assert counts_of(result) == counts_of(baseline)
+
+    # decisions.input_index follows the actual input order, not the baseline order.
+    for position, decision in enumerate(result.decisions):
+        assert decision.input_index == position
+        assert decision.candidate_id == inputs[position].candidate_id
+    by_id = {decision.candidate_id: decision for decision in result.decisions}
     for decision in baseline.decisions:
         mirrored = by_id[decision.candidate_id]
         assert mirrored.disposition == decision.disposition
         assert mirrored.reason_code == decision.reason_code
+        assert mirrored.matched_topics == decision.matched_topics
 
 
 @pytest.mark.unit
@@ -581,8 +660,15 @@ def test_t19_requested_topic_subset_reorders_primary(fixture):
     result = o5.select_macro_news(candidates, request(topics=(IN, MP), limit=2))
     by_id = {record.candidate_id: record for record in result.selected}
     m01 = by_id[id_of(fixture, "M01")]
+    # Exact tuple in requested order, in both selected and decisions.
     assert m01.primary_topic == IN
-    assert set(m01.matched_topics) == {MP, IN}
+    assert m01.matched_topics == (IN, MP)
+    assert m01.matched_rule_ids == ("R2-IN", "R1-MP")
+    decisions = decision_map(result)
+    m01_index = next(d.input_index for d in result.decisions
+                     if d.candidate_id == id_of(fixture, "M01"))
+    assert decisions[m01_index].matched_topics == (IN, MP)
+    assert decisions[m01_index].topic == IN
     assert selected_ids(result) == [id_of(fixture, "M01"), id_of(fixture, "I01")]
 
 
@@ -593,6 +679,12 @@ def test_t19_single_topic_subset_filters_matched_topics(fixture):
     candidates = [record for record in dev20_candidates(fixture) if record.candidate_id in ids]
     result = o5.select_macro_news(candidates, request(topics=(IN,), limit=2))
     for record in result.selected:
+        # Only the requested topic survives, and it is the primary.
         assert record.primary_topic == IN
-        assert IN in record.matched_topics
+        assert record.matched_topics == (IN,)
+        assert record.matched_rule_ids == ("R2-IN",)
+    for decision in result.decisions:
+        assert decision.matched_topics in ((), (IN,))
+        if decision.disposition == o5.SELECTED:
+            assert decision.matched_topics == (IN,)
     assert selected_ids(result) == [id_of(fixture, "M01"), id_of(fixture, "I01")]

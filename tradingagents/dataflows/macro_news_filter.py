@@ -386,6 +386,24 @@ def _record_of(candidate: Any) -> MacroNewsCandidate | None:
     """Coerce one supplied item into a candidate, or None when structurally invalid."""
 
     if isinstance(candidate, MacroNewsCandidate):
+        if not isinstance(candidate.candidate_id, str) or not candidate.candidate_id:
+            return None
+        if not isinstance(candidate.title, str):
+            return None
+        if candidate.summary is None:
+            candidate = MacroNewsCandidate(
+                candidate.candidate_id, candidate.title, "", candidate.published_at,
+                candidate.source, candidate.url,
+            )
+        if not isinstance(candidate.summary, str):
+            return None
+        if candidate.published_at is not None and not isinstance(
+                candidate.published_at, _StdlibDateTime):
+            return None
+        if candidate.source is not None and not isinstance(candidate.source, str):
+            return None
+        if candidate.url is not None and not isinstance(candidate.url, str):
+            return None
         return candidate
     if not isinstance(candidate, Mapping):
         return None
@@ -429,11 +447,31 @@ def _in_window(published_at: datetime | None, start_at: datetime, end_at: dateti
     return start_at.astimezone(UTC) <= moment <= end_at.astimezone(UTC)
 
 
+def _request_order(matched_topics: Sequence[str], requested: Sequence[str]) -> tuple[str, ...]:
+    """Matched topics filtered to the request and ordered by the request order."""
+
+    present = set(matched_topics)
+    return tuple(topic for topic in requested if topic in present)
+
+
+def _order_rule_ids(
+    matched_topics: Sequence[str], rule_ids: Sequence[str], requested: Sequence[str]
+) -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """Return topics and rule ids filtered to the request, aligned and request-ordered.
+
+    ``classify`` emits one rule id per matched topic in rule-table order; re-pair
+    them with their topics so the request order governs both sequences.
+    """
+
+    pairs = dict(zip(matched_topics, rule_ids, strict=True))
+    ordered_topics = _request_order(matched_topics, requested)
+    ordered_rules = tuple(pairs[topic] for topic in ordered_topics)
+    return ordered_topics, ordered_rules
+
+
 def _primary_topic(matched_topics: Sequence[str], requested: Sequence[str]) -> str | None:
-    for topic in requested:
-        if topic in matched_topics:
-            return topic
-    return None
+    ordered = _request_order(matched_topics, requested)
+    return ordered[0] if ordered else None
 
 
 def select_macro_news(
@@ -524,7 +562,8 @@ def select_macro_news(
             )
             continue
         topics, rule_ids = classify(record.title, record.summary)
-        primary = _primary_topic(topics, topic_order)
+        topics, rule_ids = _order_rule_ids(topics, rule_ids, topic_order)
+        primary = topics[0] if topics else None
         if primary is None:
             decisions.append(
                 Decision(
