@@ -427,7 +427,7 @@ Rollback/containment [CONFIRMED policy direction]: Gate is fail-closed with no p
 
 **Status of the ordered workflow at commit `6275725`:**
 1. **D** revised and shared the **v0.6** plans — **DONE**.
-2. **C — interface confirmation:** **C has confirmed the shared interface bound to `6275725`** (per the task record). *(Original source link is awaiting traceability — no GitHub review link is recorded here; do not invent one.)*
+2. **C — shared-interface confirmation:** **DONE** — Member C (`EloimEssiam`) comment `7008779473` (`2026-11-19T12:14:12Z`, bound to `6275725`): https://github.com/Caicys297/TradingAgents-CS5351/pull/17#issuecomment-7008779473 . See `docs/test-approvals/O4-Stage2-Evidence-Gate.md`.
 3. **F — test-design approval:** **DONE** — review `5974514410` (`2026-11-19T11:55:11Z`, bound to `6275725`; supplements `5971672933`/`5972448586`). F authorized administrative updates to outdated approval-status text without a renewed F approval.
 4. **A — execution-scope approval:** **DONE** — review `5973684411` (`2026-11-19T10:56:49Z`, bound to `6275725`); six shared files only.
 5. **O6 prerequisite:** O6 F identity-binding merged (`6a561ab`, PR #19); **C's CLI joint-verification evidence still to be recorded** before O4 CLI implementation.
