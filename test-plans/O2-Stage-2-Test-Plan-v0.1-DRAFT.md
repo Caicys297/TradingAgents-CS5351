@@ -1,14 +1,22 @@
 # O2 Stage 2 Integration — Test Plan
 
-**Document version:** v0.2-DRAFT (filename unchanged: `…-v0.1-DRAFT.md`)  
-**Status:** Draft planning record. A's scope supplement and F's test-plan/CI approval exist but are **bound to earlier commits** (§6); A's contract confirmation is recorded here; **this revision needs A (file scope) and F (revised test plan) review**. PR #18 remains Draft. Implementation is not authorised and no test or CI result is claimed.  
-**Owner:** B (QinQilun)  
-**Requirements baseline reference:** PR #9 merge commit `d36a677d4738efd365b6bbcf6f69f993acf8fd3c`. Joint-validation baseline: PR #21 merge `69e91ff115694f3455196e6a4114d4fe653fbb06`; O6 CLI merged via PR #20 `e4b6f9ac625f39579635c840aed98ab8dfefdaf9`. **Actual baseline verified at this plan update: `origin/main` = `102511dd44ad8779a46e09cbefe50edb8a995b45`**; re-verify and record the actual base SHA at implementation time.  
+**Document version:** v0.2-DRAFT (TC-05 artifact update; filename unchanged: `…-v0.1-DRAFT.md`)
+**Status:** Draft planning record. A implementation-scope confirmation, F test-boundary/CI approval, and latest A/F/C TC-05 artifact decisions are recorded here; existing formal approvals remain bound to earlier commits (§6). This revision needs A file-scope confirmation and F formal review of the revised test cases. PR #18 remains Draft. This planning update is not implementation approval; no implementation or test/CI result is claimed.
+**Owner:** B (QinQilun)
+**Requirements baseline reference:** PR #9 merge commit `d36a677d4738efd365b6bbcf6f69f993acf8fd3c`. Joint-validation baseline: PR #21 merge `69e91ff115694f3455196e6a4114d4fe653fbb06`; O6 CLI merged via PR #20 `e4b6f9ac625f39579635c840aed98ab8dfefdaf9`. **Actual baseline verified at this plan update: `origin/main` = `102511dd44ad8779a46e09cbefe50edb8a995b45`**; re-verify and record the actual base SHA at implementation time.
+**Plan update binding:** v0.2-DRAFT based on plan commit `c200512379fb38ddb9215cfb0bd71ea0d16aa241`; this update’s commit SHA is reported in PR #18.
 **Phase 1 implementation:** PR #16 merge commit `808df04f320d95c1ab4ef5a6e88149335cdeff41`.  
 **Related approved plan:** `test-plans/O2-Test-Plan-v0.3-DRAFT.md` Revision 2; its approval applies to Phase 1 documentation alignment only, not Stage 2.  
 **A scope supplement:** [PR #18 review 5959122354](https://github.com/Caicys297/TradingAgents-CS5351/pull/18#pullrequestreview-5959122354), submitted `2026-11-18T15:00:01Z`.  
 **F formal test-plan approval:** [PR #18 review 5968062524](https://github.com/Caicys297/TradingAgents-CS5351/pull/18#pullrequestreview-5968062524), submitted `2026-11-19T01:41:23Z`.  
 **C/F ownership and timing confirmation:** [PR #18 review 5968754538](https://github.com/Caicys297/TradingAgents-CS5351/pull/18#pullrequestreview-5968754538), submitted `2026-11-19T03:08:27Z`.
+
+## 0. Approval boundary and plan binding
+
+- **A-confirmed implementation scope:** completed normal CLI runs only; no Graph API change; existing legacy report/state/log paths remain; one manifest after analysis and report-save handling; fail-soft analysis result with fail-closed provenance; external saves preserved but omitted; no broadened file scope and no changes to public interfaces, schema, fingerprint, or redaction rules.
+- **F-confirmed test boundaries:** existing official test IDs only; separation of report-save failure from manifest-write failure; the approved three-platform CI matrix; F owns test review and approved CI workflow changes. Formal F approval of this revision’s added test cases remains required.
+- **C ownership and remaining decisions:** C owns `cli/run.py` integration and must document the actual base SHA and exact file scope before implementation. C7 specifies `RunDirectoryUnavailable` converted by `run_analysis` to `typer.Exit(code=1)`; hook implementation and write-evidence plumbing remain implementation work.
+- **Binding:** this update records v0.2-DRAFT decisions from base plan commit `c200512379fb38ddb9215cfb0bd71ea0d16aa241`. This planning update is not implementation approval unless the recorded approvals expressly say otherwise; existing formal approvals cover earlier commits, not this revision’s new contract text.
 
 ## 1. Purpose and boundary
 
@@ -25,7 +33,7 @@ B’s separate writer/TC-23 synchronization landed through PR #21 merge `69e91ff
 - Completed normal CLI analysis runs only; failed analysis and programmatic/API runs remain out of scope unless separately approved.
 - Reserve `results_dir/<safe ticker>/<date>/runs/<uuid4 hex>/` before Graph execution using `mkdir(exist_ok=False)`. Retry at most 3 times; if all attempts collide, fail clearly before Graph starts without changing existing files.
 - Keep existing report, state, and log paths in place. Reference only artifacts this run actually produced; label shared, unmigrated paths `shared_mutable`. If the user declines report saving, do not list that report.
-- Artefact collection per A's confirmed contract (C1–C4): `_offer_reports()` returns only the report paths this call confirmed saved; the state log is registered only after `record_decision()` returns successfully, by its expected path; `results_dir` sets the path boundary and relative paths while `run_dir` decides `run_unique`; a custom save path outside `results_dir` is saved but not referenced.
+- Artefact collection per A's confirmed contract (C1–C7): `_offer_reports()` returns only the report paths this call confirmed saved when the optional save succeeds as a whole; the state log is registered only after `record_decision()` returns successfully, by its expected path; live reports and `message_tool.log` stand on their own write evidence; `results_dir` sets the path boundary and relative paths while `run_dir` decides `run_unique`; a custom save path outside `results_dir` is saved but not referenced.
 - Write exactly one manifest after normal CLI analysis completes and after the report-save choice is handled.
 - On manifest **write** failure, preserve the completed analysis result and O4 effective rating, finish normally, show a short warning that the manifest was not saved and this run's provenance record is unavailable, show no success path, and leave no partial manifest. Retain the Phase 1 atomic-write guarantee. A report-**writer** failure is a distinct case, verified separately from the manifest-write failure.
 - Keep existing official test IDs: O2-TC-04/05/11/13/14/15/19/20/21/23. Put full CLI success coverage in TC-04 and failure coverage in TC-13/14; do not add a new ID.
@@ -34,6 +42,19 @@ B’s separate writer/TC-23 synchronization landed through PR #21 merge `69e91ff
 - This batch does not change Graph, based on C’s read-only inspection. If implementation finds a necessary Graph dependency, stop and provide the exact source call chain and proposed diff for A/C approval.
 - F CI matrix: Ubuntu keeps the existing Python 3.11–3.14 full regression and the Python 3.12 non-UTC job; macOS and Windows run `test/offline/test_o2_manifest.py` and `test/offline/test_o2_cli_manifest.py` on Python 3.12.
 - Align O2-TC-23 with PR #9’s merged Registry: `input_condensation_audit_note` is included as an allowlisted effective-config field; unknown/unapproved fields and secrets remain excluded.
+
+### TC-05 artifact rules
+
+1. CLI live section reports under `results_dir/<ticker>/<date>/reports/` may be listed only when the CLI has evidence that this invocation actually wrote them. Label them `shared_mutable`; never include historical files based on directory scans or existence.
+2. The optional saved report tree under `results_dir/reports/<ticker>_<stamp>/` is included only when `_offer_reports()` confirms the entire save operation succeeded. Its returned `list[Path]` must contain only files this invocation successfully saved: complete Markdown, HTML when generated, and section files actually written. Label them `shared_mutable`.
+3. If the user declines saving, or saving fails—even if partial files remain—do not list files from that optional saved report tree. Preserve the existing prompt/display behavior.
+4. Preserve saving to user-selected paths outside `results_dir`; omit those files from the manifest rather than rejecting the save path.
+5. Include the state log only after `record_decision()` returns normally, then reconstruct and validate the expected path using the same effective config, ticker, and date as the writer. On call failure, do not include it even if an old file exists. Label it `shared_mutable`. No `fsync` is required for this batch; do not claim power-loss durability. Do not change the Graph interface.
+6. Include `message_tool.log` only when the CLI has evidence that this invocation actually appended/wrote to it; label it `shared_mutable`. Existing-file presence alone is insufficient.
+7. Artifacts confined to the reserved per-run directory remain `run_unique` under the existing contract.
+8. `_artifact_references` must receive both `results_dir` and `run_dir`: use `results_dir` for containment and relative paths, and `run_dir` only to determine `run_unique`.
+
+Both per-section sets — live run-directory reports and the saved report tree — are in the expected manifest set when their own write evidence exists; the saved set additionally requires whole-save success. This resolves the earlier pending B set-choice question.
 
 ### Excluded
 
@@ -46,16 +67,21 @@ B’s separate writer/TC-23 synchronization landed through PR #21 merge `69e91ff
 ## 3. Stage 2 acceptance criteria
 
 1. Each completed in-scope CLI invocation reserves `results_dir/<safe ticker>/<date>/runs/<uuid4 hex>/` before Graph execution using `mkdir(exist_ok=False)`.
-2. Allocation retries at most 3 times. After 3 collisions, the run fails clearly before Graph starts, Graph is never called, and all pre-existing files remain unchanged.
+2. Allocation retries at most 3 times. After 3 collisions, the run fails clearly before Graph starts, Graph is never called, and all pre-existing files remain unchanged. C7 specifies `RunDirectoryUnavailable` converted by `run_analysis` to `typer.Exit(code=1)`; tests assert behavior, not fixed English wording.
 3. Two completed same-ticker/date CLI runs, including same-second/concurrent starts, produce distinct run directories and manifests without overwriting prior contents.
 4. Exactly one manifest is written after normal CLI analysis completes and after the report-save choice is handled.
 5. Successful manifest writing displays the manifest’s unique path.
 6. The manifest references only artefacts this run actually produced: reports confirmed saved by `_offer_reports()`, plus the state log only when `record_decision()` returned successfully. A declined save, files left by an error, and historical files are never listed. Shared, unmigrated paths are labelled `shared_mutable`; files under `run_dir` may be `run_unique`.
-7. A failed manifest **write** leaves no partial manifest, preserves the completed analysis result and O4 effective rating, finishes normally, shows a short warning that the manifest was not saved and provenance is unavailable, and shows no success path. Tests assert behavior, not an exact English warning string. A **report-writer** failure is verified separately: it must not be counted as a manifest-write failure, and whether other successfully saved files remain referenced is pending B's decision.
+7. A failed manifest **write** leaves no partial manifest, preserves the completed analysis result and O4 effective rating, finishes normally, shows a short warning that the manifest was not saved and provenance is unavailable, and shows no success path. Tests assert behavior, not an exact English warning string. A **report-writer** failure is verified separately and must not be counted as a manifest-write failure; a whole saved-report failure registers no files from that save directory, including partial leftovers.
 8. Existing report, state, log, memory, checkpoint, and public interface behavior remains compatible because existing paths are not migrated.
 9. `input_condensation_audit_note` is treated as allowlisted because PR #9 merged at `d36a677...` and that merge is in the implementation base. No unapproved config keys or secret values are serialized or fingerprinted.
 10. Offline tests make no network, live vendor, market-data, or LLM requests. `pytest -q` remains the planned first-layer regression command; integration-only conditions are reported separately.
 11. Ubuntu retains the existing Python 3.11–3.14 full regression plus the Python 3.12 non-UTC job. macOS and Windows run the O2 writer and CLI manifest target tests on Python 3.12, with exact CI run, commit, OS, and Python versions recorded.
+12. Live section reports and `message_tool.log` are included only with invocation-specific write evidence; historical files are excluded; both are labelled `shared_mutable`.
+13. Both per-section sets — live reports and the saved report tree — are included when their own write evidence exists. The saved set is included only after the entire save succeeds; the returned `list[Path]` contains only files actually saved; declined saves and whole-save failures, including partial files left on disk, contribute no paths; existing prompt/display behavior is preserved.
+14. A successful save to a user-selected path outside `results_dir` still saves normally but is omitted from the manifest rather than rejected.
+15. The state log is included only after `record_decision()` returns normally, with its expected path reconstructed and validated using the same effective config, ticker, and date as the writer; call failure excludes the log even when an old file exists; no `fsync` or power-loss durability is claimed; no Graph interface changes are made.
+16. `_artifact_references` receives both `results_dir` and `run_dir`; `results_dir` is used for containment and relative paths, and `run_dir` only for `run_unique`.
 
 ## 4. Proposed test coverage and traceability
 
@@ -86,7 +112,9 @@ A's confirmed contract items (C1–C7 in the execution plan) drive the expected 
 | C4 artefact base | `results_dir` for boundary + relative paths; `run_dir` for `run_unique`; no scanning | relative paths inside `results_dir`; `run_unique` only under `run_dir`; historical files never appear |
 | C5 live reports & log | each registered on its own confirmed write | live section write succeeds → registered; `message_tool.log` write succeeds → registered; raising write → not registered |
 | C6 external path | saves succeed but the reference is omitted | **two separate assertions**: the save happened, and the manifest omits it |
-| C7 reservation | 3 attempts, then abort | Graph never called; pre-existing files byte-unchanged; failure reported explicitly |
+| C7 reservation | 3 attempts, then `RunDirectoryUnavailable` converted to `typer.Exit(code=1)` | Graph never called; pre-existing files byte-unchanged; failure reported explicitly |
+
+**Both per-section sets:** the live run-directory reports and the saved report tree are both in the expected manifest set when their own write evidence exists. The saved set additionally requires whole-save success; a declined or wholly failed save contributes nothing from that save directory.
 
 **Required coverage, at the level TC-05's success case needs:**
 
@@ -108,7 +136,7 @@ All driven through the real `run_analysis()` with a fake Graph; real file writes
 
 - Run directory: `results_dir/<safe ticker>/<date>/runs/<uuid4 hex>/`, reserved before Graph with `mkdir(exist_ok=False)`, up to 3 total attempts, then a clear failure before Graph without changing existing files.
 - Existing report, state, and log paths remain in place; shared unmigrated paths are `shared_mutable`; files under `run_dir` may be `run_unique`; declined report saves are not listed.
-- **A's confirmed contract (C1–C7):** Graph interface unchanged; state log registered only after a successful `record_decision()`, by the expected path; `_log_state()` writes and closes without `fsync`, accepted for this batch; `_offer_reports()` returns `list[Path]` only on whole-save success, display unchanged; `_artifact_references` takes both `results_dir` and `run_dir`; live reports and `message_tool.log` stand on their own write evidence; out-of-boundary custom saves saved but unreferenced; reservation aborts after 3 collisions with Graph uncalled.
+- **A's confirmed contract (C1–C7):** Graph interface unchanged; state log registered only after a successful `record_decision()`, by the expected path; `_log_state()` writes and closes without `fsync`, accepted for this batch; `_offer_reports()` returns `list[Path]` only on whole-save success, display unchanged; `_artifact_references` takes both `results_dir` and `run_dir`; live reports and `message_tool.log` stand on their own write evidence; both live and saved per-section sets are included when their own write evidence exists; out-of-boundary custom saves saved but unreferenced; reservation aborts after 3 collisions with `RunDirectoryUnavailable` converted to `typer.Exit(code=1)` and Graph uncalled.
 - Exactly one manifest after normal CLI analysis completes and after report-save handling; failure behaviour is fail-soft for the analysis result and fail-closed for provenance claims.
 - Keep existing test IDs; no new ID. Full CLI success is TC-04. **TC-13/14 keep their original manifest-write failure meaning**; the report-writer partial failure is an independent case.
 - C owns shared `cli/run.py` integration and coordinates CLI test integration. B owns manifest interface and `test/offline/test_o2_cli_manifest.py`. F owns test review and approved CI workflow changes.
@@ -121,9 +149,11 @@ All driven through the real `run_analysis()` with a fake Graph; real file writes
 
 Only genuinely unspecified items remain:
 
-- **B:** whether both per-section report sets (the live run-directory set and the saved report tree) are in the expected manifest set, or whether one is sufficient. Everything else in the artefact list is settled by C1–C7.
 - **A:** confirmation of the exact file scope.
-- **F:** approval of this revised test plan.
+- **F:** formal approval of this revised test plan and its added test cases.
+- **C:** record the actual base SHA and exact `cli/run.py` file scope before implementation; implement the specified hooks and write-evidence plumbing.
+
+The earlier B set-choice question is resolved by the approved TC-05 artifact rules: both live and saved per-section sets are included when their own write evidence exists, with the saved set requiring whole-save success.
 
 ### Remaining before implementation results are claimed
 
@@ -140,7 +170,9 @@ Only genuinely unspecified items remain:
 - **F formal Stage 2 test-plan and CI matrix approval:** Approved in PR #18 review `5968062524` (bound to `e03b67d`), `2026-11-19T01:41:23Z`; still applies to TC-ID mapping and CI matrix only
 - **C/F ownership and timing confirmation:** PR #18 review `5968754538`
 - **A integration contract (C1–C7):** Confirmed; see §4a
-- **Pending:** F's approval of this revised test plan; A's file-scope confirmation; B's per-section-set choice
+- **Latest A/F/C TC-05 artifact decisions:** Recorded in this v0.2-DRAFT update; both live and saved per-section sets are included when their own write evidence exists, with the saved set requiring whole-save success. No additional GitHub review identifier was supplied.
+- **Plan update binding:** Base plan commit `c200512379fb38ddb9215cfb0bd71ea0d16aa241`; this update’s commit SHA is reported in PR #18.
+- **Pending:** F's formal approval of this revised test plan and added cases; A's file-scope confirmation; C's recorded actual base SHA/file scope before implementation
 - **PR #21 writer/TC-23 synchronization:** Merged at `69e91ff115694f3455196e6a4114d4fe653fbb06`
 - **O6 CLI integration:** Merged at `e4b6f9ac625f39579635c840aed98ab8dfefdaf9` (PR #20)
 - **Actual baseline at this revision:** `origin/main` `102511dd44ad8779a46e09cbefe50edb8a995b45`
