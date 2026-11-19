@@ -954,3 +954,129 @@ def test_tc_o6_14_two_runs_in_one_process_are_isolated(monkeypatch):
 
     assert run1_handler.get_agent_stats() == run1_snapshot
 
+
+
+# ---------------------------------------------------------------------------
+# W-9 / W-10 — token rendering in the per-Analyst summary
+#
+# These five cases render the real ``display_agent_summary`` for a handler fed
+# with real callback events, and assert the rendered Input/Output cells of the
+# Market Analyst row. Per O6-FR-02 an unknown field displays "Unknown", an
+# explicit zero displays "0", and a partial subtotal keeps its "(partial)"
+# marker. A genuinely omitted field is modelled by constructing the usage
+# metadata without that key (``AIMessage.model_construct``); it is never
+# fabricated as zero.
+# ---------------------------------------------------------------------------
+
+
+def _w910_handler_and_clock():
+    """A real handler over the current run's analyst keys, with a fake clock."""
+    from cli.stats_handler import StatsCallbackHandler
+
+    class _Clock:
+        def __init__(self):
+            self._now = 0.0
+
+        def __call__(self):
+            return self._now
+
+        def set(self, value):
+            self._now = value
+
+    clock = _Clock()
+    return StatsCallbackHandler({"market"}, clock=clock), clock
+
+
+def _w910_start(handler, clock, run_id, *, t=0.0):
+    """An attributed Market Analyst model start."""
+    clock.set(t)
+    handler.on_chat_model_start(
+        {}, [[]], run_id=run_id, metadata={"scope": "analyst", "agent_key": "market"}
+    )
+
+
+def _w910_end(handler, clock, run_id, usage, *, t=0.0):
+    """A model end for ``run_id``. ``usage`` is the raw usage_metadata payload
+    (None for no usage). A payload that omits a key is passed through as-is."""
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, LLMResult
+
+    clock.set(t)
+    if usage is None:
+        message = AIMessage(content="ok")
+    else:
+        message = AIMessage.model_construct(content="ok", usage_metadata=usage)
+    response = LLMResult(generations=[[ChatGeneration(message=message)]])
+    handler.on_llm_end(response, run_id=run_id)
+
+
+def _w910_market_cells(handler):
+    """Render the real summary and return (input_cell, output_cell) for Market."""
+    table, _text = _capture_summary_table(handler)
+    rows = _table_rows(table)
+    market = next(r for r in rows if r[0] == "Market Analyst")
+    return market[2], market[3]
+
+
+def test_w10_unknown_usage_renders_unknown():
+    """A call with no usage renders "Unknown" for both token fields."""
+    handler, clock = _w910_handler_and_clock()
+    _w910_start(handler, clock, "u1", t=0.0)
+    _w910_end(handler, clock, "u1", None, t=1.0)
+
+    stats = handler.get_agent_stats()
+    assert stats["analysts"]["market"]["calls"] == 1
+    assert stats["unattributed_calls"] == 0
+    assert _w910_market_cells(handler) == ("Unknown", "Unknown")
+
+
+def test_w10_explicit_zero_renders_zero():
+    """An explicit 0/0 renders "0" for both token fields."""
+    handler, clock = _w910_handler_and_clock()
+    _w910_start(handler, clock, "z1", t=0.0)
+    _w910_end(
+        handler, clock, "z1",
+        {"input_tokens": 0, "output_tokens": 0, "total_tokens": 0}, t=1.0,
+    )
+    assert _w910_market_cells(handler) == ("0", "0")
+
+
+def test_w9_partial_output_rendered():
+    """100/20 then input-only 50 renders input 150 (complete), output 20 (partial)."""
+    handler, clock = _w910_handler_and_clock()
+    _w910_start(handler, clock, "p1", t=0.0)
+    _w910_end(
+        handler, clock, "p1",
+        {"input_tokens": 100, "output_tokens": 20, "total_tokens": 120}, t=1.0,
+    )
+    _w910_start(handler, clock, "p2", t=1.0)
+    _w910_end(handler, clock, "p2", {"input_tokens": 50, "total_tokens": 50}, t=2.0)
+
+    market = handler.get_agent_stats()["analysts"]["market"]
+    assert market["input_tokens"] == {"value": 150, "status": "complete"}
+    assert market["output_tokens"] == {"value": 20, "status": "partial"}
+    assert _w910_market_cells(handler) == ("150", "20 (partial)")
+
+
+def test_w10_known_input_unknown_output():
+    """A single call with input=100 and output omitted renders "100" / "Unknown"."""
+    handler, clock = _w910_handler_and_clock()
+    _w910_start(handler, clock, "k1", t=0.0)
+    _w910_end(handler, clock, "k1", {"input_tokens": 100, "total_tokens": 100}, t=1.0)
+
+    market = handler.get_agent_stats()["analysts"]["market"]
+    assert market["input_tokens"] == {"value": 100, "status": "complete"}
+    assert market["output_tokens"] == {"value": None, "status": "unknown"}
+    assert _w910_market_cells(handler) == ("100", "Unknown")
+
+
+def test_w10_unknown_input_known_output():
+    """A single call with output=5 and input omitted renders "Unknown" / "5"."""
+    handler, clock = _w910_handler_and_clock()
+    _w910_start(handler, clock, "o1", t=0.0)
+    _w910_end(handler, clock, "o1", {"output_tokens": 5, "total_tokens": 5}, t=1.0)
+
+    market = handler.get_agent_stats()["analysts"]["market"]
+    assert market["input_tokens"] == {"value": None, "status": "unknown"}
+    assert market["output_tokens"] == {"value": 5, "status": "complete"}
+    assert _w910_market_cells(handler) == ("Unknown", "5")

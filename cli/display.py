@@ -377,9 +377,9 @@ def update_display(layout, spinner_text=None, stats_handler=None, start_time=Non
 
 
 def format_agent_tokens(field):
-    """One token field as shown in the summary: value, or "--" when unknown."""
+    """One token field as shown in the summary: value, or "Unknown" when unknown."""
     if not field or field.get("status") == "unknown" or field.get("value") is None:
-        return "--"
+        return "Unknown"
     text = format_tokens(field["value"])
     if field.get("status") == "partial":
         # The figure is a floor, not a total: say so rather than implying
@@ -393,7 +393,7 @@ def display_agent_summary(stats_handler, target_console=None):
 
     Rendered after the run ends, on the normal screen: the live footer has
     three lines and cannot hold one row per analyst. A named row appears only
-    for an analyst that recorded a call, an unknown token count prints "--"
+    for an analyst that recorded a call, an unknown token count prints "Unknown"
     (never 0), and the unattributed line is always printed so a zero is
     evidence rather than silence.
 
