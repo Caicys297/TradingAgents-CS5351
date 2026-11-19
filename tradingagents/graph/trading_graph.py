@@ -425,9 +425,10 @@ class TradingAgentsGraph:
         """Record a finished run: its state log, and its decision in the memory log
         for reflection on the next same-ticker run. propagate() and the CLI both end here.
 
-        The O4 evidence Gate runs here, at the one point both entry points reach,
-        and at most once per execution: a retry after a persistence failure reuses
-        the stored Gate result instead of re-judging the run.
+        Every new authoritative rating written by this call is judged by the O4
+        evidence Gate first — whether or not the caller opened an execution with
+        ``begin_checkpoint``. The execution window only governs reuse: within one
+        execution the Gate runs once and a retry reuses its result.
         """
         # Imported here rather than at module scope: evidence_gate imports the
         # analyst-execution plan, which pulls in this package, so a top-level
@@ -437,22 +438,9 @@ class TradingAgentsGraph:
             check_evidence,
         )
 
-        if self._execution_active is not True:
-            # A direct call outside a run's execution window (existing tests and
-            # library callers). Keep the pre-Gate behaviour: log, then persist.
-            self._log_state(trade_date, final_state)
-            decision = final_state.get("final_trade_decision")
-            if not decision:
-                logger.warning("No final decision for %s on %s; nothing added to the memory log",
-                               company_name, trade_date)
-                return
-            self.memory_log.store_decision(
-                ticker=company_name, trade_date=trade_date, final_trade_decision=decision,
-                rating=run_rating(final_state),
-            )
-            return
-
-        record = self._completion
+        # Only a live execution window may reuse an earlier result; a bare call
+        # is a new publication and starts from scratch.
+        record = self._completion if self._execution_active is True else None
 
         if record is not None and record.published:
             # This execution is already gated and persisted. A duplicate
@@ -460,13 +448,18 @@ class TradingAgentsGraph:
             return
 
         if record is None:
-            # First arrival for this execution: capture the pre-Gate rating
-            # before anything overwrites final_rating, judge once, then publish.
+            # First arrival: capture the pre-Gate rating before anything
+            # overwrites final_rating, then judge once.
             original_rating = _resolve_original_rating(final_state)[0]
             gate = check_evidence(final_state, self.selected_analysts)
             _apply_gate_result(final_state, gate, original_rating)
-            record = CompletionRecord(gate=gate, original_rating=original_rating)
-            self._completion = record
+            if self._execution_active is True:
+                record = CompletionRecord(gate=gate, original_rating=original_rating)
+                self._completion = record
+            else:
+                # A bare call has no execution to remember; the result is used
+                # for this publication only.
+                record = CompletionRecord(gate=gate, original_rating=original_rating)
         else:
             # A retry of the same execution: the Gate already ran. Reuse its
             # result and the rating captured on that first pass, so a retry
