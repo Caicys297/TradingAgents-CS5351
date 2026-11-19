@@ -296,7 +296,9 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
     # runs of the same ticker and date never share one. A failure stops the run
     # here, before any graph work, and leaves existing files untouched.
     try:
-        run_context = _reserve_run_directory(results_dir, selections["ticker"], selections["analysis_date"])
+        # results_dir here is already the run's ticker/date directory, so the
+        # reservation takes that directly rather than rebuilding it.
+        run_context = _reserve_run_directory(config["results_dir"], selections["ticker"], selections["analysis_date"])
     except RunDirectoryUnavailable as exc:
         console.print(f"[red]{exc}[/red]")
         raise typer.Exit(code=1) from exc
@@ -622,7 +624,17 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
         results_dir=config["results_dir"],
         run_dir=run_context.run_dir,
     )
-    _finalize_run_manifest(run_context, config=manifest_config, artifacts=references)
+    result = _finalize_run_manifest(run_context, config=manifest_config, artifacts=references)
+    if result.success and result.manifest_path is not None:
+        # Say where the manifest went, so a run's provenance record is findable
+        # without inspecting the run directory afterwards.
+        console.print(f"\n[green]✓ Manifest written to:[/green] {result.manifest_path}")
+    else:
+        # The warning names the failure; make clear the analysis itself stands.
+        console.print(
+            "[yellow]The analysis result above stands; only its provenance "
+            "record is missing.[/yellow]"
+        )
 
 
 def _yes(question: str) -> bool:
