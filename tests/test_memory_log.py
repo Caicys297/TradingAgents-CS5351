@@ -955,6 +955,11 @@ class TestLegacyRemoval:
         mock_graph.memory_log = TradingMemoryLog({"memory_log_path": str(tmp_path / "mem.md")})
         mock_graph.debug = False
         mock_graph.config = {"results_dir": str(tmp_path)}
+        # O4: every new write is judged by the evidence Gate, which needs a real
+        # analyst selection; a MagicMock attribute would be an illegal config.
+        mock_graph.selected_analysts = ("market", "social", "news", "fundamentals")
+        mock_graph._execution_active = True
+        mock_graph._completion = None
         mock_graph.graph.invoke.return_value = fake_state
         mock_graph.propagator.create_initial_state.return_value = fake_state
         mock_graph.propagator.get_graph_args.return_value = {}

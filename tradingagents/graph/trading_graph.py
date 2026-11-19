@@ -3,6 +3,7 @@ import json
 import logging
 import os
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -25,6 +26,33 @@ from .propagation import Propagator
 from .setup import GraphSetup
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class CompletionRecord:
+    """One execution's Gate outcome, held in memory for the life of that execution.
+
+    Created when the Gate first judges a completed run and cleared when the
+    execution ends (``end_checkpoint``) or a new one begins
+    (``begin_checkpoint``). Never persisted: a Resumed or re-run execution on
+    the same instance gets its own record and is judged afresh.
+    """
+
+    gate: Any
+    original_rating: str
+    published: bool = False
+
+
+def _apply_gate_result(state, gate, original_rating: str) -> None:
+    """Publish a Gate result into the run state, in place.
+
+    ``original_rating`` is the value captured before the Gate ran, passed in
+    rather than re-read so a retry cannot mistake a downgraded ``final_rating``
+    for the original. The decision body is left byte-for-byte intact.
+    """
+    state["original_rating"] = original_rating
+    state["final_rating"] = gate.effective_rating
+    state["effective_rating"] = gate.effective_rating
 
 
 def _validate_trade_date(trade_date) -> str:
@@ -50,6 +78,19 @@ _NOT_IN_SIGNATURE = frozenset({
 
 class TradingAgentsGraph:
     """Main class that orchestrates the trading agents framework."""
+
+    # The current execution's Gate outcome. Declared here as well as set in
+    # __init__ so an instance assembled without the constructor (as some tests
+    # do) still reads a defined value.
+    _completion: CompletionRecord | None = None
+    # True between begin_checkpoint() and end_checkpoint(): the window in which
+    # a run is a real execution and the evidence Gate applies. A bare
+    # record_decision() call outside that window keeps the pre-Stage-2
+    # behaviour the existing callers and tests rely on.
+    _execution_active: bool = False
+    # The default selection, so a graph assembled without the constructor still
+    # has a defined analyst set for the Gate.
+    selected_analysts: tuple = ("market", "social", "news", "fundamentals")
 
     def __init__(
         self,
@@ -113,6 +154,19 @@ class TradingAgentsGraph:
         self.graph = self.workflow.compile()
         self._checkpointer_ctx = None
         self._resuming = False
+        # The current execution's Gate outcome, for diagnostics and tests.
+        self._completion: CompletionRecord | None = None
+
+    @property
+    def last_completion(self) -> CompletionRecord | None:
+        """This execution's Gate result, for diagnostics and tests.
+
+        Valid from the moment the Gate finishes until ``end_checkpoint`` clears
+        it, and ``None`` before any Gate in this execution. In-memory only; it is
+        not a publication channel — consumers read ``effective_rating`` from the
+        run state.
+        """
+        return self._completion
 
     def resolve_instrument_context(self, ticker: str, asset_type: str = "stock",
                                    trade_date: str | None = None) -> str:
@@ -201,6 +255,13 @@ class TradingAgentsGraph:
         graph, making the flag a no-op.
         """
         self._resuming = False
+        # A new execution begins here, on both the propagate()/checkpoint_scope
+        # path and the CLI stream path. Forget the previous execution's Gate
+        # result so a re-run or Resume of the same ticker and date is judged
+        # afresh instead of reusing a stale verdict. Reset before the
+        # checkpoint-disabled early return so it always applies.
+        self._completion = None
+        self._execution_active = True
         if not self.config.get("checkpoint_enabled"):
             return None
         signature = self._run_signature(asset_type, portfolio)
@@ -235,6 +296,10 @@ class TradingAgentsGraph:
             self._checkpointer_ctx = None
             self.graph = self.workflow.compile()
         self._resuming = False
+        # The execution is over: drop its Gate outcome so nothing outside the
+        # run's own window can read or reuse it.
+        self._completion = None
+        self._execution_active = False
 
     @contextmanager
     def checkpoint_scope(self, company_name, trade_date, asset_type: str = "stock", portfolio=None):
@@ -358,17 +423,61 @@ class TradingAgentsGraph:
 
     def record_decision(self, company_name, trade_date, final_state):
         """Record a finished run: its state log, and its decision in the memory log
-        for reflection on the next same-ticker run. propagate() and the CLI both end here."""
+        for reflection on the next same-ticker run. propagate() and the CLI both end here.
+
+        Every new authoritative rating written by this call is judged by the O4
+        evidence Gate first — whether or not the caller opened an execution with
+        ``begin_checkpoint``. The execution window only governs reuse: within one
+        execution the Gate runs once and a retry reuses its result.
+        """
+        # Imported here rather than at module scope: evidence_gate imports the
+        # analyst-execution plan, which pulls in this package, so a top-level
+        # import would close a cycle.
+        from tradingagents.agents.evidence_gate import (
+            _resolve_original_rating,
+            check_evidence,
+        )
+
+        # Only a live execution window may reuse an earlier result; a bare call
+        # is a new publication and starts from scratch.
+        record = self._completion if self._execution_active is True else None
+
+        if record is not None and record.published:
+            # This execution is already gated and persisted. A duplicate
+            # completion has nothing left to do.
+            return
+
+        if record is None:
+            # First arrival: capture the pre-Gate rating before anything
+            # overwrites final_rating, then judge once.
+            original_rating = _resolve_original_rating(final_state)[0]
+            gate = check_evidence(final_state, self.selected_analysts)
+            _apply_gate_result(final_state, gate, original_rating)
+            if self._execution_active is True:
+                record = CompletionRecord(gate=gate, original_rating=original_rating)
+                self._completion = record
+            else:
+                # A bare call has no execution to remember; the result is used
+                # for this publication only.
+                record = CompletionRecord(gate=gate, original_rating=original_rating)
+        else:
+            # A retry of the same execution: the Gate already ran. Reuse its
+            # result and the rating captured on that first pass, so a retry
+            # never re-judges and never records a downgraded rating as original.
+            _apply_gate_result(final_state, record.gate, record.original_rating)
+
         self._log_state(trade_date, final_state)
         decision = final_state.get("final_trade_decision")
         if not decision:
             logger.warning("No final decision for %s on %s; nothing added to the memory log",
                            company_name, trade_date)
+            record.published = True
             return
         self.memory_log.store_decision(
             ticker=company_name, trade_date=trade_date, final_trade_decision=decision,
-            rating=run_rating(final_state),
+            rating=record.gate.effective_rating,
         )
+        record.published = True
 
     def _run_graph(self, company_name, trade_date, asset_type: str = "stock",
                    checkpoint_thread_id: str | None = None, portfolio=None):
