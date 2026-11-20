@@ -264,9 +264,9 @@ def _select_o5_batch(
 def _o5_empty_kind(result: SelectorResult) -> str:
     """Pick the V-FILTERED-EMPTY ``empty_kind`` for this batch.
 
-    The enum values are fixed by Interface section 4 (M2/§4); which member
-    applies to an all-irrelevant filtered batch still awaits D's confirmation,
-    so no test pins this literal.
+    All-valid-but-all-irrelevant input maps to ``ALL_IRRELEVANT``: that is the
+    existing Interface section 4 enum member describing this cause exactly, so
+    no enum or public field is added.
     """
     codes = {item.reason_code for item in result.decisions}
     if codes and codes <= {"NO_MACRO_EVIDENCE"}:
@@ -275,19 +275,23 @@ def _o5_empty_kind(result: SelectorResult) -> str:
 
 
 def _o5_invariant_failure_text() -> str:
-    """Provisional suppression notice; D must confirm the exact wording."""
-    return (
-        "Fetched candidate(s) whose selected subset failed an integrity check, "
-        "so no articles are shown. This is not an absence of news."
-    )
+    """FILTER_UNAVAILABLE: relevance could not be determined.
+
+    D-supplied sentence. The Registry requires "an explicit filter-unavailable
+    message, not no-news" but fixes no literal. Kept distinct from
+    FILTERED_EMPTY and from upstream-empty.
+    """
+    return "Macro news filtering was unavailable; relevance could not be determined."
 
 
 def _o5_filtered_empty_text(count: int) -> str:
-    """Provisional wording, isolated so D can confirm without touching flow."""
-    return (
-        f"Fetched {count} candidate(s); none carry the requested macro evidence. "
-        "This is a filter result, not a statement that no macro news exists."
-    )
+    """FILTERED_EMPTY: fetched candidates were filtered successfully to zero.
+
+    D-supplied sentence; the Registry fixes no literal for this case. It must
+    never claim that no relevant news exists outside the fetched candidates.
+    ``count`` is accepted for call-site stability but is not part of the text.
+    """
+    return "No news items matched the macro relevance filter."
 
 
 def _extract_article_data(article: dict) -> dict:
@@ -453,7 +457,9 @@ def get_global_news_yfinance(
             "V-LIMIT-ZERO", batch_id=None, input_count=0,
             executed_query_count=0, pre_filter_candidate_count=0,
         )
-        return "LIMIT_ZERO: no global news requested."
+        # D-supplied sentence; the Registry fixes only "return LIMIT_ZERO
+        # without vendor fetch", not this literal.
+        return "No macro news items were requested because the result limit is zero."
 
     in_window_news = []
     seen_titles = set()

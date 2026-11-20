@@ -65,7 +65,8 @@ def test_s3_invalid_date_or_lookback_never_fetches(monkeypatch, adapter, date, l
 def test_s3_zero_limit_skips_vendor(monkeypatch, adapter):
     monkeypatch.setattr(news.yf, "Search", lambda **kwargs: pytest.fail("fetched"))
     result = news.get_global_news_yfinance("2026-09-28", limit=0)
-    assert isinstance(result, str) and result.startswith("LIMIT_ZERO")
+    # D-supplied sentence; registry fixes only "LIMIT_ZERO without vendor fetch".
+    assert result == "No macro news items were requested because the result limit is zero."
     assert [event["variant"] for event in adapter.events] == ["V-LIMIT-ZERO"]
     assert adapter.events[0]["executed_query_count"] == 0
     assert adapter.events[0]["input_count"] == 0
@@ -242,7 +243,7 @@ def test_s4_selected_path_filters_before_slice_and_keeps_fields(monkeypatch, ada
     assert event["input_count"] == 2
     assert event["pre_filter_candidate_count"] == 2
     assert event["executed_query_count"] == 1
-    assert event["rule" if False else "rules_version"] == "o5-rules-v1.1-draft"
+    assert event["rules_version"] == "o5-rules-v1.1-draft"
     assert event["reason_counts"] == {"NO_MACRO_EVIDENCE": 1, "SELECTED": 1}
 
 
@@ -261,6 +262,8 @@ def test_s4_t04d_filtered_to_zero_is_not_upstream_empty(monkeypatch, adapter):
     # Never unfiltered articles, never an upstream-empty mislabel.
     assert "###" not in result
     assert "unavailable" not in result.casefold() and "no global news found" not in result.casefold()
+    # FILTERED_EMPTY sentence (D-supplied; registry fixes no literal).
+    assert result == "No news items matched the macro relevance filter."
     assert [event["variant"] for event in adapter.events] == ["V-FILTERED-EMPTY"]
     event = adapter.events[0]
     assert event["input_count"] == 1
@@ -273,16 +276,16 @@ def test_s4_t04d_filtered_to_zero_is_not_upstream_empty(monkeypatch, adapter):
     assert calls == ["q1"]
 
 
-def test_s4_t04d_empty_kind_is_present_but_literal_awaits_d(monkeypatch, adapter):
-    # Structural assertion only: D has not confirmed the literal.
+def test_s4_t04d_all_irrelevant_uses_the_all_irrelevant_enum_member(monkeypatch, adapter):
+    # All-valid, all-irrelevant input: the existing ALL_IRRELEVANT enum member
+    # describes the cause exactly; no enum or public field is added.
     pages = [[_nested("Company reports quarterly earnings", "", "https://example.test/e",
                       "2026-09-27T10:00:00Z")]]
     Search, _ = _search_returning(pages)
     monkeypatch.setattr(news.yf, "Search", Search)
     news.get_global_news_yfinance("2026-09-28", look_back_days=2, limit=1)
     event = adapter.events[0]
-    assert isinstance(event["empty_kind"], str) and event["empty_kind"]
-    assert event["empty_kind"] in {"ALL_IRRELEVANT", "MIXED_NONE_RELEVANT"}
+    assert event["empty_kind"] == "ALL_IRRELEVANT"
 
 
 def test_s4_i5_failing_sink_leaves_result_unchanged(monkeypatch, caplog):
@@ -334,6 +337,34 @@ def test_s4_invariant_violation_suppresses_publication(monkeypatch, adapter):
     assert [event["variant"] for event in adapter.events] == ["V-INVARIANT"]
     assert adapter.events[0]["violated_invariant"] == "INV-O5-01"
     assert adapter.events[0]["published_selected_count"] == 0
+
+
+def test_s4_filter_unavailable_text_is_distinct_from_filtered_empty(monkeypatch, adapter):
+    """FILTER_UNAVAILABLE must not read like FILTERED_EMPTY or upstream-empty."""
+    pages = [[_nested("Fed holds rates", "Policy unchanged",
+                      "https://example.test/fed", "2026-09-27T10:00:00Z")]]
+    Search, _ = _search_returning(pages)
+    monkeypatch.setattr(news.yf, "Search", Search)
+
+    from dataclasses import replace as _replace
+
+    real_select = news.select_macro_news
+
+    def tampering_select(candidates, request):
+        result = real_select(candidates, request)
+        result.selected = [_replace(item, title="Tampered") for item in result.selected]
+        return result
+
+    monkeypatch.setattr(news, "select_macro_news", tampering_select)
+    result = news.get_global_news_yfinance("2026-09-28", look_back_days=2, limit=1)
+
+    # D-supplied sentence; registry requires "explicit filter-unavailable, not no-news".
+    assert result == (
+        "Macro news filtering was unavailable; relevance could not be determined."
+    )
+    assert "No news items matched the macro relevance filter." not in result
+    assert "unavailable for" not in result.casefold()
+    assert [event["variant"] for event in adapter.events] == ["V-INVARIANT"]
 
 
 def test_s4_approved_raw_early_stop_stops_before_later_queries(monkeypatch, adapter):
