@@ -426,6 +426,23 @@ def _verify_binding(rec, api, repo, reviewers, feature, approval_iso, root, prob
     if not ev.get("id"):
         problems.append(f"{rp}: clarification missing reference to original evidence id")
         return None
+    # The clarification must identify the EXACT original artifact it clarifies:
+    # its declared original_evidence_id must equal the record's real evidence id
+    # (type + id + source pr), not merely reference some arbitrary artifact.
+    orig = rec.get("evidence") or {}
+    if "original_evidence_id" in b:
+        id_mismatch = str(b["original_evidence_id"]) != str(orig.get("id"))
+        type_mismatch = b.get("original_evidence_type") and b["original_evidence_type"] != orig.get("type")
+        pr_mismatch = (b.get("original_source_pr") is not None and
+                       str(b["original_source_pr"]) != str(orig.get("pr")))
+        if id_mismatch or type_mismatch or pr_mismatch:
+            problems.append(f"{rp}: clarification references a different/original artifact than this record's evidence")
+            return None
+    # Also: the clarification evidence id must differ from the original (it is a
+    # separate, later record), and must not be a fabricated back-reference.
+    if str(ev.get("id")) == str(orig.get("id")):
+        problems.append(f"{rp}: clarification evidence is the original artifact itself, not a separate clarification")
+        return None
     try:
         author, ctime, utime, body, _ = _evidence_with_meta({"evidence": ev}, api, None)
     except ExecutionError as exc:
@@ -626,12 +643,19 @@ def validate_batch(records, api, default_pr, batch_id, applicable, reviewers, ea
         # accepted; a marker is required.
         marker = _parse_approval_marker(body)
         kinds_declared = rec.get("approval_kinds") or ([rec.get("approval_kind")] if rec.get("approval_kind") else [])
+        kinds_declared = [k for k in kinds_declared if k]
         allowed_declared = [str(a) for a in rec.get("allowed_files", [])]
         if marker is None:
             problems.append(f"{rp}: no explicit TEST-APPROVAL marker in evidence "
                             "(keyword mentions are not accepted; add the authorized marker)")
             continue
-        if not any(_marker_matches(marker, plan_sha, plan_ver, k, allowed_declared) for k in kinds_declared):
+        # Credit ONLY the single kind the marker explicitly names. A marker for one
+        # kind must never satisfy another kind, even if the record claims both.
+        marker_kind = marker["kind"]
+        if marker_kind not in kinds_declared:
+            problems.append(f"{rp}: marker kind {marker_kind!r} not among record's declared kinds {kinds_declared}")
+            continue
+        if not _marker_matches(marker, plan_sha, plan_ver, marker_kind, allowed_declared):
             problems.append(f"{rp}: TEST-APPROVAL marker does not match plan/version/kind/scope")
             continue
 
@@ -681,27 +705,29 @@ def validate_batch(records, api, default_pr, batch_id, applicable, reviewers, ea
             problems.append(f"{rp}: self-approval (evidence author {author} is an implementer)")
             continue
 
-        kinds = rec.get("approval_kinds") or ([rec.get("approval_kind")] if rec.get("approval_kind") else [])
-        kinds = [k for k in kinds if k]
-        for kind in kinds:
-            if kind == "test_plan":
-                if role == role_needed or _delegated(records, api, default_pr, reviewers, batch_id,
-                                                     feature, "test_plan", plan_sha, plan_ver,
-                                                     reviewer_login=author, approval_iso=otime):
-                    test_ok = rec
-                else:
-                    problems.append(f"{rp}: test_plan for {feature} requires reviewer {role_needed} "
-                                    f"(or delegation); author role {role!r}")
-            elif kind == "execution_plan":
-                if role == EXECUTION_PLAN_REVIEWER or _delegated(records, api, default_pr, reviewers, batch_id,
-                                                                 feature, "execution_plan", plan_sha, plan_ver,
-                                                                 reviewer_login=author, approval_iso=otime):
-                    exec_ok = rec
-                else:
-                    problems.append(f"{rp}: execution_plan requires reviewer {EXECUTION_PLAN_REVIEWER} "
-                                    f"(or delegation); author role {role!r}")
+        # Credit ONLY the kind the marker explicitly approved (single kind per
+        # marker). The reviewer-role / delegation check applies to that kind.
+        credit_kinds = {marker_kind}
+        if clar is not None:
+            # A clarification may additionally confirm exactly its own kind, but
+            # only if it is a different, still-authenticated kind for this record.
+            credit_kinds.add(clar["kind"])
+        if "test_plan" in credit_kinds:
+            if role == role_needed or _delegated(records, api, default_pr, reviewers, batch_id,
+                                                 feature, "test_plan", plan_sha, plan_ver,
+                                                 reviewer_login=author, approval_iso=otime):
+                test_ok = rec
             else:
-                problems.append(f"{rp}: unknown approval kind {kind!r}")
+                problems.append(f"{rp}: test_plan for {feature} requires reviewer {role_needed} "
+                                f"(or delegation); author role {role!r}")
+        if "execution_plan" in credit_kinds:
+            if role == EXECUTION_PLAN_REVIEWER or _delegated(records, api, default_pr, reviewers, batch_id,
+                                                             feature, "execution_plan", plan_sha, plan_ver,
+                                                             reviewer_login=author, approval_iso=otime):
+                exec_ok = rec
+            else:
+                problems.append(f"{rp}: execution_plan requires reviewer {EXECUTION_PLAN_REVIEWER} "
+                                f"(or delegation); author role {role!r}")
 
     if test_ok is None:
         problems.append("missing required test-plan approval for this batch")

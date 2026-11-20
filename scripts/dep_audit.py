@@ -168,32 +168,54 @@ def _depfiles_changed_per_commit(root: Path, commits: list[str]) -> list[str]:
     return hits
 
 
-def _audit_requirements_at_rev(root: Path, rev: str) -> dict:
-    """Resolve and audit the dependencies declared at ``rev`` via its requirements.txt.
+def _audit_requirements_at_rev(root: Path, rev: str, scanner=None) -> dict:
+    """Resolve + audit the dependencies of the project AT ``rev`` in an isolated
+    checkout so ``requirements.txt`` (which contains just ``.``) resolves that
+    revision's own ``pyproject.toml`` rather than HEAD's.
 
-    Extracts requirements.txt at ``rev`` to a temp file and runs pip-audit against
-    that exact resolved input (not the HEAD installed env). Raises ScannerError on
-    tool/parse failure. If the revision has no requirements.txt, raises ScannerError
-    so the caller can report the blocker (cannot resolve deps for that rev).
+    Creates a temporary git worktree at ``rev``, runs pip-audit with the same
+    intended dependency group as the gate (``.[dev]`` installed semantics) against
+    that checkout, then removes the worktree. A ``scanner`` callable may be injected
+    for controlled tests (it receives the worktree path and must return a report
+    dict); the default runs the real pip-audit. Never runs the HEAD-extracted
+    requirements file. Raises ScannerError on tool/parse failure; the worktree is
+    always removed.
     """
     import tempfile
-    show = subprocess.run(["git", "-C", str(root), "show", f"{rev}:requirements.txt"],
-                          capture_output=True, text=True)
-    if show.returncode != 0:
-        raise ScannerError(f"no requirements.txt at {rev[:12]}; cannot resolve its dependencies")
-    fd_path = Path(tempfile.mkdtemp(prefix="deprev-")) / "requirements.txt"
-    fd_path.write_text(show.stdout)
-    cmd = [sys.executable, "-m", "pip_audit", "-r", str(fd_path),
-           "--format", "json", "--progress-spinner", "off"]
-    proc = subprocess.run(cmd, capture_output=True, text=True)
-    if proc.returncode not in (0, 1):
-        raise ScannerError(f"pip-audit failed for {rev[:12]} (exit {proc.returncode}): {proc.stderr.strip()[:200]}")
+    wt = Path(tempfile.mkdtemp(prefix="deprev-"))
+    added = False
     try:
-        report = json.loads(proc.stdout)
-    except json.JSONDecodeError as exc:
-        raise ScannerError(f"pip-audit non-JSON for {rev[:12]}") from exc
-    validate_report(report)
-    return report
+        add = subprocess.run(["git", "-C", str(root), "worktree", "add", "--detach",
+                              str(wt), rev], capture_output=True, text=True)
+        if add.returncode != 0:
+            raise ScannerError(f"cannot create worktree for {rev[:12]}: {add.stderr.strip()[:200]}")
+        added = True
+        req = wt / "requirements.txt"
+        if not req.is_file():
+            raise ScannerError(f"no requirements.txt at {rev[:12]}; cannot resolve its dependencies")
+
+        if scanner is not None:
+            report = scanner(wt)
+        else:
+            cmd = [sys.executable, "-m", "pip_audit", "-r", str(req),
+                   "--format", "json", "--progress-spinner", "off"]
+            proc = subprocess.run(cmd, capture_output=True, text=True, cwd=wt)
+            if proc.returncode not in (0, 1):
+                raise ScannerError(
+                    f"pip-audit failed for {rev[:12]} (exit {proc.returncode}): {proc.stderr.strip()[:200]}")
+            try:
+                report = json.loads(proc.stdout)
+            except json.JSONDecodeError as exc:
+                raise ScannerError(f"pip-audit non-JSON for {rev[:12]}") from exc
+        validate_report(report)
+        return report
+    finally:
+        if added:
+            subprocess.run(["git", "-C", str(root), "worktree", "remove", "--force", str(wt)],
+                           capture_output=True, text=True)
+        else:
+            import shutil
+            shutil.rmtree(wt, ignore_errors=True)
 
 
 def baseline_keys(base: dict) -> set[tuple[str, str, str]]:

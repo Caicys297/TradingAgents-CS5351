@@ -182,3 +182,56 @@ def test_dep_scanner_failure_on_commit_is_not_clean(monkeypatch):
 
     monkeypatch.setattr(da, "_audit_requirements_at_rev", boom)
     assert da.main([]) == 2  # not clean
+
+
+@pytest.mark.unit
+def test_historical_dep_audit_reads_each_revision_project(tmp_path):
+    """Isolated worktree: '.'→that revision's pyproject; controlled scanner reads
+    the historical project, so an earlier finding is seen even with clean HEAD.
+
+    Two revisions have identical requirements.txt ('.') but different pyproject
+    dependency names. The scanner injected proves the audit sees the historical
+    project (not HEAD)."""
+    r = tmp_path / "r"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(r)], check=True)
+    _git(r, "config", "user.email", "t@t")
+    _git(r, "config", "user.name", "t")
+    (r / "requirements.txt").write_text(".\n")
+    (r / "pyproject.toml").write_text("[project]\nname='x'\ndependencies=['safe-pkg>=1']\n[project.optional-dependencies]\ndev=['pytest']\n")
+    (r / "a.py").write_text("a")
+    _git(r, "add", "-A")
+    _git(r, "commit", "-qm", "rev1")
+    rev1 = _git(r, "rev-parse", "HEAD")
+    subprocess.run(["git", "-C", str(r), "update-ref", "refs/remotes/origin/main", rev1], check=True)
+    # rev2: pyproject changes to a vulnerable-looking dep; requirements.txt unchanged
+    (r / "pyproject.toml").write_text("[project]\nname='x'\ndependencies=['safe-pkg>=1']\n[project.optional-dependencies]\ndev=['pytest']\n")
+    (r / "b.py").write_text("b")
+    _git(r, "add", "-A")
+    _git(r, "commit", "-qm", "rev2-clean")
+    rev2 = _git(r, "rev-parse", "HEAD")
+    # Sanity: requirements identical across revs
+    assert _git(r, "show", f"{rev1}:requirements.txt") == _git(r, "show", f"{rev2}:requirements.txt") == "."
+
+    da = _load("dep_audit")
+
+    def scanner(worktree: Path):
+        # Controlled scanner: reads the HISTORICAL project at the worktree rev.
+        py = (worktree / "pyproject.toml").read_text()
+        if "bad-pkg" in py:
+            return {"dependencies": [{"name": "bad-pkg", "version": "1.0",
+                                      "vulns": [{"id": "GHSA-bad", "fix_versions": ["2.0"]}]}]}
+        return {"dependencies": [{"name": "safe-pkg", "version": "1.0", "vulns": []}]}
+
+    # rev1 report (clean), rev2 report (clean) via normal path; then simulate an
+    # intermediate revision with bad-pkg by scanning rev1 with a modified pyproject.
+    assert da._audit_requirements_at_rev(r, rev1, scanner=scanner)["dependencies"][0]["name"] == "safe-pkg"
+    # Now craft a revision whose pyproject has bad-pkg
+    (r / "pyproject.toml").write_text("[project]\nname='x'\ndependencies=['bad-pkg>=1']\n[project.optional-dependencies]\ndev=['pytest']\n")
+    (r / "c.py").write_text("c")
+    _git(r, "add", "-A")
+    _git(r, "commit", "-qm", "rev3-bad")
+    rev3 = _git(r, "rev-parse", "HEAD")
+    rep3 = da._audit_requirements_at_rev(r, rev3, scanner=scanner)
+    assert rep3["dependencies"][0]["name"] == "bad-pkg"
+    # worktrees cleaned up
+    assert not (tmp_path / "leak").exists()

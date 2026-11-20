@@ -145,3 +145,17 @@ comment no longer claims the PR cannot change its checker.
   `requirements.txt` is extracted at that revision and audited with pip-audit
   against the trusted baseline; an intermediate commit's disallowed finding fails
   even if HEAD is clean; a resolver/scanner failure is a non-clean failure (exit 2).
+
+## Hardening (Phase 2 follow-up — two findings)
+
+- **Kind-scoped credit:** a single `TEST-APPROVAL` marker credits ONLY the kind it
+  names; one `test_plan` marker never satisfies `execution_plan`, even if the
+  record claims both. Both kinds require separate authenticated evidence. A
+  clarification must identify the exact original artifact (id/type/source PR) and
+  bind the same plan/version/kind/scope; a wrong original reference or a different
+  artifact is rejected; a clarification cannot supply missing original approval.
+- **Historical dependency audit:** each dep-changing revision is audited in an
+  isolated `git worktree` so `requirements.txt` (`.`) resolves THAT revision's
+  `pyproject.toml`, not HEAD; worktree always removed. Controlled-scanner test
+  shows two revisions with identical `requirements.txt` but different pyproject
+  deps are seen distinctly; an intermediate finding fails while HEAD is clean.

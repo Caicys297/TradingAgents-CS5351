@@ -109,6 +109,23 @@ def _record(root, name, **kw):
     (d / name).write_text(json.dumps(base))
 
 
+def _dual_records(root, feature="O2", plan_sha=FULL_SHA, plan_ver="v0.3",
+                  scope="tradingagents/repro/manifest.py", implementers=None):
+    """Write two records for one batch: test_plan (by role) + execution_plan (by A),
+    each with its OWN authenticated evidence carrying a marker for that kind."""
+    im = implementers if implementers is not None else ["fancx777"]
+    _record(root, "o2_test.json", feature=feature, approval_kinds=["test_plan"],
+            evidence={"type": "issue_comment", "id": 111},
+            plan_sha=plan_sha, plan_version=plan_ver,
+            allowed_files=scope.split(","),
+            implementers=im)
+    _record(root, "o2_exec.json", feature=feature, approval_kinds=["execution_plan"],
+            evidence={"type": "issue_comment", "id": 112},
+            plan_sha=plan_sha, plan_version=plan_ver,
+            allowed_files=scope.split(","),
+            implementers=im)
+
+
 def _changed(tmp, paths):
     z = tmp / "changed.z"
     z.write_bytes(b"".join(p.encode() + b"\x00" for p in paths))
@@ -133,10 +150,11 @@ def _valid(tmp):
     r = _repo(tmp)
     fix = tmp / "fix"
     _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
-    _comment(fix, 111, "Caicys297", "2026-11-16T15:02:47Z", body=_markers_both())
+    _comment(fix, 111, "Caicys297", "2026-11-16T15:02:47Z", body=_marker("test_plan"))
+    _comment(fix, 112, "Caicys297", "2026-11-16T15:02:48Z", body=_marker("execution_plan"))
     _plan(fix, FULL_SHA, "test-plans/O2-plan.md")
     _register_commits(r, fix)
-    _record(r, "o2.json")
+    _dual_records(r)
     return mod, r, fix, _changed(tmp, ["tradingagents/repro/manifest.py"])
 
 
@@ -172,10 +190,11 @@ def test_bootstrap_when_mapping_absent_on_base(tmp_path):
     (r / "docs/test-approvals/reviewers.yaml").write_text("logins:\n  Caicys297: A\n")
     _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
     fix = tmp_path / "fix"
-    _comment(fix, 111, "Caicys297", "2026-11-16T15:02:47Z", body=_markers_both())
+    _comment(fix, 111, "Caicys297", "2026-11-16T15:02:47Z", body=_marker("test_plan"))
+    _comment(fix, 112, "Caicys297", "2026-11-16T15:02:48Z", body=_marker("execution_plan"))
     _plan(fix, FULL_SHA, "test-plans/O2-plan.md")
     _register_commits(r, fix)
-    _record(r, "o2.json", approval_kinds=["test_plan", "execution_plan"])
+    _dual_records(r)
     z = _changed(tmp_path, ["tradingagents/repro/manifest.py"])
     # bootstrap allowed (A-review), passes structurally
     assert _run(mod, r, z, fix) == 0
@@ -223,7 +242,11 @@ def test_unrelated_comment_mentioning_sha_fails(tmp_path):
 @pytest.mark.unit
 def test_unrelated_old_approval_batch_fails(tmp_path):
     mod, r, fix, z = _valid(tmp_path)
-    _record(r, "o2.json", batch_id="other-batch")
+    # rebind both records to a different batch -> none match batch-1
+    for name in ("o2_test.json", "o2_exec.json"):
+        d = json.loads((r / "docs/test-approvals" / name).read_text())
+        d["batch_id"] = "other-batch"
+        (r / "docs/test-approvals" / name).write_text(json.dumps(d))
     assert _run(mod, r, z, fix) == 1
 
 
@@ -266,7 +289,7 @@ def test_self_approval_fails(tmp_path):
 @pytest.mark.unit
 def test_only_test_plan_fails(tmp_path):
     mod, r, fix, z = _valid(tmp_path)
-    _record(r, "o2.json", approval_kinds=["test_plan"])
+    (r / "docs/test-approvals/o2_exec.json").unlink()  # remove the execution_plan record
     assert _run(mod, r, z, fix) == 1
 
 
@@ -296,10 +319,18 @@ def test_review_from_another_pr_uses_source_pr(tmp_path):
     rv.mkdir(parents=True, exist_ok=True)
     (rv / "9-333.json").write_text(json.dumps({"user": {"login": "Caicys297"},
                                                "submitted_at": "2026-11-16T15:00:00Z",
-                                               "state": "APPROVED", "body": _markers_both()}))
+                                               "state": "APPROVED", "body": _marker("test_plan")}))
+    (rv / "9-334.json").write_text(json.dumps({"user": {"login": "Caicys297"},
+                                               "submitted_at": "2026-11-16T15:00:01Z",
+                                               "state": "APPROVED", "body": _marker("execution_plan")}))
     _plan(fix, FULL_SHA, "test-plans/O2-plan.md")
     _register_commits(r, fix)
-    _record(r, "o2.json", evidence={"type": "review", "id": 333, "pr": 9})
+    _record(r, "o2_test.json", feature="O2", approval_kinds=["test_plan"],
+            evidence={"type": "review", "id": 333, "pr": 9},
+            implementers=["fancx777"])
+    _record(r, "o2_exec.json", feature="O2", approval_kinds=["execution_plan"],
+            evidence={"type": "review", "id": 334, "pr": 9},
+            implementers=["fancx777"])
     z = _changed(tmp_path, ["tradingagents/repro/manifest.py"])
     # current PR is 0 but evidence source pr=9 is used
     assert _run(mod, r, z, fix, pr=0) == 0
@@ -435,19 +466,22 @@ def test_scope_beyond_source_fails(tmp_path):
 
 
 @pytest.mark.unit
-def test_authorized_binding_supports_scope(tmp_path):
-    """An authorized binding record supports declared scope beyond body text."""
+def test_authorized_clarification_confirms_scope_passes(tmp_path):
+    """A later authorized clarification that confirms the plan/kind/scope passes."""
     mod, r, fix, z = _valid(tmp_path)
-    _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
-    _record(r, "o2.json", allowed_files=["tradingagents/repro/manifest.py"],
-            binding={"evidence": {"type": "issue_comment", "id": 111},
-                     "allowed_files": ["tradingagents/repro/manifest.py"],
-                     "requirement_ids": ["O2-FR-01"], "approved_test_ids": ["O2-TC-01"]})
-    z = _changed(tmp_path, ["tradingagents/repro/manifest.py"])
+    # add a separate, later clarification comment (different id) with a marker
+    _comment(fix, 777, "Caicys297", "2026-11-16T15:30:00Z", body=_marker("test_plan"))
+    # attach clarification to the test_plan record
+    _record(r, "o2_test.json", feature="O2", approval_kinds=["test_plan"],
+            evidence={"type": "issue_comment", "id": 111},
+            plan_sha=FULL_SHA, plan_version="v0.3",
+            allowed_files=["tradingagents/repro/manifest.py"],
+            implementers=["fancx777"],
+            clarification={"evidence": {"type": "issue_comment", "id": 777},
+                           "plan_sha": FULL_SHA, "plan_version": "v0.3"})
     assert _run(mod, r, z, fix) == 0
 
 
-@pytest.mark.unit
 def test_delegation_incomplete_missing_login_fails(tmp_path):
     """Delegation without to_login/plan fields is not valid."""
     mod = _load()
@@ -675,4 +709,43 @@ def test_delegation_without_marker_fails(tmp_path):
           text="# O2 v0.4\nO2-FR-01 O2-TC-01 tradingagents/repro/manifest.py\n")
     _register_commits(r, fix, login="D")
     z = _changed(tmp_path, ["tradingagents/repro/manifest.py"])
+    assert _run(mod, r, z, fix) == 1
+
+
+# ============================================================ Finding 1 (kind credit + clarification ref)
+@pytest.mark.unit
+def test_dual_kind_record_single_marker_does_not_credit_execution(tmp_path):
+    """A record claiming BOTH kinds but with only a test_plan marker must NOT
+    credit execution_plan."""
+    mod = _load()
+    r = _repo(tmp_path)
+    fix = tmp_path / "fix"
+    _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
+    _comment(fix, 111, "Caicys297", "2026-11-16T15:02:47Z",
+             body=_marker("test_plan"))  # ONLY test_plan
+    _plan(fix, FULL_SHA, "test-plans/O2-plan.md")
+    _register_commits(r, fix)
+    # one record claims both kinds, one evidence (test_plan marker)
+    _record(r, "o2.json", approval_kinds=["test_plan", "execution_plan"],
+            evidence={"type": "issue_comment", "id": 111})
+    z = _changed(tmp_path, ["tradingagents/repro/manifest.py"])
+    assert _run(mod, r, z, fix) == 1  # execution_plan not credited
+
+
+@pytest.mark.unit
+def test_clarification_wrong_original_reference_fails(tmp_path):
+    """A clarification must reference the exact original artifact; a wrong id fails."""
+    mod, r, fix, z = _valid(tmp_path)
+    # clarification points at a DIFFERENT (nonexistent) original artifact id
+    _comment(fix, 999, "Caicys297", "2026-11-16T15:30:00Z", body=_marker("test_plan"))
+    _record(r, "o2_test.json", feature="O2", approval_kinds=["test_plan"],
+            evidence={"type": "issue_comment", "id": 111},
+            plan_sha=FULL_SHA, plan_version="v0.3",
+            allowed_files=["tradingagents/repro/manifest.py"], implementers=["fancx777"],
+            clarification={"evidence": {"type": "issue_comment", "id": 999},
+                           "original_evidence_id": 888,  # WRONG original (record evidence is 111)
+                           "plan_sha": FULL_SHA, "plan_version": "v0.3"})
+    # the clarification evidence (999) marker exists, but it must bind the SAME
+    # original artifact; the record asserts original_evidence_id=111 while evidence
+    # is 999 -> mismatch must be rejected
     assert _run(mod, r, z, fix) == 1
