@@ -25,7 +25,7 @@ import pytest
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 
-from tests.test_graph_end_to_end import TRADE_DATE, ScriptedModel
+from tests.test_graph_end_to_end import TEXT as SCRIPTED_TEXT, TRADE_DATE, ScriptedModel
 
 TICKER = "NVDA"
 
@@ -139,8 +139,9 @@ def test_graph_propagate_valid_evidence_returns_gated_state(tmp_path, monkeypatc
     assert gate.effective_rating == signal
     assert signal == state["final_rating"] == state["effective_rating"]
     assert signal in {"Overweight", "Buy"}  # valid preserved rating
-    # Original decision body is returned unchanged (bytes preserved).
-    assert state["final_trade_decision"].strip()
+    # Original decision body is returned EXACTLY unchanged (independently
+    # established expected body = the scripted model's TEXT).
+    assert state["final_trade_decision"] == SCRIPTED_TEXT
 
 
 def test_graph_propagate_missing_evidence_returns_review(tmp_path, monkeypatch, offline):
@@ -159,5 +160,5 @@ def test_graph_propagate_missing_evidence_returns_review(tmp_path, monkeypatch, 
     )
     assert gate.effective_rating == "REVIEW"
     assert gate.reason  # a diagnostic reason accompanies the REVIEW downgrade
-    # The original decision body is preserved on the returned state.
-    assert isinstance(state.get("final_trade_decision"), str)
+    # The original decision body is returned EXACTLY unchanged on REVIEW too.
+    assert state["final_trade_decision"] == SCRIPTED_TEXT

@@ -383,31 +383,108 @@ def test_cli_missing_evidence_review_non_authoritative(monkeypatch, tmp_path):
 # D — PM streaming safety (pre-gate buffering / markdown / ordinary sections)
 # ---------------------------------------------------------------------------
 def test_cli_pm_buffered_pre_gate_and_markdown_safe(monkeypatch, tmp_path):
-    """Real pre-Gate snapshot: no PM Buy body in the CLI message area, the PM
-    decision section, or the real-time final_trade_decision.md BEFORE the Gate."""
+    """FULL pre-Gate timeline: no PM body in the CLI message area, the PM section,
+    or the real-time final_trade_decision.md at ANY event before the Gate — not
+    merely a single final snapshot (catches a leak-then-clear transient)."""
     secret = "SECRET BUY BODY."
     body = f"**Rating**: Buy\n\n{secret}"
     state = _state("Buy", body, news="")  # REVIEW
-    h = _run(monkeypatch, tmp_path, state)
 
-    pre = h["pre_gate"]
-    # (1) CLI message/display area: no PM decision body pre-Gate.
-    msg_text = "\n".join(str(m) for m in pre["messages"])
-    assert secret not in msg_text, "PM body leaked into the CLI message area pre-Gate"
-    # (2) PM decision/report section pre-Gate: only the marker, no body.
-    ftk_pre = pre["sections"].get("final_trade_decision")
-    assert ftk_pre is not None
-    assert secret not in ftk_pre, f"PM body leaked into the CLI section pre-Gate: {ftk_pre!r}"
-    # (3) real-time Markdown snapshot taken BEFORE the Gate must not contain the body.
-    md_pre = pre["final_trade_decision_md"]
-    assert md_pre is not None, "final_trade_decision.md must exist during streaming"
-    assert secret not in md_pre, f"PM body leaked into final_trade_decision.md pre-Gate: {md_pre!r}"
+    # Install the harness, then wrap its buffer/decorator to record a TIMELINE.
+    h = _install(monkeypatch, tmp_path, final_state=state)
+    buf = h["buffer"]
+    reports_dir = h["reports_dir"]
+    timeline = []  # list of dicts {phase, channel, content}
+    phase = {"gate_started": False}
 
-    # After Gate, REVIEW: retained body is explicitly NON-AUTHORITATIVE (CLI section).
-    ftk_post = [c for (s2, c) in _section_contents(h) if "Portfolio Manager Decision" in c]
-    assert ftk_post, "PM decision section must be published post-gate"
-    labelled = [c for c in ftk_post if "unapproved original content" in c and secret in c]
-    assert labelled, "post-gate REVIEW body must be present AND labelled non-authoritative"
+    # Mark the exact moment the real Gate boundary is entered.
+    real_record = h["boundary"].record_decision
+
+    def record_and_mark(*a, **k):
+        phase["gate_started"] = True
+        return real_record(*a, **k)
+
+    monkeypatch.setattr(h["boundary"], "record_decision", record_and_mark)
+
+    real_update = buf.update_report_section
+
+    def wrapped_update(section_name, content):
+        real_update(section_name, content)
+        ph = "post" if phase["gate_started"] else "pre"
+        md = None
+        f = reports_dir / f"{section_name}.md"
+        if f.exists():
+            md = f.read_text(encoding="utf-8")
+        timeline.append(
+            {
+                "phase": ph,
+                "channel": "section",
+                "section": section_name,
+                "content": content,
+                "md": md,
+            }
+        )
+
+    monkeypatch.setattr(buf, "update_report_section", wrapped_update)
+
+    real_add = buf.add_message
+
+    def wrapped_add(mtype, content):
+        real_add(mtype, content)
+        ph = "post" if phase["gate_started"] else "pre"
+        timeline.append({"phase": ph, "channel": "message", "content": content, "md": None})
+
+    monkeypatch.setattr(buf, "add_message", wrapped_add)
+
+    from cli import run as _run_mod
+
+    _run_mod.run_analysis(
+        checkpoint=False,
+        flags={
+            "ticker": TICKER,
+            "date": TRADE_DATE,
+            "analysts": ["market", "news"],
+            "save": False,
+            "show": False,
+            "html": False,
+        },
+    )
+
+    pre = [e for e in timeline if e["phase"] == "pre"]
+    assert pre, "expected some pre-Gate events to audit"
+    # (1) NO pre-Gate message event carries the PM body.
+    for e in pre:
+        if e["channel"] == "message":
+            assert secret not in str(e["content"]), f"PM body in message pre-Gate: {e}"
+    # (2) NO pre-Gate PM-section write carries the body, NOR its real-time .md file
+    # at that write (catches a transient release then clear).
+    for e in pre:
+        if e["channel"] == "section" and e.get("section") == "final_trade_decision":
+            assert secret not in str(e["content"]), f"PM body in section pre-Gate: {e}"
+            if e["md"] is not None:
+                assert secret not in e["md"], f"PM body in final_trade_decision.md pre-Gate: {e}"
+
+    # (3) Ordinary Analyst sections still streamed (some pre-Gate non-PM section).
+    assert any(
+        e["channel"] == "section" and e.get("section") not in (None, "final_trade_decision")
+        for e in pre
+    ), "ordinary analyst sections must stream"
+
+    # (4) Post-Gate REVIEW: body present AND explicitly non-authoritative (section).
+    post_ftk = [
+        e
+        for e in timeline
+        if e["phase"] == "post"
+        and e["channel"] == "section"
+        and e.get("section") == "final_trade_decision"
+        and secret in str(e["content"])
+    ]
+    assert post_ftk, "post-gate REVIEW body must be published in the PM section"
+    assert any(
+        "unapproved original content" in str(e["content"]).lower()
+        or "not an approved recommendation" in str(e["content"]).lower()
+        for e in post_ftk
+    )
 
 
 def test_cli_ordinary_analyst_sections_stream(monkeypatch, tmp_path):
@@ -571,3 +648,46 @@ def test_cli_midstream_failure_after_pm_no_authoritative_publication(monkeypatch
     md = harness["reports_dir"] / "final_trade_decision.md"
     if md.exists():
         assert "SECRET BUY BODY" not in md.read_text(encoding="utf-8")
+
+
+def test_cli_o6_summary_and_report_options_ordering(monkeypatch, tmp_path):
+    """Real forwarded-event ordering: completion → REVIEW → elapsed → O6 → options.
+
+    Records each event via the REAL functions the CLI calls (not no-op stubs by
+    name-only), so the relative order and single-occurrence counts are genuine.
+    """
+    order = []
+    _install(monkeypatch, tmp_path, final_state=_state("Buy", "Rating: Buy", news=""))
+
+    # Console: capture completion / REVIEW / elapsed prints in order.
+    class _OrdConsole:
+        def print(self, *a, **k):
+            line = " ".join(str(x) for x in a)
+            if "Analysis Complete" in line:
+                order.append("completion")
+            elif "recorded for review" in line:
+                order.append("review")
+            elif "elapsed" in line:
+                order.append("elapsed")
+
+    monkeypatch.setattr(run_mod, "console", _OrdConsole())
+
+    # O6 summary: record when display_agent_summary is actually invoked.
+    monkeypatch.setattr(run_mod, "display_agent_summary", lambda *a, **k: order.append("o6"))
+
+    # Report options: record when _offer_reports is actually invoked.
+    monkeypatch.setattr(run_mod, "_offer_reports", lambda *a, **k: order.append("options") or [])
+
+    run_mod.run_analysis(
+        checkpoint=False,
+        flags={
+            "ticker": TICKER,
+            "date": TRADE_DATE,
+            "analysts": ["market", "news"],
+            "save": False,
+            "show": False,
+            "html": False,
+        },
+    )
+
+    assert order == ["completion", "review", "elapsed", "o6", "options"], order

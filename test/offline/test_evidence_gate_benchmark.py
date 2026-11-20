@@ -95,6 +95,12 @@ def test_t16_pure_checker_p95_diagnostic():
 
     p95 = _nearest_rank_p95(deltas)
     within = p95 <= P95_TARGET_NS
+    # Non-blocking measurement evidence: raw samples + actual call counts + p95.
+    assert len(deltas) == MEASURED and WARMUPS == 5 and MEASURED == 30
+    print(
+        f"\n[T-16] warmups={WARMUPS} measured={MEASURED} "
+        f"raw_deltas_ns={deltas} p95_ns={p95} within_target={within}"
+    )
     # Record the measurement for the run log / report (NEVER fail or skip on latency).
     import warnings
 

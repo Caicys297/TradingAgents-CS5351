@@ -366,6 +366,9 @@ def _read_html(saved_dir):
 
 # --------------------------- parameterized matrix ---------------------------
 # valid_buy, review_missing_news, conflict, checker-failure (recoverable)
+# State-driven variants exercised through the real CLI completion path. The
+# recoverable-checker-failure case is a CLI-path test below (it needs a checker
+# double, not a state); do not claim it is covered by these state variants.
 _VARIANTS = [
     ("valid_buy", "Buy", "**Rating**: Buy\n\nBuy NVDA.", "News: neutral.", "Buy"),
     ("review_missing_news", "Buy", "**Rating**: Buy\n\nBuy NVDA.", "", "REVIEW"),
@@ -414,24 +417,36 @@ def test_t08_surface_matrix(monkeypatch, tmp_path, variant, memory, html, save):
         assert _read_complete_report_rating(saved_dir) == expected_eff, "complete_report.md rating"
         dtext = _read_decision_md(saved_dir)
         assert dtext is not None, "decision.md must exist when save=True"
-        # Body preserved; on REVIEW it must be explicitly non-authoritative.
+        # Body preserved verbatim.
         assert body.strip() in dtext, "decision.md must preserve the PM body"
+        low = dtext.lower()
+        labelled = (
+            ("unapproved original content" in low)
+            or ("not an approved recommendation" in low)
+            or ("non-authoritative" in low)
+        )
         if expected_eff == "REVIEW":
-            low = dtext.lower()
-            assert "unapproved" in low or "non-authoritative" in low or "withheld" in low, (
-                "REVIEW decision.md must label the original PM body non-authoritative"
-            )
+            # REVIEW body MUST be explicitly non-authoritative.
+            assert labelled, "REVIEW decision.md must label the original PM body non-authoritative"
+        else:
+            # A valid run must NOT produce a false non-authoritative label.
+            assert not labelled, "valid decision.md must not carry a non-authoritative label"
         if html:
             html_text = _read_html(saved_dir)
-            # Header shows the exact authoritative rating.
-            assert f"Rating: {expected_eff}" in html_text or f">{expected_eff}<" in html_text, (
-                "HTML report must show the exact authoritative rating"
+            # Anchor to the report's authoritative rating element
+            # (``class="rating ..."``), not the PM body text.
+            import re as _re
+
+            pm_rating = _re.search(r'class="rating[^"]*"[^>]*>([^<]*)<', html_text)
+            assert pm_rating is not None, "HTML must contain the authoritative rating element"
+            assert pm_rating.group(1).strip() == expected_eff, (
+                f"HTML authoritative rating {pm_rating.group(1)!r} != {expected_eff!r}"
             )
             if expected_eff == "REVIEW":
                 low = html_text.lower()
-                assert "unapproved" in low or "non-authoritative" in low or "withheld" in low, (
-                    "REVIEW HTML must mark the retained PM body non-authoritative"
-                )
+                assert ("unapproved original content" in low) or (
+                    "not an approved recommendation" in low
+                ), "REVIEW HTML must mark the retained PM body non-authoritative"
     if memory:
         assert _read_memory_rating(tmp_path) == expected_eff, "memory log rating"
 
@@ -541,5 +556,109 @@ def test_t08_cli_show_renders_gated_state(
 
     text = sink.getvalue()
     assert text, "show=True must render the complete report to the terminal"
-    assert expected_eff in text, f"real renderer must show the gated rating {expected_eff}"
+    import re as _re
+
+    # The renderer prints an authoritative ``Rating`` panel; its value is the FIRST
+    # ``Rating: X`` occurrence (the PM body's own "**Rating**:" comes later). Assert
+    # that authoritative region equals the Gate-effective rating — not any stray text.
+    m = _re.search(r"Rating[:\s]+([A-Za-z]+)", text)
+    assert m is not None, "renderer must print an authoritative Rating region"
+    assert m.group(1) == expected_eff, (
+        f"renderer authoritative rating {m.group(1)!r} != {expected_eff!r}"
+    )
+    # The original PM body is preserved in the rendered report.
+    pm_body_marker = body.split("\n\n")[-1].strip()  # e.g. "Buy NVDA." / "SECRET BUY BODY."
+    assert pm_body_marker in text, "renderer must preserve the original PM body"
+    if expected_eff == "REVIEW":
+        low = text.lower()
+        assert ("unapproved original content" in low) or (
+            "not an approved recommendation" in low
+        ), "REVIEW: renderer must label the preserved PM body non-authoritative"
+    else:
+        # A valid run must NOT show a false non-authoritative label.
+        low = text.lower()
+        assert "unapproved original content" not in low, "valid run must not label body unapproved"
     assert not (saved_dir / "complete_report.md").exists()
+
+
+# ---------------------------------------------------------------------------
+# Recoverable checker failure through the REAL CLI completion path (approved).
+# Distinct from invalid config (which must propagate, not REVIEW).
+# ---------------------------------------------------------------------------
+def test_t08_recoverable_checker_failure_real_cli(monkeypatch, tmp_path):
+    """A recoverable internal checker failure on the real CLI path fails closed.
+
+    We raise inside the REAL production helper ``evidence_gate._classify_report``
+    (not by replacing the Gate or record_decision), so the production boundary's
+    recoverable handler produces REVIEW. Asserts: exactly one authoritative Gate
+    evaluation, REVIEW verdict, no ungated Buy/Sell published, Gate→StateLog→Memory
+    order, and REVIEW non-authoritative labeling on enabled surfaces.
+    """
+    from tradingagents.agents import evidence_gate as eg
+
+    body = "**Rating**: Buy\n\nSECRET BUY BODY."
+    state = _state("Buy", body, news="News: neutral.")
+    h, buf, console, saved_dir = _install(
+        monkeypatch, tmp_path, state, save=True, show=False, html=False, memory_enabled=True
+    )
+
+    gate_calls = {"n": 0}
+    real_check = eg.check_evidence
+
+    def counting(s, a):
+        gate_calls["n"] += 1
+        return real_check(s, a)
+
+    monkeypatch.setattr(eg, "check_evidence", counting)
+
+    # Inject a recoverable failure at the real classification computation point.
+    def boom(_value):
+        raise RuntimeError("injected evidence-processing failure")
+
+    monkeypatch.setattr(eg, "_classify_report", boom)
+
+    # Ordering spies on the real boundary.
+    order = []
+    real_log = h["boundary"]._log_state
+
+    def spy_log(trade_date, fs):
+        order.append("state_log")
+        return real_log(trade_date, fs)
+
+    monkeypatch.setattr(h["boundary"], "_log_state", spy_log)
+    real_store = h["boundary"].memory_log.store_decision
+
+    def spy_store(**kw):
+        order.append("memory")
+        return real_store(**kw)
+
+    monkeypatch.setattr(h["boundary"].memory_log, "store_decision", spy_store)
+
+    run_mod.run_analysis(
+        checkpoint=False,
+        flags={
+            "ticker": TICKER,
+            "date": TRADE_DATE,
+            "analysts": ["market", "news"],
+            "save": True,
+            "show": False,
+            "html": False,
+        },
+    )
+
+    assert gate_calls["n"] == 1, "exactly one authoritative Gate evaluation"
+    merged = h["merged"]
+    assert merged["effective_rating"] == merged["final_rating"] == "REVIEW"
+    rec = h["record"]
+    assert rec is not None and rec.gate.verdict == "review"
+    assert rec.gate.error_kind == "checker_failure"
+    assert rec.gate.reason
+    # Gate before State Log before Memory.
+    assert order == ["state_log", "memory"], order
+    # No ungated Buy/Sell published as authoritative:
+    assert _read_state_log_rating(tmp_path) == "REVIEW"
+    dtext = _read_decision_md(saved_dir)
+    assert dtext is not None and body.strip() in dtext
+    assert ("unapproved original content" in dtext.lower()) or (
+        "not an approved recommendation" in dtext.lower()
+    )
