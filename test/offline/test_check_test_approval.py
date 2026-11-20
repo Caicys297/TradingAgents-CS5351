@@ -76,6 +76,16 @@ def _markers_both(plan=FULL_SHA, ver="v0.3", scope="tradingagents/repro/manifest
     return _marker("test_plan", plan, ver, scope) + "\n" + _marker("execution_plan", plan, ver, scope)
 
 
+def _orig_ref(ref_type="issue_comment", ref_id=111, pr=None):
+    tail = f" pr={pr}" if pr is not None else ""
+    return f"ORIGINAL-APPROVAL: type={ref_type} id={ref_id}{tail}"
+
+
+def _clar_body(kind="test_plan", orig_id=111, pr=None, plan=FULL_SHA, ver="v0.3",
+               scope="tradingagents/repro/manifest.py"):
+    return _orig_ref("issue_comment", orig_id, pr) + "\n" + _marker(kind, plan, ver, scope)
+
+
 PLAN_TEXT = ("# O2 plan v0.3\nrequirements: O2-FR-01\n"
              "tests: O2-TC-01\nfiles: tradingagents/repro/manifest.py\n")
 
@@ -470,7 +480,7 @@ def test_authorized_clarification_confirms_scope_passes(tmp_path):
     """A later authorized clarification that confirms the plan/kind/scope passes."""
     mod, r, fix, z = _valid(tmp_path)
     # add a separate, later clarification comment (different id) with a marker
-    _comment(fix, 777, "Caicys297", "2026-11-16T15:30:00Z", body=_marker("test_plan"))
+    _comment(fix, 777, "Caicys297", "2026-11-16T15:30:00Z", body=_clar_body("test_plan", orig_id=111))
     # attach clarification to the test_plan record
     _record(r, "o2_test.json", feature="O2", approval_kinds=["test_plan"],
             evidence={"type": "issue_comment", "id": 111},
@@ -737,15 +747,45 @@ def test_clarification_wrong_original_reference_fails(tmp_path):
     """A clarification must reference the exact original artifact; a wrong id fails."""
     mod, r, fix, z = _valid(tmp_path)
     # clarification points at a DIFFERENT (nonexistent) original artifact id
-    _comment(fix, 999, "Caicys297", "2026-11-16T15:30:00Z", body=_marker("test_plan"))
+    _comment(fix, 999, "Caicys297", "2026-11-16T15:30:00Z", body=_clar_body("test_plan", orig_id=888))
     _record(r, "o2_test.json", feature="O2", approval_kinds=["test_plan"],
             evidence={"type": "issue_comment", "id": 111},
             plan_sha=FULL_SHA, plan_version="v0.3",
             allowed_files=["tradingagents/repro/manifest.py"], implementers=["fancx777"],
             clarification={"evidence": {"type": "issue_comment", "id": 999},
-                           "original_evidence_id": 888,  # WRONG original (record evidence is 111)
-                           "plan_sha": FULL_SHA, "plan_version": "v0.3"})
+                           "plan_sha": FULL_SHA, "plan_version": "v0.3"})  # body names wrong id 888
     # the clarification evidence (999) marker exists, but it must bind the SAME
     # original artifact; the record asserts original_evidence_id=111 while evidence
     # is 999 -> mismatch must be rejected
     assert _run(mod, r, z, fix) == 1
+
+
+@pytest.mark.unit
+def test_clarification_missing_original_line_fails_despite_pr_json(tmp_path):
+    """Body must contain ORIGINAL-APPROVAL even if PR JSON original_evidence_id is
+    correct; a missing body line fails."""
+    mod, r, fix, z = _valid(tmp_path)
+    # body has a valid marker but NO ORIGINAL-APPROVAL line
+    _comment(fix, 780, "Caicys297", "2026-11-16T15:30:00Z", body=_marker("test_plan"))
+    _record(r, "o2_test.json", feature="O2", approval_kinds=["test_plan"],
+            evidence={"type": "issue_comment", "id": 111},
+            plan_sha=FULL_SHA, plan_version="v0.3",
+            allowed_files=["tradingagents/repro/manifest.py"], implementers=["fancx777"],
+            clarification={"evidence": {"type": "issue_comment", "id": 780},
+                           "original_evidence_id": 111,  # correct PR JSON, but body lacks line
+                           "plan_sha": FULL_SHA, "plan_version": "v0.3"})
+    assert _run(mod, r, z, fix) == 1
+
+
+@pytest.mark.unit
+def test_clarification_body_original_line_must_match(tmp_path):
+    """Correct body ORIGINAL-APPROVAL id passes; wrong id fails (body-dependent)."""
+    mod, r, fix, z = _valid(tmp_path)
+    _comment(fix, 781, "Caicys297", "2026-11-16T15:30:00Z", body=_clar_body("test_plan", orig_id=111))
+    _record(r, "o2_test.json", feature="O2", approval_kinds=["test_plan"],
+            evidence={"type": "issue_comment", "id": 111},
+            plan_sha=FULL_SHA, plan_version="v0.3",
+            allowed_files=["tradingagents/repro/manifest.py"], implementers=["fancx777"],
+            clarification={"evidence": {"type": "issue_comment", "id": 781},
+                           "plan_sha": FULL_SHA, "plan_version": "v0.3"})
+    assert _run(mod, r, z, fix) == 0

@@ -214,9 +214,17 @@ def test_historical_dep_audit_reads_each_revision_project(tmp_path):
 
     da = _load("dep_audit")
 
-    def scanner(worktree: Path):
-        # Controlled scanner: reads the HISTORICAL project at the worktree rev.
+    seen = {}
+
+    def scanner(worktree: Path, venv: Path):
+        # Controlled scanner: reads the HISTORICAL project at the worktree rev and
+        # records the worktree HEAD + that '.[dev]' group is resolvable there.
+        import subprocess as _sp
+        head = _sp.run(["git", "-C", str(worktree), "rev-parse", "HEAD"],
+                       capture_output=True, text=True).stdout.strip()
         py = (worktree / "pyproject.toml").read_text()
+        seen["head"] = head
+        seen["has_dev_extra"] = "optional-dependencies" in py and "dev" in py
         if "bad-pkg" in py:
             return {"dependencies": [{"name": "bad-pkg", "version": "1.0",
                                       "vulns": [{"id": "GHSA-bad", "fix_versions": ["2.0"]}]}]}
@@ -225,6 +233,7 @@ def test_historical_dep_audit_reads_each_revision_project(tmp_path):
     # rev1 report (clean), rev2 report (clean) via normal path; then simulate an
     # intermediate revision with bad-pkg by scanning rev1 with a modified pyproject.
     assert da._audit_requirements_at_rev(r, rev1, scanner=scanner)["dependencies"][0]["name"] == "safe-pkg"
+    assert seen["head"] == rev1 and seen["has_dev_extra"] is True  # worktree=rev1, .[dev] group
     # Now craft a revision whose pyproject has bad-pkg
     (r / "pyproject.toml").write_text("[project]\nname='x'\ndependencies=['bad-pkg>=1']\n[project.optional-dependencies]\ndev=['pytest']\n")
     (r / "c.py").write_text("c")
@@ -233,5 +242,6 @@ def test_historical_dep_audit_reads_each_revision_project(tmp_path):
     rev3 = _git(r, "rev-parse", "HEAD")
     rep3 = da._audit_requirements_at_rev(r, rev3, scanner=scanner)
     assert rep3["dependencies"][0]["name"] == "bad-pkg"
+    assert seen["head"] == rev3  # historical revision, not HEAD
     # worktrees cleaned up
     assert not (tmp_path / "leak").exists()

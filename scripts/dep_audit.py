@@ -169,20 +169,23 @@ def _depfiles_changed_per_commit(root: Path, commits: list[str]) -> list[str]:
 
 
 def _audit_requirements_at_rev(root: Path, rev: str, scanner=None) -> dict:
-    """Resolve + audit the dependencies of the project AT ``rev`` in an isolated
-    checkout so ``requirements.txt`` (which contains just ``.``) resolves that
-    revision's own ``pyproject.toml`` rather than HEAD's.
+    """Resolve + audit the dependencies the project AT ``rev`` actually installs.
 
-    Creates a temporary git worktree at ``rev``, runs pip-audit with the same
-    intended dependency group as the gate (``.[dev]`` installed semantics) against
-    that checkout, then removes the worktree. A ``scanner`` callable may be injected
-    for controlled tests (it receives the worktree path and must return a report
-    dict); the default runs the real pip-audit. Never runs the HEAD-extracted
-    requirements file. Raises ScannerError on tool/parse failure; the worktree is
-    always removed.
+    Aligns with CI's gate dependency group ``.[dev]`` (not core-only ``.``):
+      1. create an isolated git worktree at ``rev`` (so ``.``/pyproject resolve
+         THAT revision's project),
+      2. create an isolated venv (outside the worktree) and ``pip install ".[dev]"``
+         from the worktree,
+      3. audit the installed venv (``pip-audit --path <site-packages>``) — the same
+         dependency group CI installs.
+    A ``scanner(worktree, venv_dir)`` may be injected for controlled tests. Worktree
+    and venv are always removed. Raises ScannerError on tool/parse failure; never
+    audits an extracted HEAD requirements file.
     """
+    import shutil
     import tempfile
-    wt = Path(tempfile.mkdtemp(prefix="deprev-"))
+    wt = Path(tempfile.mkdtemp(prefix="deprev-wt-"))
+    venv = Path(tempfile.mkdtemp(prefix="deprev-venv-")) / "v"
     added = False
     try:
         add = subprocess.run(["git", "-C", str(root), "worktree", "add", "--detach",
@@ -190,19 +193,30 @@ def _audit_requirements_at_rev(root: Path, rev: str, scanner=None) -> dict:
         if add.returncode != 0:
             raise ScannerError(f"cannot create worktree for {rev[:12]}: {add.stderr.strip()[:200]}")
         added = True
-        req = wt / "requirements.txt"
-        if not req.is_file():
-            raise ScannerError(f"no requirements.txt at {rev[:12]}; cannot resolve its dependencies")
+        if not (wt / "pyproject.toml").is_file():
+            raise ScannerError(f"no pyproject.toml at {rev[:12]}; cannot resolve '.[dev]'")
 
         if scanner is not None:
-            report = scanner(wt)
+            report = scanner(wt, venv)
         else:
-            cmd = [sys.executable, "-m", "pip_audit", "-r", str(req),
-                   "--format", "json", "--progress-spinner", "off"]
-            proc = subprocess.run(cmd, capture_output=True, text=True, cwd=wt)
+            mk = subprocess.run([sys.executable, "-m", "venv", str(venv)],
+                                capture_output=True, text=True)
+            if mk.returncode != 0:
+                raise ScannerError(f"venv create failed for {rev[:12]}: {mk.stderr.strip()[:200]}")
+            vpy = venv / "bin" / "python"
+            inst = subprocess.run([str(vpy), "-m", "pip", "install", "-q", ".[dev]"],
+                                  capture_output=True, text=True, cwd=wt)
+            if inst.returncode != 0:
+                raise ScannerError(f"install '.[dev]' failed for {rev[:12]} (exit {inst.returncode}): "
+                                   f"{inst.stderr.strip()[:200]}")
+            # Audit the installed venv environment (same group CI installs).
+            sitepkgs = str(venv / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages")
+            proc = subprocess.run([str(vpy), "-m", "pip_audit", "--path", sitepkgs,
+                                   "--format", "json", "--progress-spinner", "off"],
+                                  capture_output=True, text=True, cwd=wt)
             if proc.returncode not in (0, 1):
-                raise ScannerError(
-                    f"pip-audit failed for {rev[:12]} (exit {proc.returncode}): {proc.stderr.strip()[:200]}")
+                raise ScannerError(f"pip-audit failed for {rev[:12]} (exit {proc.returncode}): "
+                                   f"{proc.stderr.strip()[:200]}")
             try:
                 report = json.loads(proc.stdout)
             except json.JSONDecodeError as exc:
@@ -214,8 +228,8 @@ def _audit_requirements_at_rev(root: Path, rev: str, scanner=None) -> dict:
             subprocess.run(["git", "-C", str(root), "worktree", "remove", "--force", str(wt)],
                            capture_output=True, text=True)
         else:
-            import shutil
             shutil.rmtree(wt, ignore_errors=True)
+        shutil.rmtree(venv.parent, ignore_errors=True)
 
 
 def baseline_keys(base: dict) -> set[tuple[str, str, str]]:

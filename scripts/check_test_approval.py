@@ -329,6 +329,13 @@ _DELEGATION_MARKER_RE = re.compile(
     r"TEST-DELEGATION:\s*grantee=(?P<grantee>\S+)\s+plan=(?P<plan>[0-9a-f]{40})\s+"
     r"version=(?P<version>\S+)\s+kind=(?P<kind>test_plan|execution_plan)\s+until=(?P<until>\S+)"
 )
+# Explicit ORIGINAL-APPROVAL line (in an authenticated clarification body). It
+# names the exact original artifact the clarification refers to.
+#   ORIGINAL-APPROVAL: type=<issue_comment|review> id=<id> [pr=<n>]
+_ORIGINAL_REF_RE = re.compile(
+    r"ORIGINAL-APPROVAL:\s*type=(?P<type>issue_comment|review)\s+id=(?P<id>[0-9]+)"
+    r"(?:\s+pr=(?P<pr>[0-9]+))?"
+)
 _APPROVAL_MARKER_RE = re.compile(
     r"TEST-APPROVAL:\s*plan=(?P<plan>[0-9a-f]{40})\s+version=(?P<ver>\S+)\s+"
     r"kind=(?P<kind>test_plan|execution_plan)\s+scope=(?P<scope>[^\n]+)"
@@ -351,6 +358,16 @@ def _parse_approval_marker(body: str) -> dict | None:
     scope = [x.strip() for x in m.group("scope").split(",") if x.strip()]
     return {"plan": m.group("plan"), "version": m.group("ver"),
             "kind": m.group("kind"), "scope": scope}
+
+
+def _parse_original_ref(body: str) -> dict | None:
+    """Parse an in-body ORIGINAL-APPROVAL line identifying the exact original
+    artifact (type, id, optional source PR). None if absent."""
+    m = _ORIGINAL_REF_RE.search(body)
+    if not m:
+        return None
+    return {"type": m.group("type"), "id": int(m.group("id")),
+            "pr": int(m.group("pr")) if m.group("pr") else None}
 
 
 def _retrieve_plan(api, repo: str | None, plan_sha: str, plan_path: str) -> str | None:
@@ -426,20 +443,9 @@ def _verify_binding(rec, api, repo, reviewers, feature, approval_iso, root, prob
     if not ev.get("id"):
         problems.append(f"{rp}: clarification missing reference to original evidence id")
         return None
-    # The clarification must identify the EXACT original artifact it clarifies:
-    # its declared original_evidence_id must equal the record's real evidence id
-    # (type + id + source pr), not merely reference some arbitrary artifact.
+    # The clarification evidence must be a SEPARATE, later record, not the
+    # original artifact itself.
     orig = rec.get("evidence") or {}
-    if "original_evidence_id" in b:
-        id_mismatch = str(b["original_evidence_id"]) != str(orig.get("id"))
-        type_mismatch = b.get("original_evidence_type") and b["original_evidence_type"] != orig.get("type")
-        pr_mismatch = (b.get("original_source_pr") is not None and
-                       str(b["original_source_pr"]) != str(orig.get("pr")))
-        if id_mismatch or type_mismatch or pr_mismatch:
-            problems.append(f"{rp}: clarification references a different/original artifact than this record's evidence")
-            return None
-    # Also: the clarification evidence id must differ from the original (it is a
-    # separate, later record), and must not be a fabricated back-reference.
     if str(ev.get("id")) == str(orig.get("id")):
         problems.append(f"{rp}: clarification evidence is the original artifact itself, not a separate clarification")
         return None
@@ -447,6 +453,21 @@ def _verify_binding(rec, api, repo, reviewers, feature, approval_iso, root, prob
         author, ctime, utime, body, _ = _evidence_with_meta({"evidence": ev}, api, None)
     except ExecutionError as exc:
         problems.append(f"{rp}: clarification evidence unverifiable: {exc}")
+        return None
+    # The AUTHENTICATED clarification body must carry an explicit ORIGINAL-APPROVAL
+    # line naming the exact original artifact (type, id, source PR), matching the
+    # record's actually resolved original evidence. PR-supplied metadata is NOT
+    # trusted for this; the body line is authoritative.
+    oref = _parse_original_ref(body)
+    if oref is None:
+        problems.append(f"{rp}: clarification body has no ORIGINAL-APPROVAL line naming the original artifact")
+        return None
+    if oref["type"] != orig.get("type") or str(oref["id"]) != str(orig.get("id")):
+        problems.append(f"{rp}: ORIGINAL-APPROVAL line {oref['type']}/{oref['id']} does not match "
+                        f"resolved original evidence {orig.get('type')}/{orig.get('id')}")
+        return None
+    if "pr" in orig and orig.get("pr") is not None and oref["pr"] != int(orig["pr"]):
+        problems.append(f"{rp}: ORIGINAL-APPROVAL pr {oref['pr']} does not match original source pr {orig['pr']}")
         return None
     if reviewers.get(author) not in (TEST_PLAN_REVIEWER.get(feature), EXECUTION_PLAN_REVIEWER):
         problems.append(f"{rp}: clarification author {author!r} not authorized for {feature}")
