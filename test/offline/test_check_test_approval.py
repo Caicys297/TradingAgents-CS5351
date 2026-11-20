@@ -789,3 +789,22 @@ def test_clarification_body_original_line_must_match(tmp_path):
             clarification={"evidence": {"type": "issue_comment", "id": 781},
                            "plan_sha": FULL_SHA, "plan_version": "v0.3"})
     assert _run(mod, r, z, fix) == 0
+
+
+@pytest.mark.unit
+def test_clarification_marker_plan_mismatch_vs_original_fails(tmp_path):
+    """Clarification marker plan must equal the ORIGINAL marker plan, not just the
+    clarification's claimed PR metadata. A body whose marker names a different plan
+    (even if PR JSON claims the right one) must fail."""
+    mod, r, fix, z = _valid(tmp_path)
+    wrong_plan = "aa9fda60" + "0" * 32  # 40-hex but different from FULL_SHA
+    # body: ORIGINAL-APPROVAL id=111 (correct) + marker with WRONG plan
+    _comment(fix, 782, "Caicys297", "2026-11-16T15:30:00Z",
+             body=_orig_ref("issue_comment", 111) + "\n" + _marker("test_plan", wrong_plan, "v0.3"))
+    _record(r, "o2_test.json", feature="O2", approval_kinds=["test_plan"],
+            evidence={"type": "issue_comment", "id": 111},
+            plan_sha=FULL_SHA, plan_version="v0.3",  # PR JSON claims correct plan
+            allowed_files=["tradingagents/repro/manifest.py"], implementers=["fancx777"],
+            clarification={"evidence": {"type": "issue_comment", "id": 782},
+                           "plan_sha": FULL_SHA, "plan_version": "v0.3"})
+    assert _run(mod, r, z, fix) == 1

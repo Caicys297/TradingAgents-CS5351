@@ -426,7 +426,8 @@ def _verify_scope_and_plan(rec, api, repo, applicable, problems, rp) -> dict | N
     return allowed
 
 
-def _verify_binding(rec, api, repo, reviewers, feature, approval_iso, root, problems, rp) -> dict | None:
+def _verify_binding(rec, api, repo, reviewers, feature, approval_iso, root, problems, rp,
+                    orig_marker: dict, src_pr) -> dict | None:
     """Correction 1: a `binding`/`clarification` record may identify what the
     ORIGINAL evidence already approved, but is a SEPARATE, currently-dated record
     that cannot expand scope, grant retrospective approval, or backdate.
@@ -466,8 +467,13 @@ def _verify_binding(rec, api, repo, reviewers, feature, approval_iso, root, prob
         problems.append(f"{rp}: ORIGINAL-APPROVAL line {oref['type']}/{oref['id']} does not match "
                         f"resolved original evidence {orig.get('type')}/{orig.get('id')}")
         return None
-    if "pr" in orig and orig.get("pr") is not None and oref["pr"] != int(orig["pr"]):
-        problems.append(f"{rp}: ORIGINAL-APPROVAL pr {oref['pr']} does not match original source pr {orig['pr']}")
+    # The original evidence may omit `pr` and fall back to the default/source PR;
+    # the clarification must name the ACTUAL resolved source PR in that case too.
+    resolved_pr = orig.get("pr")
+    if resolved_pr is None:
+        resolved_pr = src_pr
+    if resolved_pr is not None and oref["pr"] != int(resolved_pr):
+        problems.append(f"{rp}: ORIGINAL-APPROVAL pr {oref['pr']} does not match resolved original source pr {resolved_pr}")
         return None
     if reviewers.get(author) not in (TEST_PLAN_REVIEWER.get(feature), EXECUTION_PLAN_REVIEWER):
         problems.append(f"{rp}: clarification author {author!r} not authorized for {feature}")
@@ -476,20 +482,27 @@ def _verify_binding(rec, api, repo, reviewers, feature, approval_iso, root, prob
         problems.append(f"{rp}: clarification edited after creation (created {ctime}, updated {utime}); "
                         "cannot establish original content — needs human verification")
         return None
-    # The clarification must carry an explicit marker confirming plan/kind/scope
-    # (same evidence standard as the original approval). It may only confirm what
-    # the original artifact already supported; it cannot introduce scope.
+    # The clarification must carry an explicit marker and it must match the
+    # ORIGINAL marker already parsed for this record (NOT PR-supplied JSON):
+    # same plan, version and kind; scope must be a SUBSET of the original scope.
     marker = _parse_approval_marker(body)
     if marker is None:
         problems.append(f"{rp}: clarification has no explicit TEST-APPROVAL marker")
         return None
-    plan_sha = str(b.get("plan_sha") or rec.get("plan_sha", "")).strip()
-    plan_ver = str(b.get("plan_version") or rec.get("plan_version", "")).strip()
-    if marker["plan"] != plan_sha:
-        problems.append(f"{rp}: clarification marker plan {marker['plan'][:7]} != approved {plan_sha[:7]}")
+    if orig_marker is None:
+        problems.append(f"{rp}: cannot verify clarification against original marker (none parsed)")
         return None
-    if plan_ver and marker["version"] != plan_ver:
-        problems.append(f"{rp}: clarification marker version {marker['version']} != approved {plan_ver}")
+    if marker["plan"] != orig_marker["plan"]:
+        problems.append(f"{rp}: clarification marker plan {marker['plan'][:7]} != original {orig_marker['plan'][:7]}")
+        return None
+    if marker["version"] != orig_marker["version"]:
+        problems.append(f"{rp}: clarification marker version {marker['version']} != original {orig_marker['version']}")
+        return None
+    if marker["kind"] != orig_marker["kind"]:
+        problems.append(f"{rp}: clarification marker kind {marker['kind']} != original {orig_marker['kind']}")
+        return None
+    if not set(marker["scope"]).issubset(set(orig_marker["scope"])):
+        problems.append(f"{rp}: clarification scope {marker['scope']} exceeds original scope {orig_marker['scope']}")
         return None
     # Later clarification: its own timestamp must NOT be earlier than the original
     # approval (it cannot manufacture an earlier approval). Report both separately.
@@ -695,7 +708,8 @@ def validate_batch(records, api, default_pr, batch_id, applicable, reviewers, ea
         # but cannot expand beyond the plan-supported files, backdate, or replace
         # the original approval. If present it may only confirm scope already in
         # the plan; we take the intersection and reject any expansion.
-        clar = _verify_binding(rec, api, repo, reviewers, feature, otime, root, problems, rp)
+        clar = _verify_binding(rec, api, repo, reviewers, feature, otime, root, problems, rp,
+                               marker, src_pr)
         if clar is not None:
             extra = [f for f in clar["allowed_files"] if f not in plan_allowed]
             if extra:

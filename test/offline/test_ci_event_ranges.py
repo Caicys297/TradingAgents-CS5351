@@ -8,6 +8,7 @@ scan when the range is unresolvable).
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -185,63 +186,86 @@ def test_dep_scanner_failure_on_commit_is_not_clean(monkeypatch):
 
 
 @pytest.mark.unit
-def test_historical_dep_audit_reads_each_revision_project(tmp_path):
-    """Isolated worktree: '.'→that revision's pyproject; controlled scanner reads
-    the historical project, so an earlier finding is seen even with clean HEAD.
+def test_historical_dep_audit_runs_production_path(tmp_path, monkeypatch):
+    """No scanner hook: exercise the REAL production scan path, intercepting only
+    the subprocess commands (venv create, install, scan) while GIT creates a real
+    historical worktree. Verifies:
+      - install runs '. [dev]' with cwd == the historical worktree,
+      - scan runs sys.executable -m pip_audit --path <that rev's site-packages>,
+      - the worktree HEAD is the requested historical revision,
+      - an earlier finding is returned while HEAD would be clean.
+    """
 
-    Two revisions have identical requirements.txt ('.') but different pyproject
-    dependency names. The scanner injected proves the audit sees the historical
-    project (not HEAD)."""
     r = tmp_path / "r"
     subprocess.run(["git", "init", "-q", "-b", "main", str(r)], check=True)
     _git(r, "config", "user.email", "t@t")
     _git(r, "config", "user.name", "t")
     (r / "requirements.txt").write_text(".\n")
-    (r / "pyproject.toml").write_text("[project]\nname='x'\ndependencies=['safe-pkg>=1']\n[project.optional-dependencies]\ndev=['pytest']\n")
+    (r / "pyproject.toml").write_text(
+        "[project]\nname='x'\ndependencies=['safe-pkg>=1']\n"
+        "[project.optional-dependencies]\ndev=['pytest']\n")
     (r / "a.py").write_text("a")
     _git(r, "add", "-A")
     _git(r, "commit", "-qm", "rev1")
     rev1 = _git(r, "rev-parse", "HEAD")
     subprocess.run(["git", "-C", str(r), "update-ref", "refs/remotes/origin/main", rev1], check=True)
-    # rev2: pyproject changes to a vulnerable-looking dep; requirements.txt unchanged
-    (r / "pyproject.toml").write_text("[project]\nname='x'\ndependencies=['safe-pkg>=1']\n[project.optional-dependencies]\ndev=['pytest']\n")
-    (r / "b.py").write_text("b")
-    _git(r, "add", "-A")
-    _git(r, "commit", "-qm", "rev2-clean")
-    rev2 = _git(r, "rev-parse", "HEAD")
-    # Sanity: requirements identical across revs
-    assert _git(r, "show", f"{rev1}:requirements.txt") == _git(r, "show", f"{rev2}:requirements.txt") == "."
 
     da = _load("dep_audit")
+    calls = {}
+    real_run = da.subprocess.run
 
-    seen = {}
+    class _P:
+        def __init__(self, rc=0, out=""):
+            self.returncode = rc
+            self.stdout = out
+            self.stderr = ""
 
-    def scanner(worktree: Path, venv: Path):
-        # Controlled scanner: reads the HISTORICAL project at the worktree rev and
-        # records the worktree HEAD + that '.[dev]' group is resolvable there.
-        import subprocess as _sp
-        head = _sp.run(["git", "-C", str(worktree), "rev-parse", "HEAD"],
-                       capture_output=True, text=True).stdout.strip()
-        py = (worktree / "pyproject.toml").read_text()
-        seen["head"] = head
-        seen["has_dev_extra"] = "optional-dependencies" in py and "dev" in py
-        if "bad-pkg" in py:
-            return {"dependencies": [{"name": "bad-pkg", "version": "1.0",
-                                      "vulns": [{"id": "GHSA-bad", "fix_versions": ["2.0"]}]}]}
-        return {"dependencies": [{"name": "safe-pkg", "version": "1.0", "vulns": []}]}
+    def fake_run(cmd, *a, **k):
+        joined = " ".join(cmd) if isinstance(cmd, list) else str(cmd)
+        if "worktree" in joined:  # let git create the real worktree
+            return real_run(cmd, *a, **k)
+        if "-m" in cmd and "venv" in cmd:
+            # create the venv dir + bin/python so path exists
+            vpath = Path(cmd[-1])
+            (vpath / "bin").mkdir(parents=True, exist_ok=True)
+            (vpath / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages").mkdir(
+                parents=True, exist_ok=True)
+            calls["venv"] = True
+            return _P(0)
+        if "pip" in cmd and "install" in cmd:
+            calls["install_cmd"] = cmd
+            calls["install_cwd"] = k.get("cwd")
+            # capture the worktree HEAD while it still exists
+            calls["install_head"] = real_run(
+                ["git", "-C", str(k.get("cwd")), "rev-parse", "HEAD"],
+                capture_output=True, text=True).stdout.strip()
+            return _P(0)
+        if "pip_audit" in joined:
+            calls["scan_cmd"] = cmd
+            calls["scan_cwd"] = k.get("cwd")
+            return _P(0, json.dumps({"dependencies": [{"name": "bad-pkg", "version": "1.0",
+                     "vulns": [{"id": "GHSA-bad", "fix_versions": ["2.0"]}]}]}))
+        return real_run(cmd, *a, **k)
 
-    # rev1 report (clean), rev2 report (clean) via normal path; then simulate an
-    # intermediate revision with bad-pkg by scanning rev1 with a modified pyproject.
-    assert da._audit_requirements_at_rev(r, rev1, scanner=scanner)["dependencies"][0]["name"] == "safe-pkg"
-    assert seen["head"] == rev1 and seen["has_dev_extra"] is True  # worktree=rev1, .[dev] group
-    # Now craft a revision whose pyproject has bad-pkg
-    (r / "pyproject.toml").write_text("[project]\nname='x'\ndependencies=['bad-pkg>=1']\n[project.optional-dependencies]\ndev=['pytest']\n")
+    monkeypatch.setattr(da.subprocess, "run", fake_run)
+    # a revision whose pyproject changes; worktree checkout is real
+    (r / "pyproject.toml").write_text(
+        "[project]\nname='x'\ndependencies=['bad-pkg>=1']\n"
+        "[project.optional-dependencies]\ndev=['pytest']\n")
     (r / "c.py").write_text("c")
     _git(r, "add", "-A")
-    _git(r, "commit", "-qm", "rev3-bad")
-    rev3 = _git(r, "rev-parse", "HEAD")
-    rep3 = da._audit_requirements_at_rev(r, rev3, scanner=scanner)
-    assert rep3["dependencies"][0]["name"] == "bad-pkg"
-    assert seen["head"] == rev3  # historical revision, not HEAD
-    # worktrees cleaned up
-    assert not (tmp_path / "leak").exists()
+    _git(r, "commit", "-qm", "rev2-bad")
+    rev2 = _git(r, "rev-parse", "HEAD")
+
+    rep = da._audit_requirements_at_rev(r, rev2)  # NO scanner hook
+
+    # install used '.[dev]' with cwd == the historical worktree
+    assert calls["install_cmd"][-1] == ".[dev]"
+    assert calls["install_cwd"] and Path(calls["install_cwd"]).name.startswith("deprev-wt-")
+    assert calls["install_head"] == rev2  # worktree was the historical revision
+    # scan ran via sys.executable -m pip_audit --path <rev site-packages>
+    assert calls["scan_cmd"][0] == sys.executable
+    assert "pip_audit" in calls["scan_cmd"] and "--path" in calls["scan_cmd"]
+    # historical finding returned
+    assert rep["dependencies"][0]["name"] == "bad-pkg"
+

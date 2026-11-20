@@ -209,9 +209,11 @@ def _audit_requirements_at_rev(root: Path, rev: str, scanner=None) -> dict:
             if inst.returncode != 0:
                 raise ScannerError(f"install '.[dev]' failed for {rev[:12]} (exit {inst.returncode}): "
                                    f"{inst.stderr.strip()[:200]}")
-            # Audit the installed venv environment (same group CI installs).
+            # Audit the installed venv's site-packages using the CI interpreter,
+            # which has the pinned pip-audit installed (.[dev] does NOT include
+            # pip-audit, so the fresh revision venv cannot run it itself).
             sitepkgs = str(venv / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages")
-            proc = subprocess.run([str(vpy), "-m", "pip_audit", "--path", sitepkgs,
+            proc = subprocess.run([sys.executable, "-m", "pip_audit", "--path", sitepkgs,
                                    "--format", "json", "--progress-spinner", "off"],
                                   capture_output=True, text=True, cwd=wt)
             if proc.returncode not in (0, 1):
