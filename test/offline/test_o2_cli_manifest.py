@@ -220,8 +220,10 @@ def _install_harness(
         "record_decision_calls": 0,
         "graph": None,
         "console": _FakeConsole(),
-        "rated_state": None,
-        "rating": rating,
+        "effective_rating": rating,
+        "final_state": {**FINAL_STATE, "final_rating": rating},
+        "reservation_attempts": [],
+        "rating_before_manifest_failure": None,
     }
 
     config = {
@@ -247,14 +249,18 @@ def _install_harness(
         collision = harness["run_base"] / COLLISION_ID
         collision.mkdir(parents=True, exist_ok=True)
         (collision / "keep.txt").write_text("keep", encoding="utf-8")
-        monkeypatch.setattr(
-            run_mod,
-            "uuid",
-            SimpleNamespace(uuid4=lambda: SimpleNamespace(hex=COLLISION_ID)),
-        )
+
+        def collision_uuid4():
+            harness["reservation_attempts"].append(COLLISION_ID)
+            return SimpleNamespace(hex=COLLISION_ID)
+
+        monkeypatch.setattr(run_mod, "uuid", SimpleNamespace(uuid4=collision_uuid4))
 
     if fail_manifest_write:
         def fail_write(*args, **kwargs):
+            harness["rating_before_manifest_failure"] = run_mod.run_rating(
+                harness["final_state"]
+            )
             raise OSError("manifest write failed")
 
         monkeypatch.setattr(manifest_module, "write_manifest", fail_write)
@@ -291,7 +297,7 @@ def _install_harness(
             return state
 
         def stream_run(self, state, **kwargs):
-            yield [], FINAL_STATE
+            yield [], harness["final_state"]
 
         def record_decision(self, ticker, trade_date, final_state):
             harness["calls"].append("record_decision")
@@ -332,10 +338,6 @@ def _install_harness(
                 final_state, ticker, save_path, settings=None, html=html
             )
 
-    def fake_rating(state):
-        harness["rated_state"] = state
-        return harness["rating"]
-
     monkeypatch.setattr(run_mod, "TradingAgentsGraph", FakeGraph)
     monkeypatch.setattr(run_mod, "get_user_selections", lambda flags=None: dict(selections))
     monkeypatch.setattr(run_mod, "unattended_gaps", lambda flags: [])
@@ -351,8 +353,6 @@ def _install_harness(
     monkeypatch.setattr(run_mod, "display_agent_summary", lambda *args, **kwargs: None)
     monkeypatch.setattr(run_mod, "display_complete_report", lambda *args, **kwargs: None)
     monkeypatch.setattr(run_mod, "console", harness["console"])
-    monkeypatch.setattr(run_mod, "is_review", lambda rating: rating == "REVIEW")
-    monkeypatch.setattr(run_mod, "run_rating", fake_rating)
     monkeypatch.setattr(run_mod, "message_buffer", _FakeBuffer())
     return harness, save, html
 
@@ -529,7 +529,6 @@ def test_state_log_write_failure_propagates_without_manifest(monkeypatch, tmp_pa
 
     assert harness["state_log"].read_text(encoding="utf-8") == "old state log"
     assert not (_run_dir(harness) / "manifest.json").exists()
-    assert harness["rated_state"] is None
 
 
 def test_state_log_close_failure_propagates_without_manifest(monkeypatch, tmp_path):
@@ -543,7 +542,6 @@ def test_state_log_close_failure_propagates_without_manifest(monkeypatch, tmp_pa
     assert harness["state_log"].is_file()
     assert harness["state_log"].read_text(encoding="utf-8") != "old state log"
     assert not (_run_dir(harness) / "manifest.json").exists()
-    assert harness["rated_state"] is None
 
 
 @pytest.mark.parametrize("rating", ["Hold", "REVIEW"])
@@ -559,9 +557,14 @@ def test_manifest_write_failure_is_fail_soft_with_effective_rating(
         rating=rating,
     )
     run_dir = _run_dir(harness)
+    rating_before = harness["rating_before_manifest_failure"]
+    rating_after = run_mod.run_rating(harness["final_state"])
 
     assert harness["record_decision_calls"] == 1
-    assert harness["rated_state"] == FINAL_STATE
+    assert harness["effective_rating"] == rating
+    assert harness["final_state"]["final_rating"] == rating
+    assert rating_before == rating
+    assert rating_after == rating
     assert (harness["saved_path"] / "complete_report.md").is_file()
     assert not (run_dir / "manifest.json").exists()
     assert "Manifest not saved" in harness["console"].text
@@ -606,6 +609,7 @@ def test_reservation_collision_exits_before_graph_and_preserves_existing_files(
             },
         )
 
+    assert harness["reservation_attempts"] == [COLLISION_ID] * 3
     assert "graph_init" not in harness["calls"]
     assert keep.read_text(encoding="utf-8") == "keep"
     assert not (_run_dir(harness) / "manifest.json").exists()
