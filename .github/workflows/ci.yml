@@ -169,7 +169,12 @@ jobs:
         # Real get_global_news_yfinance via the approved O5 tests (offline, fake
         # vendor inputs). Emits versioned case IDs + per-case results vs 100%
         # threshold; fails nonzero on any required failed/missing case OR on a
-        # prompt/model change with no approved applicable case (diff vs base).
+        # prompt/model change with no approved applicable case.
+        # Applicability uses the actual event: pull_request -> merge-base vs base;
+        # push -> before/after commit range (new-branch/tag pushes fail closed).
         env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
           GITHUB_BASE_REF: ${{ github.base_ref }}
+          GITHUB_BEFORE: ${{ github.event.before }}
+          GITHUB_AFTER: ${{ github.event.after }}
         run: python scripts/semantic_report.py --json semantic-report.json

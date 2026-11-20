@@ -206,15 +206,77 @@ def evaluate(junit_outcomes: dict[str, str], changes: dict | None = None) -> dic
     }
 
 
-def _changed_files(base_ref: str) -> list[str]:
-    """Changed files vs the verified base (merge-base three-dot diff)."""
+class ApplicabilityError(RuntimeError):
+    """Could not determine changed paths from the event (unknown applicability)."""
+
+
+def _git_diff_names(*revs: str) -> list[str]:
+    """NUL-separated `git diff --name-only -z` for the given rev range.
+
+    Raises ApplicabilityError if git fails (e.g. unknown revisions). Uses -z so
+    filenames with spaces/newlines are not split.
+    """
     proc = subprocess.run(
-        ["git", "diff", "--name-only", f"origin/{base_ref}...HEAD"],
-        capture_output=True, text=True, cwd=REPO_ROOT,
+        ["git", "diff", "--name-only", "-z", *revs],
+        capture_output=True, cwd=REPO_ROOT,
     )
     if proc.returncode != 0:
-        raise RuntimeError(f"git diff failed for origin/{base_ref}...HEAD: {proc.stderr.strip()[:300]}")
-    return [ln for ln in proc.stdout.splitlines() if ln.strip()]
+        raise ApplicabilityError(
+            f"git diff failed for {' '.join(revs)}: {proc.stderr.decode('utf-8', 'replace').strip()[:300]}"
+        )
+    return [p.decode("utf-8", "replace") for p in proc.stdout.split(b"\x00") if p]
+
+
+def _pr_changed_files(base_ref: str) -> list[str]:
+    """PR event: merge-base three-dot diff against origin/<base>."""
+    return _git_diff_names(f"origin/{base_ref}...HEAD")
+
+
+def _push_changed_files(before: str, after: str) -> list[str]:
+    """Push event: all paths changed in the before..after commit range.
+
+    Handles edge cases explicitly rather than treating unknown as clean:
+      - new branch / zero before SHA (all zeros): no meaningful prior state ->
+        ApplicabilityError (unknown applicability, must not green-pass).
+      - after not present / before not present: ApplicabilityError.
+    """
+    zero = "0" * 40
+    if not before or before == zero or not after or after == zero:
+        raise ApplicabilityError(
+            f"push event has no usable before/after commit range (before={before!r} after={after!r}); "
+            "new-branch/tag push applicability is unknown"
+        )
+    # Verify both commits exist locally.
+    for rev in (before, after):
+        chk = subprocess.run(
+            ["git", "cat-file", "-e", f"{rev}^{{commit}}"], capture_output=True, cwd=REPO_ROOT
+        )
+        if chk.returncode != 0:
+            raise ApplicabilityError(f"push commit {rev} not available in history")
+    return _git_diff_names(before, after)
+
+
+def resolve_changed_files(
+    *, changed_from_file: Path | None, base_ref: str | None, env: dict[str, str]
+) -> list[str]:
+    """Determine changed paths from an explicit file or the CI event, or raise."""
+    if changed_from_file is not None:
+        raw = changed_from_file.read_bytes()
+        return [p.decode("utf-8", "replace") for p in raw.split(b"\x00") if p]
+
+    event = env.get("GITHUB_EVENT_NAME", "").strip()
+    if event == "pull_request":
+        ref = base_ref or env.get("GITHUB_BASE_REF", "").strip()
+        if not ref:
+            raise ApplicabilityError("pull_request event without a base ref")
+        return _pr_changed_files(ref)
+    if event == "push":
+        return _push_changed_files(env.get("GITHUB_BEFORE", "").strip(), env.get("GITHUB_AFTER", "").strip())
+
+    raise ApplicabilityError(
+        f"unsupported/unknown event ({event!r}); cannot determine applicability "
+        "(need --changed-from-file, PR or push history)"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -222,28 +284,28 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--json", type=Path, default=Path("semantic-report.json"))
     parser.add_argument("--base-ref", default=None)
     parser.add_argument("--changed-from-file", type=Path, default=None)
+    parser.add_argument("--push-before", default=None)
+    parser.add_argument("--push-after", default=None)
     args = parser.parse_args(argv)
 
     if not (REPO_ROOT / TEST_FILE).is_file():
         print("ERROR: O5 integration test file not present; cannot run authorized cases.", file=sys.stderr)
         return 2
 
-    # --- applicability: inspect the actual diff vs a verified base ---
+    # --- applicability: inspect actual changed paths from the event ---
+    import os
+    env = dict(os.environ)
+    if args.push_before is not None:
+        env["GITHUB_EVENT_NAME"] = "push"
+        env["GITHUB_BEFORE"] = args.push_before
+        env["GITHUB_AFTER"] = args.push_after or ""
     try:
-        import os
-        if args.changed_from_file:
-            raw = args.changed_from_file.read_bytes()
-            changed = [p.decode("utf-8", "replace") for p in raw.split(b"\x00") if p]
-        else:
-            base_ref = args.base_ref or os.environ.get("GITHUB_BASE_REF", "")
-            if not base_ref:
-                print(
-                    "ERROR: no base ref to determine prompt/model applicability "
-                    "(need GITHUB_BASE_REF or --base-ref or --changed-from-file).",
-                    file=sys.stderr,
-                )
-                return 2
-            changed = _changed_files(base_ref)
+        changed = resolve_changed_files(
+            changed_from_file=args.changed_from_file, base_ref=args.base_ref, env=env
+        )
+    except ApplicabilityError as exc:
+        print(f"ERROR: cannot determine prompt/model applicability: {exc}", file=sys.stderr)
+        return 2
     except Exception as exc:  # diff failure is an execution error, not green
         print(f"ERROR: cannot determine changed files: {exc}", file=sys.stderr)
         return 2
