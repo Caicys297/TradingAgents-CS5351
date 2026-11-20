@@ -38,6 +38,23 @@ from tradingagents.reporting import _report_parts as report_parts
 from tradingagents.repro import manifest as manifest_module
 
 
+def _is_pm_message(message) -> bool:
+    """Whether a streamed message is the Portfolio Manager's own output.
+
+    Read from the message metadata production attaches (``langgraph_node``), so
+    the decision is made from the real event rather than from the text.
+    """
+    meta = getattr(message, "response_metadata", None) or {}
+    node = meta.get("langgraph_node")
+    if isinstance(node, str):
+        return "portfolio" in node.lower() or "portfolio manager" in node.lower()
+    additional = getattr(message, "additional_kwargs", None) or {}
+    node = additional.get("langgraph_node")
+    return isinstance(node, str) and (
+        "portfolio" in node.lower() or "portfolio manager" in node.lower()
+    )
+
+
 def _run_directory(config: dict, ticker: str, trade_date: str) -> Path:
     """Where this run writes, with the ticker validated as a path component.
 
@@ -441,6 +458,12 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
         # interrupted run instead of re-appending the initial state (#1249); the
         # try/finally tears the checkpointer down even if the stream raises.
         trace = []
+        # O4: the Portfolio Manager's decision text, held back until the Gate has
+        # judged it. Remains empty when the run never produced one.
+        pm_decision_text = ""
+        # O4: the PM's streamed message, held back for the same reason, so the
+        # message area shows no approved recommendation before the Gate.
+        pm_decision_message = None
         try:
             for messages, chunk in graph.stream_run(graph.checkpoint_input(init_agent_state), **args):
                 for message in messages:
@@ -452,7 +475,13 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
 
                     msg_type, content = classify_message_type(message)
                     if content and content.strip():
-                        message_buffer.add_message(msg_type, content)
+                        # O4: the Portfolio Manager's own message is held back
+                        # with its decision, so the pre-Gate view cannot show an
+                        # approved recommendation. Everything else streams as before.
+                        if _is_pm_message(message):
+                            pm_decision_message = (msg_type, content)
+                        else:
+                            message_buffer.add_message(msg_type, content)
 
                     if hasattr(message, "tool_calls") and message.tool_calls:
                         for tool_call in message.tool_calls:
@@ -533,8 +562,12 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
                         )
                     if judge and message_buffer.agent_status.get("Portfolio Manager") != "completed":
                         message_buffer.update_agent_status("Portfolio Manager", "in_progress")
+                        # O4: hold the PM decision back until the Gate has judged
+                        # it, so no approved Buy/Sell is published before then.
+                        # Only the status marker goes to the live section now.
+                        pm_decision_text = judge
                         message_buffer.update_report_section(
-                            "final_trade_decision", f"### Portfolio Manager Decision\n{judge}"
+                            "final_trade_decision", "### Portfolio Manager Decision\n"
                         )
                         message_buffer.update_agent_status("Aggressive Analyst", "completed")
                         message_buffer.update_agent_status("Conservative Analyst", "completed")
@@ -558,6 +591,33 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
             # Only a normal return proves this run's state log was written and
             # closed; a raise propagates out of the try before this line.
             state_log_written = True
+            # O4: the Gate has judged the run, so the buffered decision may be
+            # published now. A REVIEW is labelled as unapproved original content
+            # rather than presented as the run's recommendation.
+            if pm_decision_text:
+                if is_review(run_rating(final_state)):
+                    message_buffer.update_report_section(
+                        "final_trade_decision",
+                        "### Portfolio Manager Decision (unapproved original content; "
+                        f"withheld from the run's rating)\n{pm_decision_text}",
+                    )
+                else:
+                    message_buffer.update_report_section(
+                        "final_trade_decision",
+                        f"### Portfolio Manager Decision\n{pm_decision_text}",
+                    )
+            # O4: the held-back PM message is released only now, after the Gate,
+            # and carries the same non-authoritative label on REVIEW.
+            if pm_decision_message is not None:
+                msg_type, content = pm_decision_message
+                if is_review(run_rating(final_state)):
+                    message_buffer.add_message(
+                        msg_type,
+                        "(unapproved original content; withheld from the run's "
+                        f"rating)\n{content}",
+                    )
+                else:
+                    message_buffer.add_message(msg_type, content)
             graph.clear_checkpoint_on_success(
                 selections["ticker"], selections["analysis_date"], selections["asset_type"], portfolio
             )

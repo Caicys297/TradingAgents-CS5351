@@ -15,6 +15,7 @@ from rich.spinner import Spinner
 from rich.table import Table
 from rich.text import Text
 
+from tradingagents.agents.rating import is_review, run_rating
 from tradingagents.graph.analyst_execution import (
     ANALYST_NODE_SPECS,
     AnalystExecutionPlan,
@@ -508,7 +509,38 @@ def display_complete_report(final_state):
     # V. Portfolio Manager Decision
     if final_state.get("final_trade_decision"):
         console.print(Panel("[bold]V. Portfolio Manager Decision[/bold]", border_style="green"))
-        console.print(Panel(Markdown(final_state["final_trade_decision"]), title="Portfolio Manager", border_style="blue", padding=(1, 2)))
+        # The Gate's authoritative rating, shown on screen. A legacy state has no
+        # effective_rating, so fall back to run_rating() exactly as the rest of the
+        # CLI does.
+        rating = run_rating(final_state)
+        review = is_review(rating)
+        rating_style = "yellow" if review else "green"
+        console.print(
+            Panel(
+                Markdown(f"**Rating:** {rating}"),
+                title="Rating",
+                border_style=rating_style,
+                padding=(0, 2),
+            )
+        )
+        body = final_state["final_trade_decision"]
+        if review:
+            # The body is preserved verbatim, but it is not the run's recommendation:
+            # say so plainly rather than presenting a Buy/Sell as approved.
+            console.print(
+                Panel(
+                    Markdown(
+                        "**Unapproved original content.** The Gate withheld this "
+                        "run's rating as REVIEW, so the Portfolio Manager text below "
+                        "is preserved for inspection and is not an approved "
+                        "recommendation."
+                    ),
+                    title="Not an approved recommendation",
+                    border_style="yellow",
+                    padding=(0, 2),
+                )
+            )
+        console.print(Panel(Markdown(body), title="Portfolio Manager", border_style="blue", padding=(1, 2)))
 
 
 def update_research_team_status(status):

@@ -28,9 +28,14 @@ def _bare_graph(tmp_path):
 @pytest.mark.unit
 def test_record_decision_appends_a_pending_entry(tmp_path):
     graph = _bare_graph(tmp_path)
+    # O4: a new write is gated, so a state without its required reports is
+    # published as REVIEW rather than as the ungated Buy in its decision body.
+    # The entry itself is still appended, which is what this test covers.
     graph.record_decision("NVDA", "2026-01-10", {"final_trade_decision": "Rating: Buy\n\nBuy NVDA."})
     entries = graph.memory_log.load_entries()
-    assert [(e["ticker"], e["pending"], e["rating"]) for e in entries] == [("NVDA", True, "Buy")]
+    assert [(e["ticker"], e["pending"], e["rating"]) for e in entries] == [
+        ("NVDA", True, "REVIEW")
+    ]
 
 
 @pytest.mark.unit

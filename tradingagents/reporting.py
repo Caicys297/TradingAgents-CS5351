@@ -46,6 +46,15 @@ def _header(ticker: str, final_state: dict, settings: dict | None) -> str:
     return "\n".join(lines) + "\n\n"
 
 
+# On a REVIEW run the Portfolio Manager's text is not an approved recommendation.
+# It is kept verbatim but introduced by this marker wherever it is written.
+_NON_AUTHORITATIVE_PM = (
+    "> **Unapproved original content.** The Gate withheld this run's rating as "
+    "REVIEW, so the text below is preserved for inspection and is not an "
+    "approved recommendation.\n\n"
+)
+
+
 # The report's sections in order: (heading, folder, [(agent, file, state path)]).
 _SECTIONS = (
     ("I. Analyst Team Reports", "1_analysts", (
@@ -74,7 +83,14 @@ _SECTIONS = (
 
 
 def _report_parts(final_state: dict) -> list[tuple[str, str, list[tuple[str, str, str]]]]:
-    """The sections with something to say: (heading, folder, [(agent, file, text)])."""
+    """The sections with something to say: (heading, folder, [(agent, file, text)]).
+
+    On a REVIEW run the Portfolio Manager's own decision text is unapproved
+    original content: it is kept verbatim but prefixed with a non-authoritative
+    marker, so no rendered output presents it as the run's recommendation.
+    """
+    rating = final_state.get("effective_rating") or final_state.get("final_rating")
+    review = rating == "REVIEW"
     parts = []
     for heading, folder, agents in _SECTIONS:
         written = []
@@ -83,6 +99,8 @@ def _report_parts(final_state: dict) -> list[tuple[str, str, list[tuple[str, str
             for key in path:
                 value = (value or {}).get(key)
             if value:
+                if review and folder == "5_portfolio":
+                    value = _NON_AUTHORITATIVE_PM + value
                 written.append((agent, filename, value))
         if written:
             parts.append((heading, folder, written))
