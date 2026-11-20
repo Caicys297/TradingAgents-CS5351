@@ -366,7 +366,9 @@ def test_ai_use_summary_file_is_not_export_evidence(tmp_path):
 @pytest.mark.unit
 def test_ai_use_json_export_reference_passes(tmp_path):
     (tmp_path / "transcripts").mkdir()
-    (tmp_path / "transcripts/session.json").write_text("{}")
+    (tmp_path / "transcripts/session.json").write_text(
+        '{"messages":[{"parts":[{"type":"text","text":"hello"}]}]}'
+    )
     lines = ["Task: t. Usage scope: s. Implementation commit: abc1234.",
              "Evidence: transcripts/session.json"]
     assert _v(lines, tmp_path) == []
@@ -401,3 +403,106 @@ def test_ai_use_changed_from_file_handles_spaces(tmp_path):
     z.write_bytes(b"docs/a file.md\x00tradingagents/x.py\x00")
     mod = _load("check_ai_use_log")
     assert mod._changed_from_file(z) == ["docs/a file.md", "tradingagents/x.py"]
+
+
+# ============================================================ Range + export hardening (final)
+
+def _git(repo: Path, *args: str) -> str:
+    import subprocess as _sp
+    return _sp.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=True).stdout.strip()
+
+
+def _make_history(tmp: Path):
+    """Create a genuine temp git history: base commit + PR commits, with an
+    origin/main ref pointing at base (mirrors CI's verified base)."""
+    import subprocess as _sp
+
+    _sp.run(["git", "init", "-q", "-b", "main", str(tmp)], check=True)
+    _git(tmp, "config", "user.email", "t@t")
+    _git(tmp, "config", "user.name", "t")
+    (tmp / "a.txt").write_text("base")
+    _git(tmp, "add", "a.txt")
+    _git(tmp, "commit", "-qm", "base")
+    base = _git(tmp, "rev-parse", "HEAD")
+    _sp.run(["git", "-C", str(tmp), "update-ref", "refs/remotes/origin/main", base], check=True)
+    # PR implementation commit
+    (tmp / "b.txt").write_text("impl")
+    _git(tmp, "add", "b.txt")
+    _git(tmp, "commit", "-qm", "impl")
+    impl = _git(tmp, "rev-parse", "HEAD")
+    # evidence-only follow-up commit
+    (tmp / "c.txt").write_text("evidence")
+    _git(tmp, "add", "c.txt")
+    _git(tmp, "commit", "-qm", "evidence")
+    follow = _git(tmp, "rev-parse", "HEAD")
+    # unrelated: a commit on a detached orphan
+    _sp.run(["git", "-C", str(tmp), "checkout", "-q", "--orphan", "orph"], check=True)
+    (tmp / "z.txt").write_text("z")
+    _git(tmp, "add", "z.txt")
+    _git(tmp, "commit", "-qm", "unrelated")
+    unrelated = _git(tmp, "rev-parse", "HEAD")
+    _sp.run(["git", "-C", str(tmp), "checkout", "-q", "main"], check=True)
+    return base, impl, follow, unrelated
+
+
+@pytest.mark.unit
+def test_commit_in_range_rejects_base_sha(tmp_path):
+    mod = _load("check_ai_use_log")
+    base, impl, follow, unrelated = _make_history(tmp_path)
+    assert mod._commit_in_range(base, "main", tmp_path) is False
+
+
+@pytest.mark.unit
+def test_commit_in_range_rejects_unrelated_sha(tmp_path):
+    mod = _load("check_ai_use_log")
+    base, impl, follow, unrelated = _make_history(tmp_path)
+    assert mod._commit_in_range(unrelated, "main", tmp_path) is False
+
+
+@pytest.mark.unit
+def test_commit_in_range_accepts_pr_impl_sha(tmp_path):
+    mod = _load("check_ai_use_log")
+    base, impl, follow, unrelated = _make_history(tmp_path)
+    assert mod._commit_in_range(impl, "main", tmp_path) is True
+
+
+@pytest.mark.unit
+def test_commit_in_range_accepts_earlier_impl_from_followup(tmp_path):
+    """An evidence-only follow-up may reference the earlier implementation commit."""
+    mod = _load("check_ai_use_log")
+    base, impl, follow, unrelated = _make_history(tmp_path)
+    # HEAD is 'follow'; impl is reachable from HEAD and not from base -> accepted.
+    assert mod._commit_in_range(impl, "main", tmp_path) is True
+
+
+@pytest.mark.unit
+def test_export_empty_json_rejected(tmp_path):
+    mod = _load("check_ai_use_log")
+    p = tmp_path / "e.json"
+    p.write_text("{}")
+    assert mod._is_genuine_export(p) is False
+
+
+@pytest.mark.unit
+def test_export_metadata_only_rejected(tmp_path):
+    mod = _load("check_ai_use_log")
+    p = tmp_path / "meta.json"
+    p.write_text('{"note":"long provenance note "*3,"full_export_sha256":"abc","message_count":5}')
+    assert mod._is_genuine_export(p) is False
+
+
+@pytest.mark.unit
+def test_export_messages_parts_accepted(tmp_path):
+    mod = _load("check_ai_use_log")
+    p = tmp_path / "real.json"
+    p.write_text('{"messages":[{"parts":[{"type":"text","text":"hello"}]}]}')
+    assert mod._is_genuine_export(p) is True
+
+
+@pytest.mark.unit
+def test_export_authored_summary_md_rejected(tmp_path):
+    mod = _load("check_ai_use_log")
+    p = tmp_path / "summary.md"
+    p.write_text("# authored summary\nThis is NOT a raw export.")
+    assert mod._is_genuine_export(p) is False
+

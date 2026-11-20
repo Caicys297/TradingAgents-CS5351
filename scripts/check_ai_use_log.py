@@ -111,11 +111,24 @@ def _commit_exists(sha: str, root: Path) -> bool:
     return proc.returncode == 0
 
 
-def _commit_in_range(sha: str, base_ref: str, root: Path) -> bool:
-    """Whether ``sha`` is reachable in the PR range origin/<base>..HEAD."""
+def _resolve_base_commit(base_ref: str, root: Path) -> str | None:
+    """Resolve the verified base commit (origin/<base>). None if unresolvable."""
     try:
         proc = subprocess.run(
-            ["git", "-C", str(root), "merge-base", "--is-ancestor", sha, "HEAD"],
+            ["git", "-C", str(root), "rev-parse", "--verify", f"origin/{base_ref}^{{commit}}"],
+            capture_output=True, text=True,
+        )
+    except FileNotFoundError:
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout.strip()
+
+
+def _is_ancestor(ancestor: str, descendant: str, root: Path) -> bool:
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(root), "merge-base", "--is-ancestor", ancestor, descendant],
             capture_output=True, text=True,
         )
     except FileNotFoundError:
@@ -123,14 +136,63 @@ def _commit_in_range(sha: str, base_ref: str, root: Path) -> bool:
     return proc.returncode == 0
 
 
+def _commit_in_range(sha: str, base_ref: str, root: Path) -> bool:
+    """Whether ``sha`` is in the *actual PR history*: reachable from the reviewed
+    head AND NOT already reachable from the verified base commit.
+
+    This excludes baseline/main commits (already on origin/<base>) and unrelated
+    SHAs, and is robust to GitHub's synthetic merge checkout: we test ancestry
+    against the real ``origin/<base>`` base, not the workflow merge commit.
+    """
+    if not _commit_exists(sha, root):
+        return False
+    if not _is_ancestor(sha, "HEAD", root):
+        return False  # not in the reviewed head's history
+    base_sha = _resolve_base_commit(base_ref, root)
+    if base_sha is None:
+        return False  # cannot verify exclusion from base -> reject
+    # Exclude commits already reachable from base (not this PR's work).
+    return not _is_ancestor(sha, base_sha, root)
+
+
+def _json_has_transcript_content(path: Path) -> bool:
+    """A JSON export is genuine evidence only if it carries real conversation
+    content: an OpenCode-style object with a non-empty ``messages`` array whose
+    entries have ``parts``, OR any structure with substantive text. Empty ``{}``,
+    metadata-only records, and bare provenance stubs are rejected."""
+    import json as _json
+
+    try:
+        data = _json.loads(path.read_text(encoding="utf-8", errors="replace"))
+    except (OSError, ValueError):
+        return False
+    if not isinstance(data, dict) or not data:
+        return False  # {}, non-dict, empty
+    messages = data.get("messages")
+    if isinstance(messages, list) and messages:
+        # require at least one message entry that actually has parts/content
+        for m in messages:
+            if isinstance(m, dict) and isinstance(m.get("parts"), list) and m["parts"]:
+                return True
+        return False
+    # Metadata-only records (e.g. a provenance stub) -> reject: any of these
+    # summary markers without a real ``messages`` array is not transcript content.
+    meta_markers = {"full_export_sha256", "message_count", "role_counts", "source", "note", "session_id"}
+    if set(data.keys()) & meta_markers:
+        return False
+    # Otherwise require an OpenCode-style shape with messages+parts.
+    return False
+
+
 def _is_genuine_export(path: Path) -> bool:
-    """A resolvable transcript reference counts as export evidence only if it is a
-    real machine export (JSON/JSONL) or does not self-identify as an authored
-    summary. A hand-written 'NOT a raw export' summary is rejected as evidence."""
+    """Resolvable reference counts as export evidence only if it is real transcript
+    content: a JSON export carrying messages/parts, or a non-summary transcript file
+    that does not self-identify as an authored summary. ``{}``, metadata-only
+    records, and authored summaries are rejected."""
     if not path.is_file():
         return False
     if path.suffix.lower() in (".json", ".jsonl"):
-        return True
+        return _json_has_transcript_content(path)
     try:
         head = path.read_text(encoding="utf-8", errors="replace")[:2000].lower()
     except OSError:
