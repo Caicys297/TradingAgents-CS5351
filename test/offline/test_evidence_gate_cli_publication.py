@@ -133,7 +133,14 @@ def _stream_chunks(state):
     # message/display area (not just the report section) is exercised.
     from langchain_core.messages import AIMessage
 
-    yield [AIMessage(content=state["final_trade_decision"], name="Portfolio Manager")], None
+    # Carry the real ``langgraph_node`` metadata production uses to identify the
+    # PM's own message, so the CLI buffers it exactly as it does in a real run.
+    pm_msg = AIMessage(
+        content=state["final_trade_decision"],
+        name="Portfolio Manager",
+        response_metadata={"langgraph_node": "Portfolio Manager"},
+    )
+    yield [pm_msg], None
     yield (
         [],
         {
