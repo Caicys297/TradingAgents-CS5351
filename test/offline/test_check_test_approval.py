@@ -65,6 +65,22 @@ def _comment(fix, cid, author, at, body="Approved"):
     (d / f"{cid}.json").write_text(json.dumps({"user": {"login": author}, "created_at": at, "body": body}))
 
 
+PLAN_TEXT = ("# O2 plan v0.3\nrequirements: O2-FR-01\n"
+             "tests: O2-TC-01\nfiles: tradingagents/repro/manifest.py\n")
+
+
+def _plan(fix, sha, path, text=PLAN_TEXT):
+    d = fix / "files"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{sha}__{path.replace('/', '__')}").write_text(text)
+
+
+def _commit_fixture(fix, sha, login):
+    d = fix / "commits"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{sha}.json").write_text(json.dumps({"sha": sha, "author": {"login": login}}))
+
+
 def _record(root, name, **kw):
     d = root / "docs/test-approvals"
     d.mkdir(parents=True, exist_ok=True)
@@ -73,6 +89,7 @@ def _record(root, name, **kw):
         "approval_kinds": ["test_plan", "execution_plan"],
         "evidence": {"type": "issue_comment", "id": 111},
         "plan_sha": FULL_SHA, "plan_version": "v0.3",
+        "plan_path": "test-plans/O2-plan.md",
         "requirement_ids": ["O2-FR-01"], "approved_test_ids": ["O2-TC-01"],
         "allowed_files": ["tradingagents/repro/manifest.py"],
         "implementers": ["fancx777"],
@@ -89,7 +106,15 @@ def _changed(tmp, paths):
 
 def _run(mod, root, z, fix, batch="batch-1", pr=0):
     return mod.main(["--changed-from-file", str(z), "--batch", batch, "--root", str(root),
-                     "--pr", str(pr), "--api-fixture-dir", str(fix), "--base-ref", "main"])
+                     "--pr", str(pr), "--api-fixture-dir", str(fix), "--base-ref", "main",
+                     "--repo", "o/r"])
+
+
+def _register_commits(r, fix, login="fancx777"):
+    """Write commit fixtures mapping every commit in origin/main..HEAD to a login."""
+    shas = _git(r, "rev-list", "origin/main..HEAD").split()
+    for sha in shas:
+        _commit_fixture(fix, sha, login)
 
 
 def _valid(tmp):
@@ -99,6 +124,8 @@ def _valid(tmp):
     _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
     _comment(fix, 111, "Caicys297", "2026-11-16T15:02:47Z",
              body=f"Approved plan {FULL_SHA} v0.3 for tradingagents/repro/manifest.py")
+    _plan(fix, FULL_SHA, "test-plans/O2-plan.md")
+    _register_commits(r, fix)
     _record(r, "o2.json")
     return mod, r, fix, _changed(tmp, ["tradingagents/repro/manifest.py"])
 
@@ -137,6 +164,8 @@ def test_bootstrap_when_mapping_absent_on_base(tmp_path):
     fix = tmp_path / "fix"
     _comment(fix, 111, "Caicys297", "2026-11-16T15:02:47Z",
              body=f"Approved {FULL_SHA} v0.3 for tradingagents/repro/manifest.py")
+    _plan(fix, FULL_SHA, "test-plans/O2-plan.md")
+    _register_commits(r, fix)
     _record(r, "o2.json", approval_kinds=["test_plan", "execution_plan"])
     z = _changed(tmp_path, ["tradingagents/repro/manifest.py"])
     # bootstrap allowed (A-review), passes structurally
@@ -260,6 +289,8 @@ def test_review_from_another_pr_uses_source_pr(tmp_path):
                                                "submitted_at": "2026-11-16T15:00:00Z",
                                                "state": "APPROVED",
                                                "body": f"Approved {FULL_SHA} v0.3 for tradingagents/repro/manifest.py"}))
+    _plan(fix, FULL_SHA, "test-plans/O2-plan.md")
+    _register_commits(r, fix)
     _record(r, "o2.json", evidence={"type": "review", "id": 333, "pr": 9})
     z = _changed(tmp_path, ["tradingagents/repro/manifest.py"])
     # current PR is 0 but evidence source pr=9 is used
@@ -306,6 +337,10 @@ def test_valid_delegation_A_to_F(tmp_path):
             evidence={"type": "issue_comment", "id": 111}, plan_sha=FULL_SHA, plan_version="v0.4")
     _record(r, "exe.json", feature="O2", approval_kinds=["execution_plan"], implementers=["D"],
             evidence={"type": "issue_comment", "id": 112}, plan_sha=FULL_SHA, plan_version="v0.4")
+    _plan(fix, FULL_SHA, "test-plans/O2-plan.md",
+          text="# O2 v0.4\nO2-FR-01 O2-TC-01 tradingagents/repro/manifest.py\n")
+    # implementer is D (not Caicys297/fancx777)
+    _register_commits(r, fix, login="D")
     z = _changed(tmp_path, ["tradingagents/repro/manifest.py"])
     assert _run(mod, r, z, fix) == 0
 
@@ -494,5 +529,102 @@ def test_self_approval_false_declared_implementer_still_caught(tmp_path):
     _comment(fix, 111, "Caicys297", "2026-11-16T15:02:47Z",
              body=f"Approved {FULL_SHA} v0.3 for tradingagents/repro/manifest.py")
     _record(r, "o2.json", implementers=["D"])  # false declaration
+    z = _changed(tmp_path, ["tradingagents/repro/manifest.py"])
+    assert _run(mod, r, z, fix) == 1
+
+
+# ============================================================ correction-required negatives
+@pytest.mark.unit
+def test_forged_binding_unauthorized_author_fails(tmp_path):
+    """Clarification authored by a non-authorized login cannot bind scope."""
+    mod, r, fix, z = _valid(tmp_path)
+    _comment(fix, 555, "randomuser", "2026-11-16T15:30:00Z",
+             body=f"Approved {FULL_SHA} v0.3 for tradingagents/repro/manifest.py")
+    _record(r, "o2.json", clarification={
+        "evidence": {"type": "issue_comment", "id": 555},
+        "plan_sha": FULL_SHA, "plan_version": "v0.3",
+        "allowed_files": ["tradingagents/repro/manifest.py"]})
+    assert _run(mod, r, z, fix) == 1
+
+
+@pytest.mark.unit
+def test_clarification_cannot_predate_approval(tmp_path):
+    """A clarification timestamp earlier than the original approval is rejected."""
+    mod, r, fix, z = _valid(tmp_path)
+    # original approval at 15:02; clarification claims 14:00 (predates)
+    _comment(fix, 556, "Caicys297", "2026-11-16T14:00:00Z",
+             body=f"Approved {FULL_SHA} v0.3 for tradingagents/repro/manifest.py")
+    _record(r, "o2.json", clarification={
+        "evidence": {"type": "issue_comment", "id": 556},
+        "plan_sha": FULL_SHA, "plan_version": "v0.3",
+        "allowed_files": ["tradingagents/repro/manifest.py"]})
+    assert _run(mod, r, z, fix) == 1
+
+
+@pytest.mark.unit
+def test_clarification_cannot_expand_scope(tmp_path):
+    """Clarification cannot add files beyond the immutable plan's approved set."""
+    mod, r, fix, z = _valid(tmp_path)
+    # plan only names manifest.py; clarification tries to add rating.py
+    _comment(fix, 557, "Caicys297", "2026-11-16T15:30:00Z",
+             body=(f"Approved {FULL_SHA} v0.3 for tradingagents/repro/manifest.py "
+                   "and tradingagents/agents/rating.py"))
+    _record(r, "o2.json", clarification={
+        "evidence": {"type": "issue_comment", "id": 557},
+        "plan_sha": FULL_SHA, "plan_version": "v0.3",
+        "allowed_files": ["tradingagents/repro/manifest.py", "tradingagents/agents/rating.py"]})
+    # a change touching rating.py is not in the plan scope
+    _plan(fix, FULL_SHA, "test-plans/O2-plan.md")  # plan names only manifest.py
+    _commit(r, "tradingagents/agents/rating.py", "2026-11-16T16:00:00+00:00")
+    _register_commits(r, fix)
+    z = _changed(tmp_path, ["tradingagents/repro/manifest.py", "tradingagents/agents/rating.py"])
+    assert _run(mod, r, z, fix) == 1
+
+
+@pytest.mark.unit
+def test_immutable_plan_missing_fails(tmp_path):
+    mod, r, fix, z = _valid(tmp_path)
+    (fix / "files" / f"{FULL_SHA}__test-plans__O2-plan.md").unlink()  # remove plan
+    assert _run(mod, r, z, fix) == 1
+
+
+@pytest.mark.unit
+def test_immutable_plan_version_mismatch_fails(tmp_path):
+    mod, r, fix, z = _valid(tmp_path)
+    _plan(fix, FULL_SHA, "test-plans/O2-plan.md",
+          text="# O2 plan v9.9\nO2-FR-01 O2-TC-01 tradingagents/repro/manifest.py\n")  # wrong version
+    assert _run(mod, r, z, fix) == 1
+
+
+@pytest.mark.unit
+def test_immutable_plan_missing_test_id_fails(tmp_path):
+    mod, r, fix, z = _valid(tmp_path)
+    _plan(fix, FULL_SHA, "test-plans/O2-plan.md",
+          text="# O2 v0.3\nO2-FR-01 tradingagents/repro/manifest.py\n")  # no O2-TC-01
+    assert _run(mod, r, z, fix) == 1
+
+
+@pytest.mark.unit
+def test_unknown_implementer_identity_fails(tmp_path):
+    """Commit author not in commit fixtures and not in implementers.yaml -> fail."""
+    mod, r, fix, z = _valid(tmp_path)
+    # add a commit fixture-less commit (author t@t unresolved)
+    _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:05:00+00:00", content="z", msg="more")
+    # do NOT register this new commit fixture
+    assert _run(mod, r, z, fix) == 1
+
+
+@pytest.mark.unit
+def test_verifiable_self_approval_via_commit_fixture_fails(tmp_path):
+    """Commit resolves to Caicys297 via commit fixture == approver -> self-approval."""
+    mod = _load()
+    r = _repo(tmp_path)
+    fix = tmp_path / "fix"
+    _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
+    _comment(fix, 111, "Caicys297", "2026-11-16T15:02:47Z",
+             body=f"Approved {FULL_SHA} v0.3 for tradingagents/repro/manifest.py")
+    _plan(fix, FULL_SHA, "test-plans/O2-plan.md")
+    _register_commits(r, fix, login="Caicys297")  # implementer == approver
+    _record(r, "o2.json", implementers=[])  # omitted; must still catch
     z = _changed(tmp_path, ["tradingagents/repro/manifest.py"])
     assert _run(mod, r, z, fix) == 1

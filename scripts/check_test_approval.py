@@ -146,11 +146,27 @@ class GitHubAPI:
     def get_review(self, pr: int, review_id: int) -> dict:  # pragma: no cover
         return self._gh("api", f"repos/{self.repo}/pulls/{pr}/reviews/{review_id}")
 
+    def get_commit(self, sha: str) -> dict:  # pragma: no cover
+        return self._gh("api", f"repos/{self.repo}/commits/{sha}")
+
+    def get_file(self, repo: str, sha: str, path: str) -> str | None:  # pragma: no cover
+        import base64
+        try:
+            j = self._gh("api", f"repos/{repo}/contents/{path}?ref={sha}")
+        except ExecutionError:
+            return None
+        content = j.get("content")
+        if not content:
+            return None
+        return base64.b64decode(content).decode("utf-8", "replace")
+
 
 class FixtureAPI:
     def __init__(self, root: Path):
         self.comments = root / "comments"
         self.reviews = root / "reviews"
+        self.commits_dir = root / "commits"
+        self.files_dir = root / "files"
 
     def get_issue_comment(self, number: int) -> dict:
         p = self.comments / f"{number}.json"
@@ -163,6 +179,16 @@ class FixtureAPI:
         if not p.is_file():
             raise ExecutionError(f"fixture review {pr}/{review_id} not found")
         return json.loads(p.read_text())
+
+    def get_commit(self, sha: str) -> dict:
+        p = self.commits_dir / f"{sha}.json"
+        if not p.is_file():
+            raise ExecutionError(f"fixture commit {sha} not found")
+        return json.loads(p.read_text())
+
+    def get_file(self, repo: str, sha: str, path: str) -> str | None:
+        p = self.files_dir / f"{sha}__{path.replace('/', '__')}"
+        return p.read_text() if p.is_file() else None
 
 
 def make_api(repo, fixture_dir):
@@ -293,23 +319,115 @@ def _has_approval_statement(body: str) -> bool:
     return any(a in low for a in APPROVAL_RE) and not _refused(body)
 
 
-def _binding_scope(record: dict, body: str, root: Path) -> dict | None:
-    """Resolve the record's declared scope against an authorized binding record.
+def _retrieve_plan(api, repo: str | None, plan_sha: str, plan_path: str) -> str | None:
+    """Retrieve the immutable plan file at the plan commit (Correction 2).
 
-    A record MAY carry ``binding`` = {"evidence": {...}, "allowed_files": [...],
-    "requirement_ids": [...], "approved_test_ids": [...]} pointing at an
-    authorized human source that explicitly binds the original approval to the
-    approved files/IDs. If present it is authoritative for scope. Returns the
-    resolved scope dict, or None if no binding is supplied.
+    Returns the plan text, or None if it cannot be read (caller fails). Uses the
+    GitHub contents API at the exact plan SHA (fixture-backed in tests).
     """
-    b = record.get("binding")
+    if not repo:
+        raise ExecutionError("plan retrieval requires --repo")
+    return api.get_file(repo, plan_sha, plan_path)
+
+
+def _plan_mentions(plan_text: str, needle: str) -> bool:
+    return needle in plan_text
+
+
+def _verify_scope_and_plan(rec, api, repo, applicable, problems, rp) -> dict | None:
+    """Correction 2: retrieve the immutable plan and verify version/IDs/scope.
+
+    Returns resolved allowed_files on success, else None (problems appended).
+    """
+    plan_sha = str(rec.get("plan_sha", "")).strip()
+    plan_ver = str(rec.get("plan_version", "")).strip()
+    plan_path = str(rec.get("plan_path", "")).strip()
+    reqs = [str(x) for x in rec.get("requirement_ids", [])]
+    tests = [str(x) for x in rec.get("approved_test_ids", [])]
+    allowed = [str(a) for a in rec.get("allowed_files", [])]
+    if not plan_path:
+        problems.append(f"{rp}: missing plan_path (immutable plan file path required)")
+        return None
+    try:
+        plan_text = _retrieve_plan(api, repo, plan_sha, plan_path)
+    except ExecutionError as exc:
+        problems.append(f"{rp}: plan unreadable: {exc}")
+        return None
+    if plan_text is None:
+        problems.append(f"{rp}: plan not found at {plan_sha[:7]}:{plan_path} (unreadable immutable plan)")
+        return None
+    # Version + IDs + scope must be present in the actual plan text.
+    if plan_ver and not _plan_mentions(plan_text, plan_ver):
+        problems.append(f"{rp}: plan_version {plan_ver!r} not found in immutable plan")
+        return None
+    for rid in reqs:
+        if not _plan_mentions(plan_text, rid):
+            problems.append(f"{rp}: requirement {rid!r} not found in immutable plan")
+            return None
+    for tid in tests:
+        if not _plan_mentions(plan_text, tid):
+            problems.append(f"{rp}: test case {tid!r} not found in immutable plan")
+            return None
+    for f in allowed:
+        if not _plan_mentions(plan_text, f):
+            problems.append(f"{rp}: approved file {f!r} not named in immutable plan")
+            return None
+    return allowed
+
+
+def _verify_binding(rec, api, repo, reviewers, feature, approval_iso, root, problems, rp) -> dict | None:
+    """Correction 1: a `binding`/`clarification` record may identify what the
+    ORIGINAL evidence already approved, but is a SEPARATE, currently-dated record
+    that cannot expand scope, grant retrospective approval, or backdate.
+
+    Requires: authorized author (role for the feature), explicit reference to the
+    original evidence id, plan SHA+version, and the supported approved files. Its
+    timestamp is reported separately and must be >= the original approval time
+    (it is later clarification), NOT earlier.
+    """
+    b = rec.get("binding") or rec.get("clarification")
     if not b:
         return None
-    return {
-        "allowed_files": [str(x) for x in b.get("allowed_files", [])],
-        "requirement_ids": [str(x) for x in b.get("requirement_ids", [])],
-        "approved_test_ids": [str(x) for x in b.get("approved_test_ids", [])],
-    }
+    ev = b.get("evidence") or {}
+    if not ev.get("id"):
+        problems.append(f"{rp}: clarification missing reference to original evidence id")
+        return None
+    try:
+        author, ctime, body, _ = _resolve_evidence({"evidence": ev}, api, None)
+    except ExecutionError as exc:
+        problems.append(f"{rp}: clarification evidence unverifiable: {exc}")
+        return None
+    if reviewers.get(author) not in (TEST_PLAN_REVIEWER.get(feature), EXECUTION_PLAN_REVIEWER):
+        problems.append(f"{rp}: clarification author {author!r} not authorized for {feature}")
+        return None
+    if not _has_approval_statement(body):
+        problems.append(f"{rp}: clarification is not an approval/authorization statement")
+        return None
+    plan_sha = str(b.get("plan_sha") or rec.get("plan_sha", "")).strip()
+    plan_ver = str(b.get("plan_version") or rec.get("plan_version", "")).strip()
+    if plan_sha and plan_sha[:7] not in body and plan_sha not in body:
+        problems.append(f"{rp}: clarification does not reference plan {plan_sha[:7]}")
+        return None
+    if plan_ver and plan_ver not in body:
+        problems.append(f"{rp}: clarification does not reference plan version {plan_ver}")
+        return None
+    files = [str(x) for x in b.get("allowed_files", [])]
+    for f in files:
+        if f not in body:
+            problems.append(f"{rp}: clarification does not name approved file {f!r}")
+            return None
+    # Later clarification: its own timestamp must NOT be earlier than the original
+    # approval (it cannot manufacture an earlier approval). Report both separately.
+    try:
+        if approval_iso and _parse_iso(ctime) < _parse_iso(approval_iso):
+            problems.append(f"{rp}: clarification time {ctime} precedes original approval {approval_iso}; "
+                            "a later clarification cannot predate the approval it clarifies")
+            return None
+    except ValueError:
+        problems.append(f"{rp}: unparseable clarification/approval timestamp")
+        return None
+    print(f"NOTE {rp}: original approval {approval_iso}; later authorized clarification {ctime}", file=sys.stderr)
+    return {"allowed_files": files} if files else None
 
 
 def _approves_plan(body: str, plan_sha: str, plan_ver: str) -> bool:
@@ -321,39 +439,94 @@ def _approves_plan(body: str, plan_sha: str, plan_ver: str) -> bool:
 
 
 # --------------------------------------------------------------- validation
-def _batch_author_logins(root: Path, base_ref: str, applicable: set[str]) -> set[str] | None:
-    """GitHub-login-ish identities of authors of batch commits touching applicable
-    files. Derives login from the commit author email local-part and name. Returns
-    None if history is unavailable (caller fails closed)."""
+def _load_implementer_map(root: Path, base_ref: str) -> dict[str, str]:
+    """email -> github login, from a base-trusted reviewed mapping (optional).
+
+    First introduction prints an explicit notice. Base-ref resolution failure is
+    an error, not silent.
+    """
+    path = "docs/test-approvals/implementers.yaml"
+    text = None
+    try:
+        text = _git(root, "show", f"origin/{base_ref}:{path}")
+    except ExecutionError as exc:
+        chk = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify",
+                              f"origin/{base_ref}^{{commit}}"], capture_output=True, text=True)
+        if chk.returncode != 0:
+            raise ExecutionError(f"cannot resolve base origin/{base_ref} for implementer map") from exc
+        text = None
+    if text is None:
+        p = root / path
+        if not p.is_file():
+            return {}
+        print("BOOTSTRAP: implementers.yaml absent on base; using tree copy (A review)", file=sys.stderr)
+        text = p.read_text()
+    if yaml is None:
+        raise ExecutionError("PyYAML required to read implementers mapping")
+    data = yaml.safe_load(text) or {}
+    emails = data.get("emails", {})
+    return {str(k).lower(): str(v) for k, v in emails.items()} if isinstance(emails, dict) else {}
+
+
+def _resolve_implementers(root: Path, base_ref: str, applicable: set[str], api, repo: str | None,
+                          meta: dict) -> set[str]:
+    """Implementer identities via GitHub-verifiable account association (Correction 3).
+
+    For each batch commit touching applicable files, resolve the author to a GitHub
+    login via the commit API (``author.login``). Fall back to an authorized,
+    base-trusted email->login mapping. If any commit's author cannot be resolved to
+    a login and is not in the mapping -> ExecutionError (unknown identity fails).
+    Declared record fields may ADD implementers but never remove resolved ones.
+    NOTE: GitHub account association is an identity signal, not cryptographic
+    proof of authorship.
+    """
     if not applicable:
         return set()
     try:
         out = subprocess.run(
-            ["git", "-C", str(root), "log", "--format=%an%x1f%ae", f"origin/{base_ref}..HEAD",
-             "--", *sorted(applicable)],
-            capture_output=True, text=True,
+            ["git", "-C", str(root), "log", "--format=%H%x1f%ae", f"origin/{base_ref}..HEAD",
+             "--", *sorted(applicable)], capture_output=True, text=True,
         )
     except FileNotFoundError as exc:
         raise ExecutionError(f"git not available to resolve implementers: {exc}") from exc
     if out.returncode != 0:
-        raise ExecutionError(f"cannot read batch authors for implementer identity: {out.stderr.strip()[:200]}")
+        raise ExecutionError(f"cannot read batch commits: {out.stderr.strip()[:200]}")
+
+    emap = _load_implementer_map(root, base_ref)
     logins: set[str] = set()
+    unresolved: list[str] = []
     for ln in out.stdout.splitlines():
         if not ln.strip():
             continue
+        sha, email = ln.split("\x1f", 1)
+        email = email.strip().lower()
+        login = None
+        # 1) GitHub account association from the commit record.
         try:
-            name, email = ln.split("\x1f", 1)
-        except ValueError:
-            continue
-        for cand in (name.strip(), email.split("@", 1)[0].strip()):
-            if cand:
-                logins.add(cand)
-                logins.add(cand.lower())
+            info = api.get_commit(sha)
+            author = (info.get("author") or {}).get("login")
+            if author:
+                login = author
+        except ExecutionError:
+            login = None
+        # 2) authorized base-trusted email->login mapping.
+        if login is None and email in emap:
+            login = emap[email]
+        if login is None:
+            unresolved.append(f"{sha[:12]} <{email}>")
+        else:
+            logins.add(login)
+            logins.add(login.lower())
+    if unresolved:
+        raise ExecutionError(
+            "unknown implementer identity (no GitHub account association and not in "
+            f"implementers.yaml): {unresolved}"
+        )
     return logins
 
 
 def validate_batch(records, api, default_pr, batch_id, applicable, reviewers, earliest,
-                   root: Path, base_ref: str) -> list[str]:
+                   root: Path, base_ref: str, repo: str | None) -> list[str]:
     problems: list[str] = []
     test_ok = exec_ok = None
 
@@ -406,31 +579,26 @@ def validate_batch(records, api, default_pr, batch_id, applicable, reviewers, ea
             problems.append(f"{rp}: late approval {otime} not before first impl {earliest['earliest_iso']}")
             continue
 
-        # Scope: declared scope must be SUPPORTED by the original source. Accept
-        # either (a) the approval body itself naming the approved files, or (b) an
-        # authoritative authorized binding record (record["binding"]) that
-        # explicitly binds the source approval to files/IDs. Otherwise the record's
-        # self-declared scope is not trusted.
-        declared_allowed = [str(a) for a in rec.get("allowed_files", [])]
-        declared_reqs = [str(x) for x in rec.get("requirement_ids", [])]
-        declared_tests = [str(x) for x in rec.get("approved_test_ids", [])]
-        binding = _binding_scope(rec, body, root)
-        if binding is not None:
-            authoritative = binding
-        else:
-            # Only trust declared scope if the source body names the approved files.
-            body_names_files = all((a in body) for a in declared_allowed) and bool(declared_allowed)
-            if not body_names_files:
-                problems.append(
-                    f"{rp}: declared scope not supported by the original approval "
-                    "(body does not name the approved files and no authorized binding record); "
-                    "supply an authorized source-binding record")
-                continue
-            authoritative = {"allowed_files": declared_allowed,
-                             "requirement_ids": declared_reqs,
-                             "approved_test_ids": declared_tests}
+        # Correction 2: retrieve the immutable plan and verify version/IDs/scope
+        # against the ACTUAL plan content (not PR-declared fields alone).
+        plan_allowed = _verify_scope_and_plan(rec, api, repo, applicable, problems, rp)
+        if plan_allowed is None:
+            continue
 
-        allowed = authoritative["allowed_files"]
+        # Correction 1: an optional later authorized clarification may bind scope,
+        # but cannot expand beyond the plan-supported files, backdate, or replace
+        # the original approval. If present it may only confirm scope already in
+        # the plan; we take the intersection and reject any expansion.
+        clar = _verify_binding(rec, api, repo, reviewers, feature, otime, root, problems, rp)
+        if clar is not None:
+            extra = [f for f in clar["allowed_files"] if f not in plan_allowed]
+            if extra:
+                problems.append(f"{rp}: clarification expands scope beyond the immutable plan: {extra}")
+                continue
+            allowed = clar["allowed_files"]
+        else:
+            allowed = plan_allowed
+
         excluded = [str(a) for a in rec.get("excluded_files", [])]
         for f in applicable:
             for ex in excluded:
@@ -440,20 +608,15 @@ def validate_batch(records, api, default_pr, batch_id, applicable, reviewers, ea
         if missing:
             problems.append(f"{rp}: scope does not cover applicable file(s): {missing}")
 
-        # Self-approval: resolve implementers from ACTUAL batch history (authors of
-        # batch commits touching applicable files), not only self-declared fields.
+        # Correction 3: implementers via GitHub account association / authorized map.
         declared = set(rec.get("implementers", [])) | ({rec["implementer"]} if rec.get("implementer") else set())
         try:
-            history_authors = _batch_author_logins(root, base_ref, applicable)
+            resolved = _resolve_implementers(root, base_ref, applicable, api, repo, rec)
         except ExecutionError as exc:
             problems.append(f"{rp}: cannot establish implementer identity: {exc}")
             continue
-        if history_authors is None:
-            problems.append(f"{rp}: cannot establish implementer identity from batch history; "
-                            "failing rather than assuming no implementer")
-            continue
-        implementers = declared | history_authors
-        if author in implementers:
+        implementers = declared | resolved
+        if author in implementers or author.lower() in {x.lower() for x in implementers}:
             problems.append(f"{rp}: self-approval (evidence author {author} is an implementer)")
             continue
 
@@ -599,7 +762,7 @@ def main(argv=None) -> int:
     api = make_api(args.repo, args.api_fixture_dir)
     try:
         problems = validate_batch(records, api, args.pr, args.batch, applicable, reviewers, earliest,
-                                  root, base_ref)
+                                  root, base_ref, args.repo)
     except ExecutionError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2

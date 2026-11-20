@@ -100,3 +100,29 @@ comment no longer claims the PR cannot change its checker.
 - **Wiring (W1):** `type check` and `dependency audit` are now PR-only (they need
   a merge-base); push-time per-commit verification is an explicit open A/F
   REQ-GOV-07 decision, not a silent green.
+
+## Hardening (Phase 2 — four defects)
+
+- **Correction 1 (binding vs clarification):** a `binding`/`clarification` is a
+  **separate, currently-dated** authorized record that may identify what the
+  original approval already covered. It cannot expand scope beyond the immutable
+  plan, grant retrospective approval, or predate the approval it clarifies; both
+  timestamps are reported separately. Historical prose is not auto-interpreted —
+  missing/ambiguous evidence fails with an actionable request for an authorized
+  source-binding record.
+- **Correction 2 (immutable plan):** the record names `plan_sha` (full 40-hex) +
+  `plan_path`; the plan is retrieved at that exact commit and the declared
+  version, requirement IDs, test IDs and allowed files must appear in the actual
+  plan. PR-declared fields alone are not trusted; missing/mismatched plans fail.
+- **Defect 3 (implementer identity):** implementers are resolved from the batch
+  commits' **GitHub account association** (`commit.author.login`) or an
+  authorized base-trusted `implementers.yaml`; unknown identity fails explicitly.
+  (Account association is an identity signal, not cryptographic proof of
+  authorship.) Self-approval is rejected even with omitted/false declarations.
+- **Correction 3 (GOV-07 per-commit):** `type check` and `dependency audit` now
+  run on **pull_request and push** via shared `scripts/ci_event.py`
+  (merge-base for PR, before..after for push). Type checking verifies **each
+  commit** in the range against the trusted base baseline; dependency audit
+  reports per-commit manifest changes and audits the installed env. Zero/missing
+  push base, tags and unavailable history fail closed (no silent green/working-tree
+  fallback). "Every commit" is treated as an existing requirement.

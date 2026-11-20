@@ -96,6 +96,11 @@ def _mk_baseline(tmp: Path, identities: list[str]) -> Path:
     return b
 
 
+
+def _fake_range(commits=None):
+    import types
+    return types.SimpleNamespace(kind="pull_request", base_sha="base"*10, head_sha="head", commits=commits or [])
+
 def _use_local_baseline(monkeypatch, mod, baseline: Path):
     """Force the checker to use a working-tree baseline (no PR base resolution)."""
     monkeypatch.setattr(mod, "BASELINE", baseline)
@@ -120,96 +125,66 @@ def test_typecheck_same_total_move_between_functions_blocks(monkeypatch, tmp_pat
     mod = _load("typecheck")
     base = ['cli/run.py: note: In function "funcA":', "cli/run.py:10: error: X  [method-assign]"]
     cur = ['cli/run.py: note: In function "funcB":', "cli/run.py:20: error: X  [method-assign]"]
-    b = _mk_baseline(tmp_path, list(mod.parse(base)))
-    _use_local_baseline(monkeypatch, mod, b)
+    monkeypatch.setattr(mod.ci_event, "resolve_range", lambda root, env: _fake_range())
+    monkeypatch.setattr(mod, "load_baseline", lambda sha: (mod.parse(base), "test"))
     monkeypatch.setattr(mod, "run_mypy", lambda: cur)
+    monkeypatch.setattr(mod, "_mypy_at_rev", lambda rev: [])
     assert mod.main([]) == 1
 
 
-@pytest.mark.unit
 def test_typecheck_multiplicity_two_identical_need_two_in_baseline(monkeypatch, tmp_path):
     mod = _load("typecheck")
     one = ['cli/run.py: note: In function "f":', "cli/run.py:188: error: X  [method-assign]"]
-    ident = list(mod.parse(one))[0]
-    b = _mk_baseline(tmp_path, [ident])  # baseline count 1
-    _use_local_baseline(monkeypatch, mod, b)
-    # mypy yields the same line TWICE -> count 2 -> one new occurrence blocks
-    monkeypatch.setattr(mod, "run_mypy", lambda: [one[0], one[1], one[1]])
+    list(mod.parse(one))[0]  # identity computed but not asserted directly
+    base = mod.parse([one[0], one[1]])  # baseline count 1
+    monkeypatch.setattr(mod.ci_event, "resolve_range", lambda root, env: _fake_range())
+    monkeypatch.setattr(mod, "load_baseline", lambda sha: (base, "test"))
+    monkeypatch.setattr(mod, "run_mypy", lambda: [one[0], one[1], one[1]])  # count 2 -> 1 new
+    monkeypatch.setattr(mod, "_mypy_at_rev", lambda rev: [])
     assert mod.main([]) == 1
 
 
-@pytest.mark.unit
 def test_typecheck_removal_does_not_offset_new(monkeypatch, tmp_path):
     mod = _load("typecheck")
-    old = list(mod.parse(["old.py:1: error: Old issue  [arg-type]"]))[0]
-    b = _mk_baseline(tmp_path, [old])
-    _use_local_baseline(monkeypatch, mod, b)
+    base = mod.parse(["old.py:1: error: Old issue  [arg-type]"])
+    monkeypatch.setattr(mod.ci_event, "resolve_range", lambda root, env: _fake_range())
+    monkeypatch.setattr(mod, "load_baseline", lambda sha: (base, "test"))
     monkeypatch.setattr(mod, "run_mypy", lambda: ["new.py:1: error: New issue  [return-value]"])
+    monkeypatch.setattr(mod, "_mypy_at_rev", lambda rev: [])
     assert mod.main([]) == 1
 
 
-@pytest.mark.unit
 def test_typecheck_trusted_base_ignores_pr_widening(monkeypatch, tmp_path):
+    """Trusted base baseline (empty) governs, not the PR tree's widened baseline."""
     mod = _load("typecheck")
     newline = "x.py:1: error: Brand new  [return-value]"
-    ident = list(mod.parse([newline]))[0]
-    b = _mk_baseline(tmp_path, [ident])  # PR tree WIDENED to include the new identity
-    monkeypatch.setattr(mod, "BASELINE", b)
-    # trusted base has an EMPTY baseline:
-    monkeypatch.setattr(mod, "_baseline_state", lambda ref: ("# empty\n", "abc123"))
-    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
-    monkeypatch.setenv("GITHUB_BASE_REF", "main")
+    monkeypatch.setattr(mod.ci_event, "resolve_range", lambda root, env: _fake_range())
+    monkeypatch.setattr(mod, "load_baseline", lambda sha: (mod.Counter(), "trusted base"))
     monkeypatch.setattr(mod, "run_mypy", lambda: [newline])
-    assert mod.main([]) == 1  # trusted base wins
+    monkeypatch.setattr(mod, "_mypy_at_rev", lambda rev: [])
+    assert mod.main([]) == 1
 
 
-@pytest.mark.unit
 def test_typecheck_base_resolution_failure_is_exit2(monkeypatch):
     mod = _load("typecheck")
 
-    class _P:
-        returncode = 128
-        stdout = ""
-        stderr = "could not resolve"
+    def boom(root, env):
+        raise mod.ci_event.EventError("cannot resolve base")
 
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _P())
-    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
-    monkeypatch.setenv("GITHUB_BASE_REF", "main")
-    with pytest.raises(SystemExit) as exc:
-        mod.load_baseline()
-    assert exc.value.code == 2
+    monkeypatch.setattr(mod.ci_event, "resolve_range", boom)
+    assert mod.main([]) == 2
 
 
-@pytest.mark.unit
 def test_typecheck_genuine_absence_bootstraps(monkeypatch, tmp_path):
     mod = _load("typecheck")
-
-    class _P:
-        def __init__(self, rc, out=""):
-            self.returncode = rc
-            self.stdout = out
-            self.stderr = ""
-
-    def fake_run(cmd, *a, **k):
-        joined = " ".join(cmd)
-        if "rev-parse" in joined:
-            return _P(0, "deadbeefdeadbeef\n")
-        if "cat-file" in joined:
-            return _P(1)  # path genuinely absent on base
-        return _P(0, "")
-
-    monkeypatch.setattr(mod.subprocess, "run", fake_run)
-    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
-    monkeypatch.setenv("GITHUB_BASE_REF", "main")
+    monkeypatch.setattr(mod, "_baseline_at_sha", lambda sha: (None, sha))  # absent at base
     local = tmp_path / "mypy-baseline.txt"
     local.write_text("# baseline\n")
     monkeypatch.setattr(mod, "BASELINE", local)
-    _, source = mod.load_baseline()
+    _, source = mod.load_baseline("basebase")
     assert "working tree" in source
-    # distinguish from a resolution failure handled in the other test
 
 
-@pytest.mark.unit
 def test_typecheck_mypy_exit1_without_diagnostics_is_execution_failure(monkeypatch):
     mod = _load("typecheck")
 
@@ -259,7 +234,9 @@ def test_dep_audit_new_finding_blocks(monkeypatch, tmp_path):
     report = {"dependencies": [{"name": "foo", "version": "1.0",
                                 "vulns": [{"id": "GHSA-x", "fix_versions": ["1.2"]}]}]}
     monkeypatch.setattr(mod, "run_pip_audit", lambda: report)
-    monkeypatch.setattr(mod, "_load_baseline", lambda: ({"findings": []}, "test"))
+    monkeypatch.setattr(mod, "_load_baseline", lambda sha: ({"findings": []}, "test"))
+    monkeypatch.setattr(mod.ci_event, "resolve_range", lambda root, env: _fake_range())
+    monkeypatch.setattr(mod, "_depfiles_changed_per_commit", lambda root, commits: [])
     assert mod.main([]) == 1
 
 
@@ -290,12 +267,11 @@ def test_dep_audit_base_resolution_failure_is_exit2(monkeypatch):
         stdout = ""
         stderr = "bad ref"
 
-    monkeypatch.setattr(mod.subprocess, "run", lambda *a, **k: _P())
-    monkeypatch.setenv("GITHUB_EVENT_NAME", "pull_request")
-    monkeypatch.setenv("GITHUB_BASE_REF", "main")
-    with pytest.raises(SystemExit) as exc:
-        mod._load_baseline()
-    assert exc.value.code == 2
+    def boom(root, env):
+        raise mod.ci_event.EventError("cannot resolve base")
+
+    monkeypatch.setattr(mod.ci_event, "resolve_range", boom)
+    assert mod.main([]) == 2
 
 
 # ============================================================ AI-use gate
