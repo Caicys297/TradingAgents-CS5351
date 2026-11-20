@@ -1,0 +1,4 @@
+# O5 DEV20 fixture: store the approved bytes verbatim (CRLF, 24,291 bytes,
+# SHA-256 a6f65bf2...0231f6). Without this rule Git normalizes line endings
+# on commit and the blob no longer matches the Registry copy.
+test/offline/fixtures/o5/O5-Dev20-Fixtures-v0.5.3-DRAFT.json -text
