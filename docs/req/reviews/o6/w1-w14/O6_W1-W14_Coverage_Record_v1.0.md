@@ -27,11 +27,47 @@
 
 W-9/W-10 were merged by PR #26 and are referenced, not duplicated.
 
-## W-13 — `update_display` unchanged
+## W-13 — `update_display` unchanged (source comparison + runtime footer tests)
 
-The run-level footer (`update_display`) is not modified by this batch. W-13's source comparison is satisfied by inspection of this branch's diff: no hunk touches `cli/display.py` or `cli/run.py`. The retained runtime evidence is `test_w15a_ordinary_path_statistics_and_footer` and `test_w15b_new_checkpoint_persists_state`, which both assert the real rendered footer.
+W-13 has two parts; they are separate evidence and neither substitutes for the other.
 
-**This is a source comparison, not a runtime verification.** It is reported as such and not as independent evidence that rendering behaviour is correct.
+**Part 1 — source comparison.** The run-level footer (`update_display`) is not
+modified by this batch.
+
+| Item | Value |
+|---|---|
+| Baseline revision | `a2644eba507493df8305f32cd30003d3eeb33d61` |
+| Batch revision (reviewed) | `195b7022dc01473a872800e4ff4c83365861a373` (+ the W-series correction commit) |
+| File | `cli/display.py` |
+| `update_display` extent at baseline | lines 183–378 |
+| **`update_display` body SHA-256** | `eceb0b2253cd9ece75bd51c90dc233d5bd6bde2913594494be57816024bac987` |
+| **Whole-file SHA-256** | `4473bb923ab30f8abcd016d7cd960dd4a2a5f720db6fddea444ffefe7b19ea7b` |
+
+Both hashes are identical at the baseline and on this branch, so the function
+body is byte-for-byte unchanged.
+
+To reproduce (`python` = the project venv):
+
+```python
+import hashlib, pathlib
+src = pathlib.Path("cli/display.py").read_text(encoding="utf-8")
+lines = src.splitlines()
+start = next(i for i, l in enumerate(lines) if l.startswith("def update_display"))
+end = next((i for i in range(start + 1, len(lines))
+            if lines[i] and not lines[i][0].isspace()), len(lines))
+print("file :", hashlib.sha256(src.encode()).hexdigest())
+print("func :", hashlib.sha256(("\n".join(lines[start:end]) + "\n").encode()).hexdigest())
+```
+
+For a different revision, read the file from git first, e.g.
+`git show <sha>:cli/display.py`, then apply the same snippet.
+
+**Part 2 — runtime footer evidence.** `test_w15a_ordinary_path_statistics_and_footer`
+and `test_w15b_new_checkpoint_persists_state` assert the real rendered footer
+captured from `update_display`. Those remain the runtime evidence.
+
+**This is a source comparison plus retained runtime tests. It is not presented
+as independent verification that rendering behaviour is correct.**
 
 ## Scoped fixture edits (both default-off)
 
@@ -41,6 +77,16 @@ Two additive, opt-in changes were needed inside the allowed file for W-12:
 2. `ScriptedChatModel(answer_real_bull=False)` — when true, a prompt containing `"Bull Analyst"` is answered with an untagged, usage-free message; when false, unscripted calls still raise as before.
 
 The Bull node label `"Bull Researcher"` was **confirmed by execution**, not assumed: W-12 asserts on that exact label and fails if it differs.
+
+## W-12 — confirmed event identity
+
+The real Bull start carries `langgraph_node="Bull Researcher"` and `scope=None`
+(observed, not assumed). Because its scope is not `"analyst"`, the handler does
+not attribute it: the call is out of scope by construction.
+
+Evidence this test is load-bearing: forcing that start to be forwarded with
+`scope="analyst", agent_key="market"` makes the test fail, so the full-statistics
+and rendered-table comparisons do detect a changed Bull outcome.
 
 ## Results
 
