@@ -98,7 +98,7 @@ def _valid(tmp):
     fix = tmp / "fix"
     _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
     _comment(fix, 111, "Caicys297", "2026-11-16T15:02:47Z",
-             body=f"Approved plan {FULL_SHA} v0.3 for implementation")
+             body=f"Approved plan {FULL_SHA} v0.3 for tradingagents/repro/manifest.py")
     _record(r, "o2.json")
     return mod, r, fix, _changed(tmp, ["tradingagents/repro/manifest.py"])
 
@@ -135,7 +135,8 @@ def test_bootstrap_when_mapping_absent_on_base(tmp_path):
     (r / "docs/test-approvals/reviewers.yaml").write_text("logins:\n  Caicys297: A\n")
     _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
     fix = tmp_path / "fix"
-    _comment(fix, 111, "Caicys297", "2026-11-16T15:02:47Z", body=f"Approved {FULL_SHA} v0.3")
+    _comment(fix, 111, "Caicys297", "2026-11-16T15:02:47Z",
+             body=f"Approved {FULL_SHA} v0.3 for tradingagents/repro/manifest.py")
     _record(r, "o2.json", approval_kinds=["test_plan", "execution_plan"])
     z = _changed(tmp_path, ["tradingagents/repro/manifest.py"])
     # bootstrap allowed (A-review), passes structurally
@@ -257,7 +258,8 @@ def test_review_from_another_pr_uses_source_pr(tmp_path):
     rv.mkdir(parents=True, exist_ok=True)
     (rv / "9-333.json").write_text(json.dumps({"user": {"login": "Caicys297"},
                                                "submitted_at": "2026-11-16T15:00:00Z",
-                                               "state": "APPROVED", "body": f"Approved {FULL_SHA} v0.3"}))
+                                               "state": "APPROVED",
+                                               "body": f"Approved {FULL_SHA} v0.3 for tradingagents/repro/manifest.py"}))
     _record(r, "o2.json", evidence={"type": "review", "id": 333, "pr": 9})
     z = _changed(tmp_path, ["tradingagents/repro/manifest.py"])
     # current PR is 0 but evidence source pr=9 is used
@@ -290,8 +292,10 @@ def test_valid_delegation_A_to_F(tmp_path):
     # A authorizes F before F's approval; both reference full sha+version.
     _comment(fix, 900, "Caicys297", "2026-11-16T14:00:00Z",
              body=f"Authorize fancx777 to approve {FULL_SHA} v0.4 for this batch")
-    _comment(fix, 111, "fancx777", "2026-11-16T15:00:00Z", body=f"Approved {FULL_SHA} v0.4")
-    _comment(fix, 112, "Caicys297", "2026-11-16T15:10:00Z", body=f"Approved exec {FULL_SHA} v0.4")
+    _comment(fix, 111, "fancx777", "2026-11-16T15:00:00Z",
+             body=f"Approved {FULL_SHA} v0.4 for tradingagents/repro/manifest.py")
+    _comment(fix, 112, "Caicys297", "2026-11-16T15:10:00Z",
+             body=f"Approved exec {FULL_SHA} v0.4 for tradingagents/repro/manifest.py")
     _record(r, "deleg.json", feature="O2", approval_kinds=[], implementers=["D"],
             evidence={"type": "issue_comment", "id": 900},
             delegation={"batch_id": "batch-1", "kind": "test_plan", "to_role": "F",
@@ -361,3 +365,134 @@ def test_docs_only_not_applicable(tmp_path):
     fix.mkdir()
     z = _changed(tmp_path, ["docs/x.md", "transcripts/y.md"])
     assert _run(mod, r, z, fix) == 0
+
+
+# ============================================================ new defect tests (A/B/C)
+@pytest.mark.unit
+def test_neutral_mention_not_approval(tmp_path):
+    """A neutral SHA/version mention (no approving verb) must not pass."""
+    mod, r, fix, z = _valid(tmp_path)
+    _comment(fix, 111, "Caicys297", "2026-11-16T15:02:47Z",
+             body=f"Ref: {FULL_SHA} v0.3 tradingagents/repro/manifest.py")  # mention, no approval
+    assert _run(mod, r, z, fix) == 1
+
+
+@pytest.mark.unit
+def test_scope_beyond_source_fails(tmp_path):
+    """Declared allowed_files not named in the source body and no binding -> fail."""
+    mod, r, fix, z = _valid(tmp_path)
+    _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
+    # allow an extra file the body never names
+    _record(r, "o2.json", allowed_files=["tradingagents/repro/manifest.py",
+                                         "tradingagents/agents/rating.py"])
+    z = _changed(tmp_path, ["tradingagents/repro/manifest.py", "tradingagents/agents/rating.py"])
+    rc = _run(mod, r, z, fix)
+    assert rc == 1
+
+
+@pytest.mark.unit
+def test_authorized_binding_supports_scope(tmp_path):
+    """An authorized binding record supports declared scope beyond body text."""
+    mod, r, fix, z = _valid(tmp_path)
+    _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
+    _record(r, "o2.json", allowed_files=["tradingagents/repro/manifest.py"],
+            binding={"evidence": {"type": "issue_comment", "id": 111},
+                     "allowed_files": ["tradingagents/repro/manifest.py"],
+                     "requirement_ids": ["O2-FR-01"], "approved_test_ids": ["O2-TC-01"]})
+    z = _changed(tmp_path, ["tradingagents/repro/manifest.py"])
+    assert _run(mod, r, z, fix) == 0
+
+
+@pytest.mark.unit
+def test_delegation_incomplete_missing_login_fails(tmp_path):
+    """Delegation without to_login/plan fields is not valid."""
+    mod = _load()
+    r = _repo(tmp_path)
+    fix = tmp_path / "fix"
+    _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
+    _comment(fix, 900, "Caicys297", "2026-11-16T14:00:00Z", body=f"Authorize {FULL_SHA} v0.4")
+    _comment(fix, 111, "fancx777", "2026-11-16T15:00:00Z",
+             body=f"Approved {FULL_SHA} v0.4 for tradingagents/repro/manifest.py")
+    _comment(fix, 112, "Caicys297", "2026-11-16T15:10:00Z",
+             body=f"Approved exec {FULL_SHA} v0.4 tradingagents/repro/manifest.py")
+    _record(r, "deleg.json", feature="O2", approval_kinds=[], implementers=["D"],
+            evidence={"type": "issue_comment", "id": 900},
+            delegation={"batch_id": "batch-1", "kind": "test_plan", "to_role": "F",
+                        "feature": "O2", "plan_sha": FULL_SHA, "plan_version": "v0.4"},
+            plan_sha=FULL_SHA, plan_version="v0.4")  # no to_login
+    _record(r, "o2test.json", feature="O2", approval_kinds=["test_plan"], implementers=["D"],
+            evidence={"type": "issue_comment", "id": 111}, plan_sha=FULL_SHA, plan_version="v0.4")
+    _record(r, "exe.json", feature="O2", approval_kinds=["execution_plan"], implementers=["D"],
+            evidence={"type": "issue_comment", "id": 112}, plan_sha=FULL_SHA, plan_version="v0.4")
+    z = _changed(tmp_path, ["tradingagents/repro/manifest.py"])
+    assert _run(mod, r, z, fix) == 1
+
+
+@pytest.mark.unit
+def test_delegation_unrelated_grantor_fails(tmp_path):
+    """Delegation by a non-A (F) cannot authorize F."""
+    mod = _load()
+    r = _repo(tmp_path)
+    fix = tmp_path / "fix"
+    _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
+    _comment(fix, 900, "fancx777", "2026-11-16T14:00:00Z",
+             body=f"Authorize fancx777 {FULL_SHA} v0.4")
+    _comment(fix, 111, "fancx777", "2026-11-16T15:00:00Z",
+             body=f"Approved {FULL_SHA} v0.4 for tradingagents/repro/manifest.py")
+    _comment(fix, 112, "Caicys297", "2026-11-16T15:10:00Z",
+             body=f"Approved exec {FULL_SHA} v0.4 tradingagents/repro/manifest.py")
+    _record(r, "deleg.json", feature="O2", approval_kinds=[], implementers=["D"],
+            evidence={"type": "issue_comment", "id": 900},
+            delegation={"batch_id": "batch-1", "kind": "test_plan", "to_role": "F",
+                        "to_login": "fancx777", "feature": "O2", "plan_sha": FULL_SHA,
+                        "plan_version": "v0.4"},
+            plan_sha=FULL_SHA, plan_version="v0.4")
+    _record(r, "o2test.json", feature="O2", approval_kinds=["test_plan"], implementers=["D"],
+            evidence={"type": "issue_comment", "id": 111}, plan_sha=FULL_SHA, plan_version="v0.4")
+    _record(r, "exe.json", feature="O2", approval_kinds=["execution_plan"], implementers=["D"],
+            evidence={"type": "issue_comment", "id": 112}, plan_sha=FULL_SHA, plan_version="v0.4")
+    z = _changed(tmp_path, ["tradingagents/repro/manifest.py"])
+    assert _run(mod, r, z, fix) == 1
+
+
+@pytest.mark.unit
+def test_self_approval_when_implementer_omitted_fails(tmp_path):
+    """Implementer omitted from record, but git author == evidence author -> self-approval."""
+    mod = _load()
+    r = _repo(tmp_path)
+    fix = tmp_path / "fix"
+    # commit authored by Caicys297 (login-ish name) then Caicys297 approves
+    f = r / "tradingagents/repro/manifest.py"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("x")
+    _git(r, "add", "-A")
+    _git(r, "commit", "-qm", "impl", env={"GIT_AUTHOR_NAME": "Caicys297",
+                                          "GIT_AUTHOR_EMAIL": "Caicys297@users.noreply.github.com",
+                                          "GIT_AUTHOR_DATE": "2026-11-16T16:00:00+00:00",
+                                          "GIT_COMMITTER_DATE": "2026-11-16T16:00:00+00:00"})
+    _comment(fix, 111, "Caicys297", "2026-11-16T15:02:47Z",
+             body=f"Approved {FULL_SHA} v0.3 for tradingagents/repro/manifest.py")
+    _record(r, "o2.json")  # no implementers field
+    z = _changed(tmp_path, ["tradingagents/repro/manifest.py"])
+    assert _run(mod, r, z, fix) == 1  # git author resolves to Caicys297 == approver
+
+
+@pytest.mark.unit
+def test_self_approval_false_declared_implementer_still_caught(tmp_path):
+    """Record falsely declares implementer=D, but git author is the approver."""
+    mod = _load()
+    r = _repo(tmp_path)
+    fix = tmp_path / "fix"
+    f = r / "tradingagents/repro/manifest.py"
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text("x")
+    _git(r, "add", "-A")
+    _git(r, "commit", "-qm", "impl", env={"GIT_AUTHOR_NAME": "Caicys297",
+                                          "GIT_AUTHOR_EMAIL": "Caicys297@users.noreply.github.com",
+                                          "GIT_AUTHOR_DATE": "2026-11-16T16:00:00+00:00",
+                                          "GIT_COMMITTER_DATE": "2026-11-16T16:00:00+00:00"})
+    _comment(fix, 111, "Caicys297", "2026-11-16T15:02:47Z",
+             body=f"Approved {FULL_SHA} v0.3 for tradingagents/repro/manifest.py")
+    _record(r, "o2.json", implementers=["D"])  # false declaration
+    z = _changed(tmp_path, ["tradingagents/repro/manifest.py"])
+    assert _run(mod, r, z, fix) == 1

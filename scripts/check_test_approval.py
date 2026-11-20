@@ -273,20 +273,87 @@ def _invalid_sha(sha: str) -> bool:
     return len(sha) != 40 or not all(c in "0123456789abcdef" for c in sha.lower())
 
 
+APPROVAL_RE = ("approve", "approved", "approval", "批准", "同意", "核准", "通过")
+
+
 def _refused(body: str) -> bool:
     low = body.lower()
     return any(r in low for r in REFUSAL_RE)
 
 
+def _has_approval_statement(body: str) -> bool:
+    """A genuine approval must contain an explicit approving verb/phrase.
+
+    This is necessary but not sufficient on its own; the plan/scope binding
+    below must also hold. Natural-language interpretation is bounded — where it
+    cannot be established reliably we fail and require an authorized
+    source-binding record (never a bare keyword substitute for meaning).
+    """
+    low = body.lower()
+    return any(a in low for a in APPROVAL_RE) and not _refused(body)
+
+
+def _binding_scope(record: dict, body: str, root: Path) -> dict | None:
+    """Resolve the record's declared scope against an authorized binding record.
+
+    A record MAY carry ``binding`` = {"evidence": {...}, "allowed_files": [...],
+    "requirement_ids": [...], "approved_test_ids": [...]} pointing at an
+    authorized human source that explicitly binds the original approval to the
+    approved files/IDs. If present it is authoritative for scope. Returns the
+    resolved scope dict, or None if no binding is supplied.
+    """
+    b = record.get("binding")
+    if not b:
+        return None
+    return {
+        "allowed_files": [str(x) for x in b.get("allowed_files", [])],
+        "requirement_ids": [str(x) for x in b.get("requirement_ids", [])],
+        "approved_test_ids": [str(x) for x in b.get("approved_test_ids", [])],
+    }
+
+
 def _approves_plan(body: str, plan_sha: str, plan_ver: str) -> bool:
-    """Body must reference full(ish) SHA and version AND not be a refusal."""
-    if _refused(body):
+    """Body must *approve* (explicit approval statement, no refusal) and reference
+    the plan SHA (prefix) and version. A neutral mention alone is not approval."""
+    if not _has_approval_statement(body):
         return False
     return (plan_sha[:7] in body or plan_sha in body) and (plan_ver in body)
 
 
 # --------------------------------------------------------------- validation
-def validate_batch(records, api, default_pr, batch_id, applicable, reviewers, earliest) -> list[str]:
+def _batch_author_logins(root: Path, base_ref: str, applicable: set[str]) -> set[str] | None:
+    """GitHub-login-ish identities of authors of batch commits touching applicable
+    files. Derives login from the commit author email local-part and name. Returns
+    None if history is unavailable (caller fails closed)."""
+    if not applicable:
+        return set()
+    try:
+        out = subprocess.run(
+            ["git", "-C", str(root), "log", "--format=%an%x1f%ae", f"origin/{base_ref}..HEAD",
+             "--", *sorted(applicable)],
+            capture_output=True, text=True,
+        )
+    except FileNotFoundError as exc:
+        raise ExecutionError(f"git not available to resolve implementers: {exc}") from exc
+    if out.returncode != 0:
+        raise ExecutionError(f"cannot read batch authors for implementer identity: {out.stderr.strip()[:200]}")
+    logins: set[str] = set()
+    for ln in out.stdout.splitlines():
+        if not ln.strip():
+            continue
+        try:
+            name, email = ln.split("\x1f", 1)
+        except ValueError:
+            continue
+        for cand in (name.strip(), email.split("@", 1)[0].strip()):
+            if cand:
+                logins.add(cand)
+                logins.add(cand.lower())
+    return logins
+
+
+def validate_batch(records, api, default_pr, batch_id, applicable, reviewers, earliest,
+                   root: Path, base_ref: str) -> list[str]:
     problems: list[str] = []
     test_ok = exec_ok = None
 
@@ -339,8 +406,31 @@ def validate_batch(records, api, default_pr, batch_id, applicable, reviewers, ea
             problems.append(f"{rp}: late approval {otime} not before first impl {earliest['earliest_iso']}")
             continue
 
-        # Scope coverage + exclusions.
-        allowed = [str(a) for a in rec.get("allowed_files", [])]
+        # Scope: declared scope must be SUPPORTED by the original source. Accept
+        # either (a) the approval body itself naming the approved files, or (b) an
+        # authoritative authorized binding record (record["binding"]) that
+        # explicitly binds the source approval to files/IDs. Otherwise the record's
+        # self-declared scope is not trusted.
+        declared_allowed = [str(a) for a in rec.get("allowed_files", [])]
+        declared_reqs = [str(x) for x in rec.get("requirement_ids", [])]
+        declared_tests = [str(x) for x in rec.get("approved_test_ids", [])]
+        binding = _binding_scope(rec, body, root)
+        if binding is not None:
+            authoritative = binding
+        else:
+            # Only trust declared scope if the source body names the approved files.
+            body_names_files = all((a in body) for a in declared_allowed) and bool(declared_allowed)
+            if not body_names_files:
+                problems.append(
+                    f"{rp}: declared scope not supported by the original approval "
+                    "(body does not name the approved files and no authorized binding record); "
+                    "supply an authorized source-binding record")
+                continue
+            authoritative = {"allowed_files": declared_allowed,
+                             "requirement_ids": declared_reqs,
+                             "approved_test_ids": declared_tests}
+
+        allowed = authoritative["allowed_files"]
         excluded = [str(a) for a in rec.get("excluded_files", [])]
         for f in applicable:
             for ex in excluded:
@@ -350,10 +440,21 @@ def validate_batch(records, api, default_pr, batch_id, applicable, reviewers, ea
         if missing:
             problems.append(f"{rp}: scope does not cover applicable file(s): {missing}")
 
-        # Self-approval from batch evidence.
-        implementers = set(rec.get("implementers", [])) | ({rec["implementer"]} if rec.get("implementer") else set())
+        # Self-approval: resolve implementers from ACTUAL batch history (authors of
+        # batch commits touching applicable files), not only self-declared fields.
+        declared = set(rec.get("implementers", [])) | ({rec["implementer"]} if rec.get("implementer") else set())
+        try:
+            history_authors = _batch_author_logins(root, base_ref, applicable)
+        except ExecutionError as exc:
+            problems.append(f"{rp}: cannot establish implementer identity: {exc}")
+            continue
+        if history_authors is None:
+            problems.append(f"{rp}: cannot establish implementer identity from batch history; "
+                            "failing rather than assuming no implementer")
+            continue
+        implementers = declared | history_authors
         if author in implementers:
-            problems.append(f"{rp}: self-approval (author {author} is an implementer)")
+            problems.append(f"{rp}: self-approval (evidence author {author} is an implementer)")
             continue
 
         kinds = rec.get("approval_kinds") or ([rec.get("approval_kind")] if rec.get("approval_kind") else [])
@@ -401,12 +502,18 @@ def _delegated(records, api, default_pr, reviewers, batch_id, feature, kind, pla
             continue
         if str(d.get("feature", "")).strip()[:2].upper() != feature:
             continue
-        if d.get("plan_sha") and plan_sha and d["plan_sha"][:7] != plan_sha[:7]:
+        # Immutable plan binding is REQUIRED on the delegation (not optional).
+        to_login = str(d.get("to_login", "")).strip()
+        d_plan_sha = str(d.get("plan_sha", "")).strip()
+        d_plan_ver = str(d.get("plan_version", "")).strip()
+        if not to_login or not d_plan_sha or not d_plan_ver:
             continue
-        if d.get("plan_version") and plan_ver and d["plan_version"] != plan_ver:
+        if plan_sha and (d_plan_sha[:7] != plan_sha[:7]):
             continue
-        # Grantee identity must match the actual reviewer.
-        if d.get("to_login") and d["to_login"] != reviewer_login:
+        if plan_ver and d_plan_ver != plan_ver:
+            continue
+        # Grantee identity must match the actual reviewer and its resolved role.
+        if to_login != reviewer_login:
             continue
         if str(d.get("to_role", "")).upper() != to_role_expected:
             continue
@@ -416,14 +523,18 @@ def _delegated(records, api, default_pr, reviewers, batch_id, feature, kind, pla
             gauthor, gtime, gbody, _ = _resolve_evidence(rec, api, default_pr)
         except ExecutionError:
             continue
+        # Grantor must be an authorized A.
         if reviewers.get(gauthor) != "A":
             continue
-        # Delegation evidence must reference the plan and grantee.
-        if plan_sha and plan_sha[:7] not in gbody and plan_sha not in gbody:
+        # Delegation evidence must be an actual authorization referencing plan +
+        # grantee (not a neutral mention).
+        if not _has_approval_statement(gbody):
             continue
-        if d.get("to_login") and d["to_login"] not in gbody:
+        if (d_plan_sha[:7] not in gbody) and (d_plan_sha not in gbody):
             continue
-        # Delegation must precede the approval it authorizes.
+        if to_login not in gbody:
+            continue
+        # Delegation must strictly precede the approval it authorizes.
         try:
             if _parse_iso(gtime) >= _parse_iso(approval_iso):
                 continue
@@ -487,7 +598,8 @@ def main(argv=None) -> int:
 
     api = make_api(args.repo, args.api_fixture_dir)
     try:
-        problems = validate_batch(records, api, args.pr, args.batch, applicable, reviewers, earliest)
+        problems = validate_batch(records, api, args.pr, args.batch, applicable, reviewers, earliest,
+                                  root, base_ref)
     except ExecutionError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2

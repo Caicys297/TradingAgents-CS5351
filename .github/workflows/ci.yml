@@ -83,6 +83,9 @@ jobs:
 
   type-check:
     name: type check
+    # PR-only: needs a merge-base to compare the trusted baseline. Per-commit
+    # push verification is an open A/F (REQ-GOV-07) decision — not silently claimed.
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -107,6 +110,9 @@ jobs:
 
   dependency-audit:
     name: dependency audit
+    # PR-only: audits the installed env vs the trusted base baseline. Push-time
+    # per-commit verification remains an open A/F decision (REQ-GOV-07).
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

@@ -81,3 +81,22 @@ read-only `GITHUB_TOKEN` (no write creds, no `pull_request_target`). A PR can
 therefore modify its own checker; trust anchors are the protected `main`
 reviewers mapping and the original read-only-resolved GitHub evidence. The job
 comment no longer claims the PR cannot change its checker.
+
+## Hardening (third pass)
+
+- **Approval meaning (A1):** `_approves_plan` now requires an explicit approving
+  statement (approve/批准/同意…) plus plan SHA+version; a neutral SHA/version
+  mention is not approval.
+- **Source-bound scope (A2):** declared `allowed_files`/requirement/test IDs are
+  trusted only if the original body names the files, or an authoritative
+  `binding` record (authorized human source) explicitly binds them; otherwise the
+  gate fails and asks for that binding. It never invents/backdates approval.
+- **Delegation (B1):** requires `to_login`, `to_role`, feature, batch, plan
+  SHA+version, an authorization statement referencing grantee+plan, and a
+  grantor role A whose original time strictly precedes the delegated approval.
+- **Self-approval (C1):** implementers are resolved from the batch's Git authors
+  (commits touching applicable files), unioned with declared fields; if identity
+  cannot be established the gate fails rather than assuming none.
+- **Wiring (W1):** `type check` and `dependency audit` are now PR-only (they need
+  a merge-base); push-time per-commit verification is an explicit open A/F
+  REQ-GOV-07 decision, not a silent green.
