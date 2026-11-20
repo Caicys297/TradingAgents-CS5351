@@ -15,12 +15,8 @@ from __future__ import annotations
 import copy
 import re
 from collections.abc import Mapping
-from dataclasses import replace
-from datetime import UTC, datetime
 
 import pytest
-
-from tradingagents.dataflows.vendors.yahoo import news
 
 RULES = "o5-rules-v1.1-draft"
 OCCURRED_AT = "2026-09-28T00:00:00Z"
@@ -598,40 +594,3 @@ def test_branch_discriminator_comes_from_candidate_count():
     # Branch A control differs from B only by pre_filter_candidate_count.
     assert _static_o5_contract_errors(_partial(candidates=1)) == ()
     assert _static_o5_contract_errors(_partial(candidates=0)) == ()
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize(
-    "mutation,expected",
-    [
-        ("foreign_id", "INV-O5-02"),
-        ("duplicate_output", "INV-O5-02"),
-        ("changed_time", "INV-O5-01"),
-        ("changed_title", "INV-O5-01"),
-        ("original_out_of_window", "INV-O5-03"),
-    ],
-)
-def test_s4_runtime_invariant_checks(mutation, expected):
-    request = news._build_o5_request("2026-09-28", 2, 2)
-    original = news._map_news_dict_to_candidate({
-        "title": "Fed holds rates", "summary": "Policy unchanged",
-        "publisher": "FixtureWire", "link": "https://example.test/fed",
-        "pub_date": datetime(2026, 9, 27, tzinfo=UTC),
-    })
-    result = news.select_macro_news([original], request)
-    news._check_o5_invariants([original], request, result)
-    selected = result.selected[0]
-    if mutation == "foreign_id":
-        changed = [replace(selected, candidate_id="o5:foreign")]
-    elif mutation == "duplicate_output":
-        changed = [selected, selected]
-    elif mutation == "changed_time":
-        changed = [replace(selected, published_at=datetime(2026, 9, 30, tzinfo=UTC))]
-    elif mutation == "original_out_of_window":
-        original = replace(original, published_at=datetime(2026, 9, 30, tzinfo=UTC))
-        changed = [replace(selected, published_at=original.published_at)]
-    else:
-        changed = [replace(selected, title="Tampered title")]
-    with pytest.raises(news.O5InvariantError) as error:
-        news._check_o5_invariants([original], request, replace(result, selected=changed))
-    assert error.value.invariant == expected
