@@ -126,3 +126,22 @@ comment no longer claims the PR cannot change its checker.
   reports per-commit manifest changes and audits the installed env. Zero/missing
   push base, tags and unavailable history fail closed (no silent green/working-tree
   fallback). "Every commit" is treated as an existing requirement.
+
+## Hardening (Phase 2 review — three findings)
+
+- **Explicit evidence (finding 1):** approval and delegation now require an
+  explicit machine-verifiable marker in the authorized evidence body —
+  `TEST-APPROVAL: plan=<40hex> version=<v> kind=<k> scope=<files>` and
+  `TEST-DELEGATION: grantee=<login> plan=<40hex> version=<v> kind=<k> until=<batch|iso>`.
+  Keyword inference is no longer accepted. A later clarification must cite the
+  original evidence id and confirm only the plan/kind/scope the immutable plan
+  supports (no expansion, no predating). Edit metadata is checked: evidence with
+  `updated_at != created_at` cannot establish content at approval time → human
+  verification required. Mentions of a file do not establish approval for it.
+- **Per-commit mypy exit (finding 2):** `_mypy_at_rev` returns `(lines, exit, stderr)`;
+  a nonzero exit without usable diagnostics (tool error) fails and names the
+  commit; an intermediate commit with a new diagnostic fails even if HEAD is clean.
+- **Per-commit dependency audit (finding 3):** each dep-changing commit's
+  `requirements.txt` is extracted at that revision and audited with pip-audit
+  against the trusted baseline; an intermediate commit's disallowed finding fails
+  even if HEAD is clean; a resolver/scanner failure is a non-clean failure (exit 2).

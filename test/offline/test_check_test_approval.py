@@ -59,10 +59,21 @@ def _commit(r, rel, when, content="x", msg="impl"):
     return _git(r, "rev-parse", "HEAD")
 
 
-def _comment(fix, cid, author, at, body="Approved"):
+def _comment(fix, cid, author, at, body="Approved", updated_at=None):
     d = fix / "comments"
     d.mkdir(parents=True, exist_ok=True)
-    (d / f"{cid}.json").write_text(json.dumps({"user": {"login": author}, "created_at": at, "body": body}))
+    rec = {"user": {"login": author}, "created_at": at, "body": body}
+    if updated_at:
+        rec["updated_at"] = updated_at
+    (d / f"{cid}.json").write_text(json.dumps(rec))
+
+
+def _marker(kind="test_plan", plan=FULL_SHA, ver="v0.3", scope="tradingagents/repro/manifest.py"):
+    return f"TEST-APPROVAL: plan={plan} version={ver} kind={kind} scope={scope}"
+
+
+def _markers_both(plan=FULL_SHA, ver="v0.3", scope="tradingagents/repro/manifest.py"):
+    return _marker("test_plan", plan, ver, scope) + "\n" + _marker("execution_plan", plan, ver, scope)
 
 
 PLAN_TEXT = ("# O2 plan v0.3\nrequirements: O2-FR-01\n"
@@ -122,8 +133,7 @@ def _valid(tmp):
     r = _repo(tmp)
     fix = tmp / "fix"
     _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
-    _comment(fix, 111, "Caicys297", "2026-11-16T15:02:47Z",
-             body=f"Approved plan {FULL_SHA} v0.3 for tradingagents/repro/manifest.py")
+    _comment(fix, 111, "Caicys297", "2026-11-16T15:02:47Z", body=_markers_both())
     _plan(fix, FULL_SHA, "test-plans/O2-plan.md")
     _register_commits(r, fix)
     _record(r, "o2.json")
@@ -162,8 +172,7 @@ def test_bootstrap_when_mapping_absent_on_base(tmp_path):
     (r / "docs/test-approvals/reviewers.yaml").write_text("logins:\n  Caicys297: A\n")
     _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
     fix = tmp_path / "fix"
-    _comment(fix, 111, "Caicys297", "2026-11-16T15:02:47Z",
-             body=f"Approved {FULL_SHA} v0.3 for tradingagents/repro/manifest.py")
+    _comment(fix, 111, "Caicys297", "2026-11-16T15:02:47Z", body=_markers_both())
     _plan(fix, FULL_SHA, "test-plans/O2-plan.md")
     _register_commits(r, fix)
     _record(r, "o2.json", approval_kinds=["test_plan", "execution_plan"])
@@ -287,8 +296,7 @@ def test_review_from_another_pr_uses_source_pr(tmp_path):
     rv.mkdir(parents=True, exist_ok=True)
     (rv / "9-333.json").write_text(json.dumps({"user": {"login": "Caicys297"},
                                                "submitted_at": "2026-11-16T15:00:00Z",
-                                               "state": "APPROVED",
-                                               "body": f"Approved {FULL_SHA} v0.3 for tradingagents/repro/manifest.py"}))
+                                               "state": "APPROVED", "body": _markers_both()}))
     _plan(fix, FULL_SHA, "test-plans/O2-plan.md")
     _register_commits(r, fix)
     _record(r, "o2.json", evidence={"type": "review", "id": 333, "pr": 9})
@@ -320,13 +328,14 @@ def test_valid_delegation_A_to_F(tmp_path):
     r = _repo(tmp_path)
     fix = tmp_path / "fix"
     _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
-    # A authorizes F before F's approval; both reference full sha+version.
+    # A authorizes F (delegation marker) before F's approval; both carry markers.
     _comment(fix, 900, "Caicys297", "2026-11-16T14:00:00Z",
-             body=f"Authorize fancx777 to approve {FULL_SHA} v0.4 for this batch")
+             body=f"TEST-DELEGATION: grantee=fancx777 plan={FULL_SHA} version=v0.4 "
+                  "kind=test_plan until=batch-1")
     _comment(fix, 111, "fancx777", "2026-11-16T15:00:00Z",
-             body=f"Approved {FULL_SHA} v0.4 for tradingagents/repro/manifest.py")
+             body=_marker("test_plan", FULL_SHA, "v0.4"))
     _comment(fix, 112, "Caicys297", "2026-11-16T15:10:00Z",
-             body=f"Approved exec {FULL_SHA} v0.4 for tradingagents/repro/manifest.py")
+             body=_marker("execution_plan", FULL_SHA, "v0.4"))
     _record(r, "deleg.json", feature="O2", approval_kinds=[], implementers=["D"],
             evidence={"type": "issue_comment", "id": 900},
             delegation={"batch_id": "batch-1", "kind": "test_plan", "to_role": "F",
@@ -626,5 +635,44 @@ def test_verifiable_self_approval_via_commit_fixture_fails(tmp_path):
     _plan(fix, FULL_SHA, "test-plans/O2-plan.md")
     _register_commits(r, fix, login="Caicys297")  # implementer == approver
     _record(r, "o2.json", implementers=[])  # omitted; must still catch
+    z = _changed(tmp_path, ["tradingagents/repro/manifest.py"])
+    assert _run(mod, r, z, fix) == 1
+
+
+# ============================================================ Phase-2 review findings
+@pytest.mark.unit
+def test_edited_after_creation_evidence_fails(tmp_path):
+    """If the approval comment was edited after creation, content-at-time is not
+    established -> fail for human verification."""
+    mod, r, fix, z = _valid(tmp_path)
+    # re-write comment 111 with updated_at != created_at, but valid markers
+    _comment(fix, 111, "Caicys297", "2026-11-16T15:02:47Z", body=_markers_both(),
+             updated_at="2026-11-20T00:00:00Z")
+    assert _run(mod, r, z, fix) == 1
+
+
+@pytest.mark.unit
+def test_delegation_without_marker_fails(tmp_path):
+    """A delegation comment lacking TEST-DELEGATION cannot authorize."""
+    mod = _load()
+    r = _repo(tmp_path)
+    fix = tmp_path / "fix"
+    _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
+    _comment(fix, 900, "Caicys297", "2026-11-16T14:00:00Z",
+             body=f"Authorize fancx777 to approve {FULL_SHA} v0.4")  # prose, no marker
+    _comment(fix, 111, "fancx777", "2026-11-16T15:00:00Z", body=_marker("test_plan", FULL_SHA, "v0.4"))
+    _comment(fix, 112, "Caicys297", "2026-11-16T15:10:00Z", body=_marker("execution_plan", FULL_SHA, "v0.4"))
+    _record(r, "deleg.json", feature="O2", approval_kinds=[], implementers=["D"],
+            evidence={"type": "issue_comment", "id": 900},
+            delegation={"batch_id": "batch-1", "kind": "test_plan", "to_role": "F",
+                        "to_login": "fancx777", "feature": "O2", "plan_sha": FULL_SHA,
+                        "plan_version": "v0.4"}, plan_sha=FULL_SHA, plan_version="v0.4")
+    _record(r, "o2test.json", feature="O2", approval_kinds=["test_plan"], implementers=["D"],
+            evidence={"type": "issue_comment", "id": 111}, plan_sha=FULL_SHA, plan_version="v0.4")
+    _record(r, "exe.json", feature="O2", approval_kinds=["execution_plan"], implementers=["D"],
+            evidence={"type": "issue_comment", "id": 112}, plan_sha=FULL_SHA, plan_version="v0.4")
+    _plan(fix, FULL_SHA, "test-plans/O2-plan.md",
+          text="# O2 v0.4\nO2-FR-01 O2-TC-01 tradingagents/repro/manifest.py\n")
+    _register_commits(r, fix, login="D")
     z = _changed(tmp_path, ["tradingagents/repro/manifest.py"])
     assert _run(mod, r, z, fix) == 1

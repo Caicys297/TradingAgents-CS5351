@@ -168,6 +168,34 @@ def _depfiles_changed_per_commit(root: Path, commits: list[str]) -> list[str]:
     return hits
 
 
+def _audit_requirements_at_rev(root: Path, rev: str) -> dict:
+    """Resolve and audit the dependencies declared at ``rev`` via its requirements.txt.
+
+    Extracts requirements.txt at ``rev`` to a temp file and runs pip-audit against
+    that exact resolved input (not the HEAD installed env). Raises ScannerError on
+    tool/parse failure. If the revision has no requirements.txt, raises ScannerError
+    so the caller can report the blocker (cannot resolve deps for that rev).
+    """
+    import tempfile
+    show = subprocess.run(["git", "-C", str(root), "show", f"{rev}:requirements.txt"],
+                          capture_output=True, text=True)
+    if show.returncode != 0:
+        raise ScannerError(f"no requirements.txt at {rev[:12]}; cannot resolve its dependencies")
+    fd_path = Path(tempfile.mkdtemp(prefix="deprev-")) / "requirements.txt"
+    fd_path.write_text(show.stdout)
+    cmd = [sys.executable, "-m", "pip_audit", "-r", str(fd_path),
+           "--format", "json", "--progress-spinner", "off"]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode not in (0, 1):
+        raise ScannerError(f"pip-audit failed for {rev[:12]} (exit {proc.returncode}): {proc.stderr.strip()[:200]}")
+    try:
+        report = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise ScannerError(f"pip-audit non-JSON for {rev[:12]}") from exc
+    validate_report(report)
+    return report
+
+
 def baseline_keys(base: dict) -> set[tuple[str, str, str]]:
     keys: set[tuple[str, str, str]] = set()
     for entry in base.get("findings", []):
@@ -280,11 +308,38 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    depfile_commits = _depfiles_changed_per_commit(root, rng.commits)
-    if depfile_commits:
-        print(f"dependency manifests changed in {len(depfile_commits)} commit(s) "
-              f"(audited at HEAD installed env): {', '.join(c[:12] for c in depfile_commits)}")
-    print(f"OK: no new dependency findings ({len(found)} total; {len(rng.commits)} commit(s) in range)")
+    # Per-commit dependency audit: audit the dependencies resolved at EACH commit
+    # in the range (not just the installed HEAD env). A commit whose resolved deps
+    # introduce a finding beyond the trusted baseline fails even if HEAD is clean.
+    depfile_commits = set(_depfiles_changed_per_commit(root, rng.commits))
+    per_commit_failures: list[tuple[str, list]] = []
+    scanner_errors: list[str] = []
+    for sha in rng.commits:
+        if sha not in depfile_commits:
+            continue  # deps unchanged at this commit -> same as range base resolution
+        try:
+            crev_report = _audit_requirements_at_rev(root, sha)
+        except ScannerError as exc:
+            scanner_errors.append(str(exc))
+            continue
+        cfound = findings(crev_report)
+        cnew = [(p, v, vid, fix) for (p, v, vid, fix) in cfound if (p, vid, v) not in base_keys]
+        if cnew:
+            per_commit_failures.append((sha[:12], cnew))
+
+    if scanner_errors:
+        print("DEPENDENCY AUDIT FAILED: could not audit some revisions (not clean):", file=sys.stderr)
+        for e in scanner_errors:
+            print(f"  - {e}", file=sys.stderr)
+        return 2
+    if per_commit_failures:
+        print("DEPENDENCY AUDIT FAILED: new finding(s) at intermediate commit(s):", file=sys.stderr)
+        for sha, cnew in per_commit_failures:
+            for (p, v, vid, fix) in cnew:
+                print(f"  - commit {sha}: {p}=={v} {vid} fix={fix}", file=sys.stderr)
+        return 1
+    print(f"OK: no new dependency findings ({len(found)} at HEAD; "
+          f"{len(depfile_commits)} dep-changing commit(s) audited; {len(rng.commits)} commit(s) in range)")
     return 0
 
 

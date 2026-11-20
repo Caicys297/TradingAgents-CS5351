@@ -195,8 +195,12 @@ def load_baseline(base_sha: str | None) -> tuple[Counter, str]:
     return Counter(), "empty (no baseline)"
 
 
-def _mypy_at_rev(rev: str) -> list[str]:
-    """Run mypy over SCOPE as it exists at ``rev`` (worktree-safe via git worktree)."""
+def _mypy_at_rev(rev: str) -> tuple[list[str], int, str]:
+    """Run mypy over SCOPE at ``rev``. Returns (output_lines, exit_code, stderr).
+
+    Callers MUST inspect exit_code: mypy exit 0 = clean, 1 = diagnostics; any other
+    (or 1 with no parseable diagnostics) is a tool error, not "clean".
+    """
     import tempfile
     wt = Path(tempfile.mkdtemp(prefix="tc-commit-"))
     try:
@@ -206,9 +210,19 @@ def _mypy_at_rev(rev: str) -> list[str]:
                "--ignore-missing-imports", "--follow-imports=silent",
                "--show-error-codes", "--show-error-context", "--no-error-summary", "--no-incremental"]
         proc = subprocess.run(cmd, capture_output=True, text=True, cwd=wt)
-        return proc.stdout.splitlines()
+        return proc.stdout.splitlines(), proc.returncode, proc.stderr
     finally:
         subprocess.run(["git", "worktree", "remove", "--force", str(wt)], capture_output=True, text=True)
+
+
+def _mypy_result_ok(lines: list[str], rc: int) -> bool:
+    """True if rc==0, or rc==1 with at least one parseable diagnostic. Anything
+    else (tool error, or rc==1 with no diagnostics) is NOT clean."""
+    if rc == 0:
+        return True
+    if rc == 1:
+        return bool(list(_pair(lines)))
+    return False
 
 
 def _diff_new(current: Counter, baseline: Counter) -> Counter:
@@ -272,14 +286,24 @@ def main(argv: list[str] | None = None) -> int:
     # 2) per-commit: verify EACH commit in the range, using the baseline inherited
     # from its parent (so a commit that introduces and a later commit that removes
     # an error still fails at the introducing commit).
+    tool_errors: list[tuple[str, str]] = []
     for sha in rng.commits:
         # Compare each commit against the SAME trusted base baseline (new-since-base),
         # so pre-existing diagnostics (present at base) never count as new, while any
         # commit that introduces a diagnostic beyond the base baseline fails.
-        commit_lines = _mypy_at_rev(sha)
+        commit_lines, rc, err = _mypy_at_rev(sha)
+        if not _mypy_result_ok(commit_lines, rc):
+            tool_errors.append((f"commit {sha[:12]}", f"mypy exit {rc}: {err.strip()[:200]}"))
+            continue
         cnew = _diff_new(parse(commit_lines), baseline)
         if cnew:
             failures.append((f"commit {sha[:12]}", _report_lines(commit_lines, cnew)))
+
+    if tool_errors:
+        print("TYPECHECK FAILED: mypy tool error (not a clean result):", file=sys.stderr)
+        for where, msg in tool_errors:
+            print(f"  [{where}] {msg}", file=sys.stderr)
+        return 1
 
     if failures:
         print(f"TYPECHECK FAILED: {len(failures)} scope(s) with new diagnostics (baseline source: {source}):", file=sys.stderr)

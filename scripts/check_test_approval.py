@@ -39,6 +39,7 @@ import datetime as _dt
 import fnmatch
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -285,6 +286,27 @@ def _resolve_evidence(record: dict, api, default_pr: int | None) -> tuple[str, s
     raise ExecutionError(f"unknown evidence type {etype!r}")
 
 
+def _evidence_with_meta(record: dict, api, default_pr):
+    """Like _resolve_evidence but also returns (created_iso, updated_iso) edit
+    metadata. A comment/review whose {created,updated} are inconsistent with the
+    required time cannot establish content as of that time."""
+    ev = record.get("evidence") or {}
+    etype = ev.get("type")
+    if etype == "issue_comment":
+        o = api.get_issue_comment(int(ev["id"]))
+        created = o.get("created_at", "")
+        updated = o.get("updated_at", created)
+        return o.get("user", {}).get("login", ""), created, updated, o.get("body", ""), ev.get("pr")
+    if etype == "review":
+        src_pr = ev.get("pr", default_pr)
+        if src_pr is None:
+            raise ExecutionError("review evidence requires a source PR")
+        o = api.get_review(int(src_pr), int(ev["id"]))
+        submitted = o.get("submitted_at", "")
+        return o.get("user", {}).get("login", ""), submitted, submitted, o.get("body", ""), int(src_pr)
+    raise ExecutionError(f"unknown evidence type {etype!r}")
+
+
 def _covers_all(allowed: list[str], applicable: set[str]) -> list[str]:
     missing = []
     for f in applicable:
@@ -299,7 +321,18 @@ def _invalid_sha(sha: str) -> bool:
     return len(sha) != 40 or not all(c in "0123456789abcdef" for c in sha.lower())
 
 
-APPROVAL_RE = ("approve", "approved", "approval", "批准", "同意", "核准", "通过")
+# Explicit, machine-verifiable approval marker. Keyword inference is NOT
+# accepted as an approval: the authorized reviewer includes this exact line in the
+# GitHub evidence body, so the approved plan/kind/scope are stated unambiguously.
+#   TEST-APPROVAL: plan=<40hex> version=<vX.Y> kind=test_plan|execution_plan scope=<f1,f2,...>
+_DELEGATION_MARKER_RE = re.compile(
+    r"TEST-DELEGATION:\s*grantee=(?P<grantee>\S+)\s+plan=(?P<plan>[0-9a-f]{40})\s+"
+    r"version=(?P<version>\S+)\s+kind=(?P<kind>test_plan|execution_plan)\s+until=(?P<until>\S+)"
+)
+_APPROVAL_MARKER_RE = re.compile(
+    r"TEST-APPROVAL:\s*plan=(?P<plan>[0-9a-f]{40})\s+version=(?P<ver>\S+)\s+"
+    r"kind=(?P<kind>test_plan|execution_plan)\s+scope=(?P<scope>[^\n]+)"
+)
 
 
 def _refused(body: str) -> bool:
@@ -307,16 +340,17 @@ def _refused(body: str) -> bool:
     return any(r in low for r in REFUSAL_RE)
 
 
-def _has_approval_statement(body: str) -> bool:
-    """A genuine approval must contain an explicit approving verb/phrase.
-
-    This is necessary but not sufficient on its own; the plan/scope binding
-    below must also hold. Natural-language interpretation is bounded — where it
-    cannot be established reliably we fail and require an authorized
-    source-binding record (never a bare keyword substitute for meaning).
-    """
-    low = body.lower()
-    return any(a in low for a in APPROVAL_RE) and not _refused(body)
+def _parse_approval_marker(body: str) -> dict | None:
+    """Parse the explicit TEST-APPROVAL marker (bounded, exact). None if absent or
+    if the surrounding body is a refusal."""
+    if _refused(body):
+        return None
+    m = _APPROVAL_MARKER_RE.search(body)
+    if not m:
+        return None
+    scope = [x.strip() for x in m.group("scope").split(",") if x.strip()]
+    return {"plan": m.group("plan"), "version": m.group("ver"),
+            "kind": m.group("kind"), "scope": scope}
 
 
 def _retrieve_plan(api, repo: str | None, plan_sha: str, plan_path: str) -> str | None:
@@ -393,29 +427,32 @@ def _verify_binding(rec, api, repo, reviewers, feature, approval_iso, root, prob
         problems.append(f"{rp}: clarification missing reference to original evidence id")
         return None
     try:
-        author, ctime, body, _ = _resolve_evidence({"evidence": ev}, api, None)
+        author, ctime, utime, body, _ = _evidence_with_meta({"evidence": ev}, api, None)
     except ExecutionError as exc:
         problems.append(f"{rp}: clarification evidence unverifiable: {exc}")
         return None
     if reviewers.get(author) not in (TEST_PLAN_REVIEWER.get(feature), EXECUTION_PLAN_REVIEWER):
         problems.append(f"{rp}: clarification author {author!r} not authorized for {feature}")
         return None
-    if not _has_approval_statement(body):
-        problems.append(f"{rp}: clarification is not an approval/authorization statement")
+    if utime and utime != ctime:
+        problems.append(f"{rp}: clarification edited after creation (created {ctime}, updated {utime}); "
+                        "cannot establish original content — needs human verification")
+        return None
+    # The clarification must carry an explicit marker confirming plan/kind/scope
+    # (same evidence standard as the original approval). It may only confirm what
+    # the original artifact already supported; it cannot introduce scope.
+    marker = _parse_approval_marker(body)
+    if marker is None:
+        problems.append(f"{rp}: clarification has no explicit TEST-APPROVAL marker")
         return None
     plan_sha = str(b.get("plan_sha") or rec.get("plan_sha", "")).strip()
     plan_ver = str(b.get("plan_version") or rec.get("plan_version", "")).strip()
-    if plan_sha and plan_sha[:7] not in body and plan_sha not in body:
-        problems.append(f"{rp}: clarification does not reference plan {plan_sha[:7]}")
+    if marker["plan"] != plan_sha:
+        problems.append(f"{rp}: clarification marker plan {marker['plan'][:7]} != approved {plan_sha[:7]}")
         return None
-    if plan_ver and plan_ver not in body:
-        problems.append(f"{rp}: clarification does not reference plan version {plan_ver}")
+    if plan_ver and marker["version"] != plan_ver:
+        problems.append(f"{rp}: clarification marker version {marker['version']} != approved {plan_ver}")
         return None
-    files = [str(x) for x in b.get("allowed_files", [])]
-    for f in files:
-        if f not in body:
-            problems.append(f"{rp}: clarification does not name approved file {f!r}")
-            return None
     # Later clarification: its own timestamp must NOT be earlier than the original
     # approval (it cannot manufacture an earlier approval). Report both separately.
     try:
@@ -427,15 +464,21 @@ def _verify_binding(rec, api, repo, reviewers, feature, approval_iso, root, prob
         problems.append(f"{rp}: unparseable clarification/approval timestamp")
         return None
     print(f"NOTE {rp}: original approval {approval_iso}; later authorized clarification {ctime}", file=sys.stderr)
-    return {"allowed_files": files} if files else None
+    # The clarification confirms the marker scope; the caller intersects with the
+    # immutable plan and rejects any expansion.
+    return {"allowed_files": marker["scope"], "kind": marker["kind"]}
 
 
-def _approves_plan(body: str, plan_sha: str, plan_ver: str) -> bool:
-    """Body must *approve* (explicit approval statement, no refusal) and reference
-    the plan SHA (prefix) and version. A neutral mention alone is not approval."""
-    if not _has_approval_statement(body):
+def _marker_matches(marker: dict, plan_sha: str, ver: str, kind: str, allowed: list[str]) -> bool:
+    if marker is None:
         return False
-    return (plan_sha[:7] in body or plan_sha in body) and (plan_ver in body)
+    if marker["plan"] != plan_sha:
+        return False
+    if ver and marker["version"] != ver:
+        return False
+    if marker["kind"] != kind:
+        return False
+    return sorted(set(marker["scope"])) == sorted(set(allowed))
 
 
 # --------------------------------------------------------------- validation
@@ -554,7 +597,7 @@ def validate_batch(records, api, default_pr, batch_id, applicable, reviewers, ea
             continue
 
         try:
-            author, otime, body, src_pr = _resolve_evidence(rec, api, default_pr)
+            author, otime, utime, body, src_pr = _evidence_with_meta(rec, api, default_pr)
         except ExecutionError as exc:
             problems.append(f"{rp}: evidence unverifiable: {exc}")
             continue
@@ -565,14 +608,32 @@ def validate_batch(records, api, default_pr, batch_id, applicable, reviewers, ea
         if not otime:
             problems.append(f"{rp}: evidence has no original timestamp")
             continue
+        # Edit metadata: if the comment/review was edited after creation, the content
+        # we see may not have existed at the required time. Only trust it when
+        # updated matches created (never edited) so content at approval time is
+        # established; otherwise fail for human verification.
+        if utime and utime != otime:
+            problems.append(f"{rp}: evidence edited after creation (created {otime}, updated {utime}); "
+                            "cannot establish original content at approval time — needs human verification")
+            continue
 
         is_delegation = bool(rec.get("delegation"))
-        if not is_delegation and not _approves_plan(body, plan_sha, plan_ver):
-            problems.append(f"{rp}: evidence does not approve plan {plan_sha[:7]} / {plan_ver} "
-                            "(missing reference or refusal)")
-            continue
         if is_delegation:
             continue  # handled by _delegated()
+
+        # Explicit, machine-verifiable approval: the authorized reviewer's marker
+        # must state exactly this plan/version/kind and scope. Keywords are not
+        # accepted; a marker is required.
+        marker = _parse_approval_marker(body)
+        kinds_declared = rec.get("approval_kinds") or ([rec.get("approval_kind")] if rec.get("approval_kind") else [])
+        allowed_declared = [str(a) for a in rec.get("allowed_files", [])]
+        if marker is None:
+            problems.append(f"{rp}: no explicit TEST-APPROVAL marker in evidence "
+                            "(keyword mentions are not accepted; add the authorized marker)")
+            continue
+        if not any(_marker_matches(marker, plan_sha, plan_ver, k, allowed_declared) for k in kinds_declared):
+            problems.append(f"{rp}: TEST-APPROVAL marker does not match plan/version/kind/scope")
+            continue
 
         # Time vs earliest impl.
         if earliest["earliest_iso"] is not None and _parse_iso(otime) >= _parse_iso(earliest["earliest_iso"]):
@@ -683,19 +744,29 @@ def _delegated(records, api, default_pr, reviewers, batch_id, feature, kind, pla
         if reviewers.get(reviewer_login) != to_role_expected:
             continue
         try:
-            gauthor, gtime, gbody, _ = _resolve_evidence(rec, api, default_pr)
+            gauthor, gtime, g_upd, gbody, _ = _evidence_with_meta(rec, api, default_pr)
         except ExecutionError:
             continue
         # Grantor must be an authorized A.
         if reviewers.get(gauthor) != "A":
             continue
-        # Delegation evidence must be an actual authorization referencing plan +
-        # grantee (not a neutral mention).
-        if not _has_approval_statement(gbody):
+        if g_upd and g_upd != gtime:
+            continue  # edited after creation -> content-at-time not established
+        # Explicit, machine-verifiable delegation marker (no keyword inference):
+        #   TEST-DELEGATION: grantee=<login> plan=<40hex> version=<v> kind=<k> until=<batch|iso>
+        m = _DELEGATION_MARKER_RE.search(gbody)
+        if not m:
             continue
-        if (d_plan_sha[:7] not in gbody) and (d_plan_sha not in gbody):
+        if m.group("grantee") != to_login:
             continue
-        if to_login not in gbody:
+        if m.group("plan") != d_plan_sha:
+            continue
+        if m.group("version") != d_plan_ver:
+            continue
+        if m.group("kind") != kind:
+            continue
+        until = m.group("until").strip()
+        if until not in (batch_id, "batch:" + batch_id) and not until.startswith(("2", "until")):
             continue
         # Delegation must strictly precede the approval it authorizes.
         try:
