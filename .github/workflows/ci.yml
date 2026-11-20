@@ -156,6 +156,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -163,8 +165,11 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-      - name: Run deterministic semantic report (versioned O5 cases)
-        # Uses real get_global_news_yfinance via the approved O5 tests;
-        # emits versioned case IDs + per-case results vs 100% threshold;
-        # fails nonzero on any required failed/missing case; lists uncovered paths.
+      - name: Run deterministic semantic report (versioned O5 cases + applicability)
+        # Real get_global_news_yfinance via the approved O5 tests (offline, fake
+        # vendor inputs). Emits versioned case IDs + per-case results vs 100%
+        # threshold; fails nonzero on any required failed/missing case OR on a
+        # prompt/model change with no approved applicable case (diff vs base).
+        env:
+          GITHUB_BASE_REF: ${{ github.base_ref }}
         run: python scripts/semantic_report.py --json semantic-report.json
