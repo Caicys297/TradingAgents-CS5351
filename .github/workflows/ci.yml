@@ -166,14 +166,18 @@ jobs:
       - name: Run deterministic O5 semantic cases (real entry, offline)
         # E-confirmed deterministic cases through the real
         # get_global_news_yfinance entry (merged on main via PR #29):
-        #   - relevant macro news selected
-        #   - irrelevant candidates filtered to empty (ALL_IRRELEVANT)
-        #   - filter unavailable -> no unvalidated publication
+        #   - relevant macro news selected (filter-before-slice, fields kept)
+        #   - irrelevant candidates filtered to empty (ALL_IRRELEVANT) + exact counts
+        #   - filter unavailable -> no unvalidated publication (suppression)
         #   - limit=0 -> zero vendor calls
+        # The upstream-empty test is ADDITIONAL coverage only; the
+        # relevant-success case (s4_selected_path...) is the primary E case.
         # Non-deterministic text scoring remains deferred (not run here).
         run: >
           pytest -v
-          test/offline/test_o5_macro_news_integration.py::test_s3_zero_limit_skips_vendor
-          test/offline/test_o5_macro_news_integration.py::test_s3_empty_vendor_pool_is_distinct_from_filtered_pool
+          test/offline/test_o5_macro_news_integration.py::test_s4_selected_path_filters_before_slice_and_keeps_fields
+          test/offline/test_o5_macro_news_integration.py::test_s4_t04d_filtered_to_zero_is_not_upstream_empty
           test/offline/test_o5_macro_news_integration.py::test_s4_t04d_all_irrelevant_uses_the_all_irrelevant_enum_member
           test/offline/test_o5_macro_news_integration.py::test_s4_filter_unavailable_text_is_distinct_from_filtered_empty
+          test/offline/test_o5_macro_news_integration.py::test_s3_zero_limit_skips_vendor
+          test/offline/test_o5_macro_news_integration.py::test_s3_empty_vendor_pool_is_distinct_from_filtered_pool

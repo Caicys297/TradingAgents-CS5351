@@ -1,0 +1,14 @@
+{
+  "note": "Bounded record derived from a genuine `opencode export ses_e27f33c94ffeOKeCXPrAQQW93Z --sanitize` run. Full 2MB export retained by Member F outside the repo; sha256 recorded below. Content bodies omitted; only structural metadata + message-role counts are included.",
+  "session_id": "ses_e27f33c94ffeOKeCXPrAQQW93Z",
+  "title": "[redacted:session-title:ses_e27f33c94ffeOKeCXPrAQQW93Z]",
+  "project_id": "5e4064cab78284c46f12fb43d17b3e872ae6390d",
+  "message_count": 756,
+  "role_counts": {
+    "user": 75,
+    "assistant": 681
+  },
+  "source": "opencode export <session> --sanitize",
+  "full_export_sha256": "61dd03b4cf3d1cc155dd32fd77b3396ba5727e223a8839c67e1756d1eff7c922",
+  "redaction": "--sanitize redacts session directory/title/file data; verified 0 machine-absolute paths and 0 key-like strings in the full export."
+}

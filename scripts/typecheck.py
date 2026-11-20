@@ -55,24 +55,50 @@ BASELINE = Path("ci/baselines/mypy-baseline.txt")
 DIAG_RE = re.compile(
     r"^(?P<path>[^:\n]+):(?P<line>\d+)(?::(?P<col>\d+))?: error: (?P<msg>.*?)(?:  \[(?P<code>[a-z-]+)\])?$"
 )
+# mypy --show-error-context emits, before a file's errors, a context note naming the
+# enclosing scope, e.g.  cli/run.py: note: In function "run_analysis":
+CONTEXT_RE = re.compile(
+    r"^(?P<path>[^:\n]+): note: (?:In function|At top level|In class|In member) "
+    r'(?:"(?P<sym>[^"]+)")?'
+)
 
 
-def _identity(m: re.Match) -> str:
+def _pair(lines: list[str]):
+    """Yield (match, symbol) per diagnostic, tracking the active context per file.
+
+    The symbol (enclosing function/class or module top level) is part of the
+    diagnostic's identity, so an identical error removed from function A and a
+    new identical error introduced in function B are NOT the same diagnostic.
+    """
+    current_file: str | None = None
+    current_sym = "<module>"
+    for ln in lines:
+        cm = CONTEXT_RE.match(ln)
+        if cm:
+            current_file = cm.group("path")
+            current_sym = cm.group("sym") or ("<top>" if "At top level" in ln else "<scope>")
+            continue
+        m = DIAG_RE.match(ln)
+        if m:
+            sym = current_sym if m.group("path") == current_file else "<module>"
+            yield m, sym
+
+
+def _identity(m: re.Match, symbol: str = "<module>") -> str:
     code = m.group("code") or "no-code"
-    # Normalise line numbers/raw digits so a moved-but-identical error keeps its key;
-    # include the message text so distinct errors in the same file+code stay distinct.
+    # Normalise raw line numbers so a moved-but-identical error keeps its key.
+    # Identity = path : symbol : code : message-hash. Symbol inclusion prevents
+    # collapse across functions; message-hash separates distinct diagnostics.
     norm = re.sub(r"\b\d+\b", "N", m.group("msg"))
     digest = hashlib.sha1(norm.encode("utf-8")).hexdigest()[:12]
-    return f"{m.group('path')}:{code}:{digest}"
+    return f"{m.group('path')}:{symbol}:{code}:{digest}"
 
 
 def parse(lines: list[str]) -> Counter:
     """Return a multiset (Counter) of diagnostic identities from mypy output lines."""
     counts: Counter = Counter()
-    for ln in lines:
-        m = DIAG_RE.match(ln)
-        if m:
-            counts[_identity(m)] += 1
+    for m, sym in _pair(lines):
+        counts[_identity(m, sym)] += 1
     return counts
 
 
@@ -97,6 +123,7 @@ def run_mypy() -> list[str]:
         "--ignore-missing-imports",
         "--follow-imports=silent",
         "--show-error-codes",
+        "--show-error-context",
         "--no-error-summary",
         "--no-incremental",
     ]
@@ -116,30 +143,72 @@ def run_mypy() -> list[str]:
     return out
 
 
-def _load_baseline_text(base_ref: str) -> str | None:
-    """Read the baseline from the trusted base revision; None if absent there."""
+class BaseResolutionError(RuntimeError):
+    """The trusted base ref/commit could not be resolved (git/ref/permission)."""
+
+
+def _base_commit(base_ref: str) -> str:
+    """Resolve origin/<base> to a commit SHA; raise on any resolution failure."""
     try:
         proc = subprocess.run(
-            ["git", "show", f"origin/{base_ref}:{BASELINE.as_posix()}"],
+            ["git", "rev-parse", "--verify", f"origin/{base_ref}^{{commit}}"],
             capture_output=True, text=True,
         )
-    except FileNotFoundError:
-        return None
+    except FileNotFoundError as exc:
+        raise BaseResolutionError("git not available") from exc
     if proc.returncode != 0:
-        return None
-    return proc.stdout
+        raise BaseResolutionError(
+            f"cannot resolve origin/{base_ref}: {proc.stderr.strip()[:200]}"
+        )
+    return proc.stdout.strip()
+
+
+def _baseline_state(base_ref: str) -> tuple[str | None, str]:
+    """Return (baseline_text_or_None, base_sha).
+
+    Distinguishes:
+      - base resolves AND file exists  -> text (trusted)
+      - base resolves AND file absent  -> None (genuine first-introduction bootstrap)
+    Raises BaseResolutionError if the base/ref itself cannot be resolved.
+    """
+    base_sha = _base_commit(base_ref)
+    try:
+        proc = subprocess.run(
+            ["git", "cat-file", "-e", f"{base_sha}:{BASELINE.as_posix()}"],
+            capture_output=True, text=True,
+        )
+    except FileNotFoundError as exc:
+        raise BaseResolutionError("git not available") from exc
+    if proc.returncode != 0:
+        # Confirm the commit exists but the path does not (genuine absence), vs an
+        # unexpected git failure surfaced during cat-file.
+        return None, base_sha
+    show = subprocess.run(
+        ["git", "show", f"{base_sha}:{BASELINE.as_posix()}"],
+        capture_output=True, text=True,
+    )
+    if show.returncode != 0:
+        raise BaseResolutionError(
+            f"baseline exists but could not be read from {base_sha}: {show.stderr.strip()[:200]}"
+        )
+    return show.stdout, base_sha
 
 
 def load_baseline() -> tuple[Counter, str]:
     """Return (baseline multiset, source string) from the trusted base revision."""
     base_ref = os.environ.get("GITHUB_BASE_REF", "").strip()
     if os.environ.get("GITHUB_EVENT_NAME") == "pull_request" and base_ref:
-        text = _load_baseline_text(base_ref)
+        try:
+            text, base_sha = _baseline_state(base_ref)
+        except BaseResolutionError as exc:
+            print(f"ERROR: cannot resolve trusted base baseline: {exc}", file=sys.stderr)
+            raise SystemExit(2) from exc
         if text is not None:
-            return _parse_baseline_text(text), f"trusted base origin/{base_ref}"
+            return _parse_baseline_text(text), f"trusted base {base_sha[:12]} (origin/{base_ref})"
         print(
-            "BOOTSTRAP: baseline absent on base revision; using this PR's checked-in "
-            "baseline. A must review this initial baseline before merge.",
+            "BOOTSTRAP: baseline genuinely absent on trusted base "
+            f"{base_sha[:12]}; using this PR's checked-in baseline. A must review this "
+            "initial baseline before merge.",
             file=sys.stderr,
         )
     if BASELINE.is_file():
@@ -179,15 +248,13 @@ def main(argv: list[str] | None = None) -> int:
     if new:
         total = sum(new.values())
         print(f"TYPECHECK FAILED: {total} new diagnostic occurrence(s) beyond baseline ({source}):", file=sys.stderr)
-        # Report readable messages for the offending identities.
+        # Report readable messages for the offending identities (with symbol context).
         remaining = Counter(new)
-        for ln in lines:
-            m = DIAG_RE.match(ln)
-            if not m:
-                continue
-            ident = _identity(m)
+        for m, sym in _pair(lines):
+            ident = _identity(m, sym)
             if remaining.get(ident, 0) > 0:
-                print(f"  {ln}", file=sys.stderr)
+                print(f"  {m.group('path')}:{m.group('line')}: [{sym}] error: {m.group('msg')}"
+                      + (f"  [{m.group('code')}]" if m.group('code') else ""), file=sys.stderr)
                 remaining[ident] -= 1
         return 1
 

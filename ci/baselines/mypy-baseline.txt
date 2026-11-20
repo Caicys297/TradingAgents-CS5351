@@ -1,11 +1,11 @@
 # mypy itemized baseline (file:code:msghash), one line per occurrence.
 # Trusted base revision supplies this to CI; regenerate with --update.
-cli/run.py:arg-type:b9a26139984b
-cli/run.py:method-assign:c7f11b417dbb
-cli/run.py:method-assign:c7f11b417dbb
-cli/run.py:method-assign:c7f11b417dbb
-tradingagents/graph/checkpointer.py:arg-type:56aaad0b4965
-tradingagents/graph/setup.py:misc:bfe241397b72
-tradingagents/graph/trading_graph.py:assignment:5992c42f32ef
-tradingagents/graph/trading_graph.py:assignment:86661ecbafe9
-tradingagents/graph/trading_graph.py:attr-defined:09a8f2eb8bc2
+cli/run.py:run_analysis:arg-type:b9a26139984b
+cli/run.py:run_analysis:method-assign:c7f11b417dbb
+cli/run.py:run_analysis:method-assign:c7f11b417dbb
+cli/run.py:run_analysis:method-assign:c7f11b417dbb
+tradingagents/graph/checkpointer.py:checkpoint_step:arg-type:56aaad0b4965
+tradingagents/graph/setup.py:_analyst_graph:misc:bfe241397b72
+tradingagents/graph/trading_graph.py:__init__:assignment:5992c42f32ef
+tradingagents/graph/trading_graph.py:begin_checkpoint:assignment:86661ecbafe9
+tradingagents/graph/trading_graph.py:begin_checkpoint:attr-defined:09a8f2eb8bc2

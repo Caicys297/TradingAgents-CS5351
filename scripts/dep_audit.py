@@ -108,21 +108,54 @@ def local_editable(report: dict) -> list[str]:
     return names
 
 
+class BaseResolutionError(RuntimeError):
+    """The trusted base ref/commit could not be resolved."""
+
+
+def _base_commit(base_ref: str) -> str:
+    try:
+        proc = subprocess.run(
+            ["git", "rev-parse", "--verify", f"origin/{base_ref}^{{commit}}"],
+            capture_output=True, text=True,
+        )
+    except FileNotFoundError as exc:
+        raise BaseResolutionError("git not available") from exc
+    if proc.returncode != 0:
+        raise BaseResolutionError(f"cannot resolve origin/{base_ref}: {proc.stderr.strip()[:200]}")
+    return proc.stdout.strip()
+
+
+def _baseline_state(base_ref: str) -> tuple[str | None, str]:
+    base_sha = _base_commit(base_ref)
+    chk = subprocess.run(
+        ["git", "cat-file", "-e", f"{base_sha}:{BASELINE.as_posix()}"],
+        capture_output=True, text=True,
+    )
+    if chk.returncode != 0:
+        return None, base_sha  # genuinely absent on base
+    show = subprocess.run(
+        ["git", "show", f"{base_sha}:{BASELINE.as_posix()}"],
+        capture_output=True, text=True,
+    )
+    if show.returncode != 0:
+        raise BaseResolutionError(f"baseline exists but unreadable: {show.stderr.strip()[:200]}")
+    return show.stdout, base_sha
+
+
 def _load_baseline() -> tuple[dict, str]:
     base_ref = os.environ.get("GITHUB_BASE_REF", "").strip()
     if os.environ.get("GITHUB_EVENT_NAME") == "pull_request" and base_ref:
         try:
-            proc = subprocess.run(
-                ["git", "show", f"origin/{base_ref}:{BASELINE.as_posix()}"],
-                capture_output=True, text=True,
-            )
-        except FileNotFoundError:
-            proc = None
-        if proc is not None and proc.returncode == 0:
-            return json.loads(proc.stdout), f"trusted base origin/{base_ref}"
+            text, base_sha = _baseline_state(base_ref)
+        except BaseResolutionError as exc:
+            print(f"ERROR: cannot resolve trusted base baseline: {exc}", file=sys.stderr)
+            raise SystemExit(2) from exc
+        if text is not None:
+            return json.loads(text), f"trusted base {base_sha[:12]} (origin/{base_ref})"
         print(
-            "BOOTSTRAP: dependency baseline absent on base revision; using this PR's "
-            "checked-in baseline. A must review this initial baseline.",
+            "BOOTSTRAP: dependency baseline genuinely absent on trusted base "
+            f"{base_sha[:12]}; using this PR's checked-in baseline. A must review this "
+            "initial baseline.",
             file=sys.stderr,
         )
     if BASELINE.is_file():
