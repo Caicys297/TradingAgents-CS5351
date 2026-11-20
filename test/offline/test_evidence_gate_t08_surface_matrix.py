@@ -19,24 +19,17 @@ Only the F-approved **applicable** matrix is covered — no unsupported permutat
 
 from __future__ import annotations
 
-import os
 from contextlib import nullcontext
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+# Mandatory offline tests: the CLI runtime is a required dependency. A missing
+# import must surface as a hard collection/execution failure, never a skip.
+from cli import run as run_mod
 from tradingagents.dataflows.symbols import safe_ticker_component
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.memory import TradingMemoryLog
-from tradingagents.reporting import _report_parts as report_parts
-
-try:
-    from cli import run as run_mod
-except ModuleNotFoundError:
-    run_mod = None
-
-pytestmark = pytest.mark.skipif(run_mod is None, reason="CLI runtime unavailable")
 
 TICKER = "NVDA"
 TRADE_DATE = "2026-01-10"
@@ -281,14 +274,27 @@ def _install(monkeypatch, tmp_path, state, *, save, show, html, memory_enabled):
     return h, buf, console, saved_dir
 
 
-def _expected_surfaces(state, *, save, html, memory_enabled):
-    """Independently compute the enabled authoritative surfaces BEFORE the run."""
-    surfaces = {"state_log", "cli_report_section"}  # CLI run always writes both
+def _completion_rating(state):
+    """The Gate-adjusted rating this run will publish (from the boundary)."""
+    from tradingagents.agents.rating import run_rating
+
+    return run_rating(state)
+
+
+def _expected_surfaces(*, save, html, memory_enabled):
+    """Independently compute the enabled authoritative surfaces BEFORE the run.
+
+    Based on the F-approved applicable product behaviour, not on observed files:
+    a CLI run always writes the state log and streams the CLI report section;
+    ``save`` adds complete_report.md + the per-section .md files (incl.
+    decision.md); ``html`` (with save) adds complete_report.html; memory adds a
+    memory log only when enabled.
+    """
+    surfaces = {"state_log", "cli_report_section"}
     if save:
+        # Complete report + the fixed decision surface that always carries the PM decision.
         surfaces.add("complete_report.md")
-        for _h, folder, written in report_parts(state):
-            for _agent, filename, _value in written:
-                surfaces.add(f"{folder}/{filename}")
+        surfaces.add("decision.md")
         if html:
             surfaces.add("complete_report.html")
     if memory_enabled:
@@ -296,34 +302,74 @@ def _expected_surfaces(state, *, save, html, memory_enabled):
     return surfaces
 
 
-def _actual_surfaces(h, saved_dir, tmp_path, *, save, html, memory_enabled):
-    actual = {"state_log"}  # record_decision always logs state in-window
-    if h["reports_dir"].exists() and any(h["reports_dir"].glob("*.md")):
+def _actual_surfaces(tmp_path, saved_dir, *, memory_enabled):
+    """Discover the surfaces ACTUALLY produced from files (never preset by flags)."""
+    actual = set()
+    log_dir = tmp_path / "results" / TICKER / "TradingAgentsStrategy_logs"
+    if log_dir.exists() and any(log_dir.glob("full_states_log_*.json")):
+        actual.add("state_log")
+    reports_root = tmp_path / "results" / safe_ticker_component(TICKER) / TRADE_DATE / "reports"
+    if reports_root.exists() and any(reports_root.glob("*.md")):
         actual.add("cli_report_section")
-    if save:
-        md = saved_dir / "complete_report.md"
-        if md.exists():
-            actual.add("complete_report.md")
-            for p in saved_dir.rglob("*.md"):
-                rel = p.relative_to(saved_dir).as_posix()
-                if rel != "complete_report.md":
-                    actual.add(rel)
-        if html and (saved_dir / "complete_report.html").exists():
-            actual.add("complete_report.html")
-    if (
-        memory_enabled
-        and (tmp_path / "memory.md").exists()
-        and (tmp_path / "memory.md").stat().st_size > 0
-    ):
+    if (saved_dir / "complete_report.md").exists():
+        actual.add("complete_report.md")
+    if (saved_dir / "complete_report.html").exists():
+        actual.add("complete_report.html")
+    if list(saved_dir.rglob("decision.md")) if saved_dir.exists() else False:
+        actual.add("decision.md")
+    mem = tmp_path / "memory.md"
+    if memory_enabled and mem.exists() and mem.stat().st_size > 0:
         actual.add("memory_log")
     return actual
 
 
+def _read_complete_report_rating(saved_dir):
+    """The authoritative rating line in complete_report.md: ``- Rating: X``."""
+    import re
+
+    text = (saved_dir / "complete_report.md").read_text(encoding="utf-8")
+    m = re.search(r"^- Rating:\s*(\S+)\s*$", text, re.MULTILINE)
+    return m.group(1) if m else None
+
+
+def _read_decision_md(saved_dir):
+    cands = list(saved_dir.rglob("decision.md"))
+    return cands[0].read_text(encoding="utf-8") if cands else None
+
+
+def _read_state_log_rating(tmp_path):
+    import json
+
+    p = (
+        tmp_path
+        / "results"
+        / TICKER
+        / "TradingAgentsStrategy_logs"
+        / f"full_states_log_{TRADE_DATE}.json"
+    )
+    return json.loads(p.read_text(encoding="utf-8"))["final_rating"]
+
+
+def _read_memory_rating(tmp_path):
+    import re
+
+    for ln in (tmp_path / "memory.md").read_text(encoding="utf-8").splitlines():
+        m = re.match(r"^\[[^|]+\|[^|]+\|\s*([^|]+?)\s*\|", ln)
+        if m:
+            return m.group(1)
+    return None
+
+
+def _read_html(saved_dir):
+    return (saved_dir / "complete_report.html").read_text(encoding="utf-8")
+
+
 # --------------------------- parameterized matrix ---------------------------
+# valid_buy, review_missing_news, conflict, checker-failure (recoverable)
 _VARIANTS = [
-    # id, final_rating, body, news, expected_effective
     ("valid_buy", "Buy", "**Rating**: Buy\n\nBuy NVDA.", "News: neutral.", "Buy"),
     ("review_missing_news", "Buy", "**Rating**: Buy\n\nBuy NVDA.", "", "REVIEW"),
+    ("conflict", "Buy", "**Rating**: Sell\n\nSell NVDA.", "News: neutral.", "REVIEW"),
 ]
 
 
@@ -336,7 +382,7 @@ def test_t08_surface_matrix(monkeypatch, tmp_path, variant, memory, html, save):
     _, final_rating, body, news, expected_eff = spec
     state = _state(final_rating, body, news)
 
-    expected = _expected_surfaces(state, save=save, html=html, memory_enabled=memory)
+    expected = _expected_surfaces(save=save, html=html, memory_enabled=memory)
     h, buf, console, saved_dir = _install(
         monkeypatch, tmp_path, state, save=save, show=False, html=html, memory_enabled=memory
     )
@@ -353,60 +399,84 @@ def test_t08_surface_matrix(monkeypatch, tmp_path, variant, memory, html, save):
         },
     )
 
-    actual = _actual_surfaces(h, saved_dir, tmp_path, save=save, html=html, memory_enabled=memory)
-
-    # (1)+(2) independent expected-vs-actual set equality (both non-empty).
+    actual = _actual_surfaces(tmp_path, saved_dir, memory_enabled=memory)
     assert actual == expected, f"expected {sorted(expected)} != actual {sorted(actual)}"
 
-    # (3) authoritative rating agreement across enabled surfaces.
     merged = h["merged"]
+    # Gate-adjusted in-memory state.
     assert merged["effective_rating"] == merged["final_rating"] == expected_eff
-    # state log written with the effective rating
-    import json
+    # Body bytes preserved in the finalized state.
+    assert merged["final_trade_decision"] == body
 
-    log = json.loads(
-        (
-            tmp_path
-            / "results"
-            / TICKER
-            / "TradingAgentsStrategy_logs"
-            / f"full_states_log_{TRADE_DATE}.json"
-        ).read_text(encoding="utf-8")
-    )
-    assert log["final_rating"] == expected_eff
-
-    # (4) decision.md reflects the PM body; HTML/report when enabled.
+    # Each enabled authoritative surface reports the EXACT rating.
+    assert _read_state_log_rating(tmp_path) == expected_eff, "state log rating"
     if save:
-        # folder name comes from report_parts; locate by filename generically
-        candidates = list(saved_dir.rglob("decision.md"))
-        assert candidates, "decision.md must be produced when save=True"
-        text = candidates[0].read_text(encoding="utf-8")
-        assert "Buy NVDA." in text  # body preserved (may be labelled on REVIEW)
+        assert _read_complete_report_rating(saved_dir) == expected_eff, "complete_report.md rating"
+        dtext = _read_decision_md(saved_dir)
+        assert dtext is not None, "decision.md must exist when save=True"
+        # Body preserved; on REVIEW it must be explicitly non-authoritative.
+        assert body.strip() in dtext, "decision.md must preserve the PM body"
+        if expected_eff == "REVIEW":
+            low = dtext.lower()
+            assert "unapproved" in low or "non-authoritative" in low or "withheld" in low, (
+                "REVIEW decision.md must label the original PM body non-authoritative"
+            )
         if html:
-            html_text = (saved_dir / "complete_report.html").read_text(encoding="utf-8")
-            assert expected_eff in html_text  # rating shown in HTML header area
+            html_text = _read_html(saved_dir)
+            # Header shows the exact authoritative rating.
+            assert f"Rating: {expected_eff}" in html_text or f">{expected_eff}<" in html_text, (
+                "HTML report must show the exact authoritative rating"
+            )
+            if expected_eff == "REVIEW":
+                low = html_text.lower()
+                assert "unapproved" in low or "non-authoritative" in low or "withheld" in low, (
+                    "REVIEW HTML must mark the retained PM body non-authoritative"
+                )
+    if memory:
+        assert _read_memory_rating(tmp_path) == expected_eff, "memory log rating"
 
-    # (5) disabled surfaces are not produced.
+    # Disabled surfaces are NOT produced (discovered from files, not flags).
     if not save:
         assert not (saved_dir / "complete_report.md").exists()
-        assert not list(saved_dir.rglob("*.md")) if saved_dir.exists() else True
+        assert not (list(saved_dir.rglob("decision.md")) if saved_dir.exists() else [])
     if not html:
         assert not (saved_dir / "complete_report.html").exists()
-
-    # (6) explicit memory-disabled behaviour / (7) temp-only when enabled.
-    if memory:
-        assert (tmp_path / "memory.md").exists()
-        assert any(ln.startswith("[") for ln in (tmp_path / "memory.md").read_text().splitlines())
-    else:
+    if not memory:
         assert not (tmp_path / "memory.md").exists()
 
 
-def test_default_user_memory_dir_untouched(monkeypatch, tmp_path):
-    """Memory enabled but pointed at tmp; the default user dir must not be written."""
-    state = _state("Buy", "Rating: Buy")
-    _install(monkeypatch, tmp_path, state, save=False, show=False, html=False, memory_enabled=True)
-    home = Path(os.path.expanduser("~")) / ".tradingagents"
-    before = {p for p in home.rglob("*") if p.is_file()} if home.exists() else set()
+def test_default_user_memory_dir_isolated(monkeypatch, tmp_path):
+    """Memory enabled but pointed at tmp; a sandboxed HOME default dir is untouched.
+
+    A path-set comparison alone can miss an in-place overwrite, so we also snapshot
+    file sizes/contents under a fake HOME default location and require NO change.
+    """
+    import hashlib
+
+    fake_home = tmp_path / "fakehome"
+    default_dir = fake_home / ".tradingagents"
+    default_dir.mkdir(parents=True)
+    (default_dir / "preexisting.md").write_text("[keep | me | Buy | pending]\n", encoding="utf-8")
+    monkeypatch.setenv("HOME", str(fake_home))
+    monkeypatch.setenv("TRADINGAGENTS_HOME", str(default_dir))
+
+    def snapshot(root):
+        out = {}
+        for p in root.rglob("*"):
+            if p.is_file():
+                out[str(p.relative_to(root))] = hashlib.sha256(p.read_bytes()).hexdigest()
+        return out
+
+    before = snapshot(default_dir)
+    _install(
+        monkeypatch,
+        tmp_path,
+        _state("Buy", "Rating: Buy"),
+        save=False,
+        show=False,
+        html=False,
+        memory_enabled=True,
+    )
     run_mod.run_analysis(
         checkpoint=False,
         flags={
@@ -418,13 +488,12 @@ def test_default_user_memory_dir_untouched(monkeypatch, tmp_path):
             "html": False,
         },
     )
-    after = {p for p in home.rglob("*") if p.is_file()} if home.exists() else set()
-    assert after == before, f"default user memory/log dir was written: {after - before}"
+    after = snapshot(default_dir)
+    assert after == before, (
+        f"default user memory dir was written/modified: {set(after) ^ set(before)}"
+    )
 
 
-# ---------------------------------------------------------------------------
-# CLI `show` is a real branch: it renders the GATED final_state to the terminal.
-# ---------------------------------------------------------------------------
 @pytest.mark.parametrize(
     "variant,final_rating,body,news,expected_eff",
     [
@@ -435,19 +504,28 @@ def test_default_user_memory_dir_untouched(monkeypatch, tmp_path):
 def test_t08_cli_show_renders_gated_state(
     monkeypatch, tmp_path, variant, final_rating, body, news, expected_eff
 ):
-    """show=True calls display_complete_report(final_state) with the GATE-ADJUSTED
-    state (save/show/html flags answered; no persistent artefact asserted here)."""
+    """show=True runs the REAL display_complete_report; capture its console output
+    and require the exact gated rating to appear (not a replaced stub)."""
     state = _state(final_rating, body, news)
     h, buf, console, saved_dir = _install(
         monkeypatch, tmp_path, state, save=False, show=True, html=False, memory_enabled=False
     )
 
-    shown = {}
+    # _install stubs display_complete_report; restore the REAL renderer for show.
+    import cli.display as _display_mod
 
-    def fake_display(fs):
-        shown["state"] = fs
+    monkeypatch.setattr(run_mod, "display_complete_report", _display_mod.display_complete_report)
 
-    monkeypatch.setattr(run_mod, "display_complete_report", fake_display)
+    # Use a REAL Rich Console writing to an in-memory buffer so the actual
+    # rendered report text (incl. the rating) is captured, not object reprs.
+    import io
+
+    from rich.console import Console as _RichConsole
+
+    import cli.display as display_mod
+
+    sink = io.StringIO()
+    monkeypatch.setattr(display_mod, "console", _RichConsole(file=sink, width=120, record=True))
 
     run_mod.run_analysis(
         checkpoint=False,
@@ -461,8 +539,7 @@ def test_t08_cli_show_renders_gated_state(
         },
     )
 
-    assert "state" in shown, "show=True must render the complete report"
-    assert shown["state"]["effective_rating"] == expected_eff
-    assert shown["state"]["final_rating"] == expected_eff
-    # No persistent save surfaces when save=False.
+    text = sink.getvalue()
+    assert text, "show=True must render the complete report to the terminal"
+    assert expected_eff in text, f"real renderer must show the gated rating {expected_eff}"
     assert not (saved_dir / "complete_report.md").exists()

@@ -22,14 +22,10 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
+# Mandatory offline tests: the CLI runtime is a required dependency. A missing
+# import must surface as a hard collection/execution failure, never a skip.
+from cli import run as run_mod
 from tests.test_graph_end_to_end import TRADE_DATE, ScriptedModel
-
-try:
-    from cli import run as run_mod
-except ModuleNotFoundError:
-    run_mod = None
-
-pytestmark = pytest.mark.skipif(run_mod is None, reason="CLI runtime unavailable")
 
 TICKER = "NVDA"
 

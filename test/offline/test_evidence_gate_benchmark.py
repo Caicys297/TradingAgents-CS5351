@@ -33,24 +33,24 @@ def _nearest_rank_p95(samples_ns: list[int]) -> int:
 
 
 def _baseline_ns() -> int:
-    """Harness baseline: the same fixture prep with the checker call omitted.
+    """Harness baseline that excludes BOTH fixture construction and the checker.
 
-    This is a no-op measurement used to estimate fixed overhead, so the reported
-    value is the *added* latency (checker cost over baseline), per the plan.
+    The fixture is built OUTSIDE the timed window in the measured path, so the
+    baseline must not time fixture construction either (the prior version did,
+    which corrupted the added-latency delta). It measures only the empty
+    timing harness overhead around the same (already-built) state value.
     """
     start = time.perf_counter_ns()
-    # Equivalent work that does NOT call the checker (a cheap stand-in for the
-    # caller-side prep) so the delta isolates the checker cost.
-    _ = complete_state("Buy")  # fixture construction, same as measured path
+    # No work: this isolates the perf_counter overhead so the delta measures the
+    # pure check_evidence() call added on top of it.
     return time.perf_counter_ns() - start
 
 
-def _measured_ns() -> int:
-    state = complete_state("Buy")
+def _measured_ns(state) -> int:
+    """Time ONLY the pure ``check_evidence()`` call on a pre-built fixture."""
     start = time.perf_counter_ns()
     result = check_evidence(state, ALL_ANALYSTS)
     delta = time.perf_counter_ns() - start
-    # correctness is enforced in the dedicated test below; keep the hot loop lean
     assert result.verdict == VERDICT_VALID
     return delta
 
@@ -78,14 +78,15 @@ def test_t16_pure_checker_p95_diagnostic():
     Always records and reports the p95; never fails CI on latency unless A/F
     approve enforcement. Blocking checks are only the structural invariants.
     """
+    fixed_state = complete_state("Buy")  # built ONCE, outside every timed window
     # warm-ups (not counted)
     for _ in range(WARMUPS):
-        _measured_ns()
+        _measured_ns(fixed_state)
 
     deltas: list[int] = []
     for _ in range(MEASURED):
         base = _baseline_ns()
-        measured = _measured_ns()
+        measured = _measured_ns(fixed_state)
         deltas.append(measured - base)
 
     # Structural blocking invariants (not a latency pass/fail):

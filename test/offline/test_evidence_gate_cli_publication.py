@@ -20,15 +20,11 @@ from types import SimpleNamespace
 
 import pytest
 
+# Mandatory offline tests: the CLI runtime is a required dependency. A missing
+# import must surface as a hard collection/execution failure, never a skip.
+from cli import run as run_mod
 from tradingagents.graph.trading_graph import TradingAgentsGraph
 from tradingagents.memory import TradingMemoryLog
-
-try:
-    from cli import run as run_mod
-except ModuleNotFoundError:
-    run_mod = None
-
-pytestmark = pytest.mark.skipif(run_mod is None, reason="CLI runtime unavailable")
 
 TICKER = "NVDA"
 TRADE_DATE = "2026-01-10"
@@ -133,6 +129,11 @@ def _stream_chunks(state):
     (the real ``values`` stream includes the full state on every step).
     """
     ident = {"company_of_interest": state["company_of_interest"], "trade_date": state["trade_date"]}
+    # A PM-originated assistant MESSAGE carrying the decision body, so the CLI
+    # message/display area (not just the report section) is exercised.
+    from langchain_core.messages import AIMessage
+
+    yield [AIMessage(content=state["final_trade_decision"], name="Portfolio Manager")], None
     yield (
         [],
         {
@@ -229,6 +230,15 @@ def _install(monkeypatch, tmp_path, *, final_state, markdown_failure=False):
         def record_decision(self, ticker, trade_date, final_state):
             harness["calls"].append("record_decision")
             harness["merged_final_state"] = final_state
+            # --- PRE-GATE snapshot (real boundary has NOT run yet) ---
+            ftk_md = harness["reports_dir"] / "final_trade_decision.md"
+            harness["pre_gate"] = {
+                "sections": dict(harness["buffer"].report_sections),
+                "messages": list(harness["buffer"].messages),
+                "final_trade_decision_md": (
+                    ftk_md.read_text(encoding="utf-8") if ftk_md.exists() else None
+                ),
+            }
             # Delegate to the REAL production completion boundary (in-window).
             boundary.record_decision(ticker, trade_date, final_state)
             # Capture last_completion inside the window (end_checkpoint clears it).
@@ -366,30 +376,31 @@ def test_cli_missing_evidence_review_non_authoritative(monkeypatch, tmp_path):
 # D — PM streaming safety (pre-gate buffering / markdown / ordinary sections)
 # ---------------------------------------------------------------------------
 def test_cli_pm_buffered_pre_gate_and_markdown_safe(monkeypatch, tmp_path):
-    body = "**Rating**: Buy\n\nSECRET BUY BODY."
+    """Real pre-Gate snapshot: no PM Buy body in the CLI message area, the PM
+    decision section, or the real-time final_trade_decision.md BEFORE the Gate."""
+    secret = "SECRET BUY BODY."
+    body = f"**Rating**: Buy\n\n{secret}"
     state = _state("Buy", body, news="")  # REVIEW
     h = _run(monkeypatch, tmp_path, state)
 
-    # Every pre-gate final_trade_decision section write must NOT contain the PM body.
-    ftk = _section_contents(h)
-    # Find the pre-gate writes (before the post-gate labelled publish).
-    pre_gate = [
-        c
-        for (s, c) in ftk
-        if "unapproved original content" not in c and "Portfolio Manager Decision" in c
-    ]
-    assert all("SECRET BUY BODY" not in c for c in pre_gate), pre_gate
+    pre = h["pre_gate"]
+    # (1) CLI message/display area: no PM decision body pre-Gate.
+    msg_text = "\n".join(str(m) for m in pre["messages"])
+    assert secret not in msg_text, "PM body leaked into the CLI message area pre-Gate"
+    # (2) PM decision/report section pre-Gate: only the marker, no body.
+    ftk_pre = pre["sections"].get("final_trade_decision")
+    assert ftk_pre is not None
+    assert secret not in ftk_pre, f"PM body leaked into the CLI section pre-Gate: {ftk_pre!r}"
+    # (3) real-time Markdown snapshot taken BEFORE the Gate must not contain the body.
+    md_pre = pre["final_trade_decision_md"]
+    assert md_pre is not None, "final_trade_decision.md must exist during streaming"
+    assert secret not in md_pre, f"PM body leaked into final_trade_decision.md pre-Gate: {md_pre!r}"
 
-    # Real-time Markdown file written during streaming must not contain the body
-    # pre-gate (only the marker); after the run it may contain it (labelled).
-    md = h["reports_dir"] / "final_trade_decision.md"
-    assert md.exists()
-    # At least one section update wrote only the marker.
-    assert any(
-        c.strip().endswith("Portfolio Manager Decision")
-        or c.strip().endswith("Portfolio Manager Decision\n")
-        for (s, c) in ftk
-    )
+    # After Gate, REVIEW: retained body is explicitly NON-AUTHORITATIVE (CLI section).
+    ftk_post = [c for (s2, c) in _section_contents(h) if "Portfolio Manager Decision" in c]
+    assert ftk_post, "PM decision section must be published post-gate"
+    labelled = [c for c in ftk_post if "unapproved original content" in c and secret in c]
+    assert labelled, "post-gate REVIEW body must be present AND labelled non-authoritative"
 
 
 def test_cli_ordinary_analyst_sections_stream(monkeypatch, tmp_path):
