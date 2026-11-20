@@ -597,57 +597,99 @@ def test_cli_state_log_failure_prevents_finalize(monkeypatch, tmp_path):
 # E — mid-stream failure after PM content, before Gate
 # ---------------------------------------------------------------------------
 def test_cli_midstream_failure_after_pm_no_authoritative_publication(monkeypatch, tmp_path):
-    """An exception during streaming (after PM text emitted, before Gate) must
-    publish no authoritative PM Buy/Sell, write no authoritative
-    final_trade_decision.md, and skip finalization/manifest."""
-    body = "**Rating**: Buy\n\nSECRET BUY BODY."
+    """A stream failure AFTER the real CLI consumes a metadata-tagged PM message and
+    PM section event, but BEFORE the Gate, must release NO authoritative PM Buy/Sell.
+
+    The fake stream yields the REAL PM message (with ``langgraph_node`` metadata) and
+    the PM risk-section chunk exactly as production does, waits until the CLI handler
+    has actually processed them (observed via the recording buffer), and only then
+    raises — so pre-Gate buffering of genuinely-consumed PM content is proven.
+    """
+    secret = "SECRET BUY BODY."
+    body = f"**Rating**: Buy\n\n{secret}"
     state = _state("Buy", body, news="")
     harness = _install(monkeypatch, tmp_path, final_state=state)
+    harness["calls"].clear()  # drop the graph_init/begin from install for clean assertion
 
-    # Patch the FakeGraph.stream_run to emit non-PM chunks, then raise before the
-    # run can reach record_decision (simulating a crash mid-stream).
+    buf = harness["buffer"]
+    reports_dir = harness["reports_dir"]
+    timeline = []  # every message/section event with the real .md content AT that write
+
+    real_add = buf.add_message
+    def wrapped_add(mtype, content):
+        real_add(mtype, content)
+        timeline.append({"kind": "message", "content": content})
+    monkeypatch.setattr(buf, "add_message", wrapped_add)
+
+    real_update = buf.update_report_section
+    def wrapped_update(section_name, content):
+        real_update(section_name, content)
+        f = reports_dir / f"{section_name}.md"
+        md = f.read_text(encoding="utf-8") if f.exists() else None
+        timeline.append({"kind": "section", "section": section_name, "content": content, "md": md})
+    monkeypatch.setattr(buf, "update_report_section", wrapped_update)
+
+    from langchain_core.messages import AIMessage
+    pm_msg = AIMessage(
+        content=body,
+        name="Portfolio Manager",
+        response_metadata={"langgraph_node": "Portfolio Manager"},
+    )
+    risk = dict(state["risk_debate_state"])
+    risk["final_trade_decision"] = body
+    ident = {"company_of_interest": TICKER, "trade_date": TRADE_DATE}
+
     from cli import run as run_mod_local
 
-    original_install_graph = run_mod_local.TradingAgentsGraph
-
-    class ExplodingGraph(original_install_graph):
+    class PmThenCrashGraph(run_mod_local.TradingAgentsGraph):
         def stream_run(self, st, **k):
+            # 1) A real-format PM MESSAGE (metadata-tagged) the CLI must consume.
+            yield [pm_msg], None
+            # 2) A PM risk/section event carrying the decision (CLI consumes it).
             yield (
                 [],
                 {
-                    "investment_debate_state": state["investment_debate_state"],
-                    "investment_plan": state["investment_plan"],
-                    "company_of_interest": TICKER,
-                    "trade_date": TRADE_DATE,
+                    **ident,
+                    "risk_debate_state": risk,
+                    "final_trade_decision": body,
+                    "market_report": state["market_report"],
+                    "sentiment_report": state["sentiment_report"],
+                    "news_report": state["news_report"],
+                    "fundamentals_report": state["fundamentals_report"],
+                    "final_rating": state.get("final_rating", ""),
                 },
             )
-            raise RuntimeError("simulated mid-stream crash")
+            # 3) The CLI has now processed both events; fail BEFORE record_decision.
+            raise RuntimeError("simulated mid-stream crash after PM consumption")
 
-    monkeypatch.setattr(run_mod_local, "TradingAgentsGraph", ExplodingGraph)
+    monkeypatch.setattr(run_mod_local, "TradingAgentsGraph", PmThenCrashGraph)
 
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="after PM consumption"):
         run_mod_local.run_analysis(
             checkpoint=False,
-            flags={
-                "ticker": TICKER,
-                "date": TRADE_DATE,
-                "analysts": ["market", "news"],
-                "save": True,
-                "show": False,
-                "html": True,
-            },
+            flags={"ticker": TICKER, "date": TRADE_DATE, "analysts": ["market", "news"],
+                   "save": True, "show": False, "html": True},
         )
 
-    # No record_decision / finalize: no authoritative publication or manifest.
+    # (1) The PM event was genuinely delivered AND processed by the CLI (the CLI
+    # buffer/update path observed the decision-bearing content before the crash).
+    assert any(e["kind"] == "section" and e.get("section") == "final_trade_decision"
+               for e in timeline), "CLI must have consumed the PM section event"
+    # (2) No authoritative Gate / finalization occurred.
     assert "record_decision" not in harness["calls"]
     assert "finalize" not in harness["calls"]
-    # No authoritative PM body in any report section written this run.
-    contents = [c for (s, c) in harness["buffer"].section_history if s == "final_trade_decision"]
-    assert all("SECRET BUY BODY" not in c for c in contents), contents
-    # No authoritative final_trade_decision.md containing the body.
-    md = harness["reports_dir"] / "final_trade_decision.md"
+    # (3) NO pre-crash event released the PM body in the message area, the PM
+    # section, or the real-time Markdown at that write (catches transient leaks).
+    for e in timeline:
+        if e["kind"] == "message":
+            assert secret not in str(e["content"]), f"PM body in message area before Gate: {e}"
+        if e["kind"] == "section" and e.get("section") == "final_trade_decision":
+            assert secret not in str(e["content"]), f"PM body in PM section before Gate: {e}"
+            if e["md"] is not None:
+                assert secret not in e["md"], f"PM body in final_trade_decision.md before Gate: {e}"
+    md = reports_dir / "final_trade_decision.md"
     if md.exists():
-        assert "SECRET BUY BODY" not in md.read_text(encoding="utf-8")
+        assert secret not in md.read_text(encoding="utf-8")
 
 
 def test_cli_o6_summary_and_report_options_ordering(monkeypatch, tmp_path):
