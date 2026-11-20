@@ -387,8 +387,10 @@ def test_ai_use_diff_failure_raises(monkeypatch, tmp_path):
 
 
 @pytest.mark.unit
-def test_ai_use_no_base_for_code_change_is_exit3(tmp_path):
+def test_ai_use_no_base_for_code_change_is_exit3(tmp_path, monkeypatch):
     mod = _load("check_ai_use_log")
+    monkeypatch.delenv("GITHUB_BASE_REF", raising=False)
+    monkeypatch.delenv("GITHUB_EVENT_NAME", raising=False)
     (tmp_path / "scripts").mkdir()
     assert mod.main(["--changed-file", "scripts/x.py", "--root", str(tmp_path)]) == 3
 
