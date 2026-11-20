@@ -146,15 +146,22 @@ jobs:
           git rev-parse --verify "origin/${GITHUB_BASE_REF}" >/dev/null
           git diff --name-only -z "origin/${GITHUB_BASE_REF}...HEAD" > changed_files.z
       - name: Verify pre-code approval for implementation changes
-        # Least privilege: reads evidence via gh (read-only token); does not run
-        # untrusted PR code. Machine records index evidence; the checker verifies
-        # the original GitHub evidence + pre-code ordering.
+        # Trust/bootstrap model (accurate): this job runs the checker FROM THE PR
+        # CHECKOUT with a read-only GITHUB_TOKEN (no write creds, no
+        # pull_request_target). A PR can therefore modify its own checker; the
+        # trust anchors are the protected `main` reviewers mapping
+        # (docs/test-approvals/reviewers.yaml) and the original GitHub evidence the
+        # checker resolves read-only. Not "untrusted code cannot run".
         env:
           GITHUB_BASE_REF: ${{ github.base_ref }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Batch id: the PR number is used as the batch key by convention; records
+          # must declare the same batch_id to bind approval to this PR.
+          BATCH_ID: "pr-${{ github.event.pull_request.number }}"
         run: >
           python scripts/check_test_approval.py
           --changed-from-file changed_files.z
+          --batch "$BATCH_ID"
           --repo "${{ github.repository }}"
           --pr "${{ github.event.pull_request.number }}"
 

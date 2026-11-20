@@ -1,35 +1,40 @@
 #!/usr/bin/env python3
-"""Pre-code Test Approval Gate checker (REQ-GOV-01/02).
+"""Pre-code Test Approval Gate checker (REQ-GOV-01/02) — hardened.
 
-Verifies that a code/prompt change batch had an **authorized pre-code approval**
-whose original evidence precedes the batch's earliest implementation commit
-(code, tests, fixtures, or workflow), matches the approved plan version/SHA,
-requirement & case IDs, and allowed/excluded files — for the Registry reviewer
-roles.
+Enforces the A-confirmed rules:
+- Trusted reviewer identity: GitHub logins are bound to roles by a reviewed
+  source (``docs/test-approvals/reviewers.yaml``); the record's declared role is
+  NOT trusted. The original evidence author must map to the authorized role.
+- Implementers are identified from actual batch evidence (evidence author /
+  recorded implementers) — self-approval is rejected.
+- Batch binding: a historical record does not authorize an unrelated PR. The
+  record declares a ``batch_id``; it must match the requested batch, and the
+  record's allowed files must cover **every** applicable implementation file in
+  the batch.
+- Both a test-plan approval AND an execution-plan approval are required (one
+  original record may approve both), unless an evidence-backed delegation covers
+  one.
+- Approval meaning: the original evidence body must actually reference the plan
+  SHA/version (or an authorized human binding record explicitly references the
+  original evidence + approved fields). Non-empty JSON fields are insufficient.
+  A later PR code review (even APPROVED) is not pre-code approval.
+- Time/history: compares approval time to the earliest implementation commit
+  touching applicable files (author date), not merely the first topological log
+  entry; rejects unavailable/ambiguous history; fails if no implementation commit
+  is found despite applicable changes.
 
-Trust model:
-- Machine-readable records (``docs/test-approvals/*.json``) only *index* genuine
-  GitHub evidence (a review/comment id + author + original timestamp). They
-  cannot grant approval themselves; the checker resolves the evidence via the
-  GitHub API (or a fixture directory for tests) and validates it.
-- Reviewer roles come from the Registry (``approval_roles``): O2/O6 test plans ->
-  A; O1/O3/O4/O5 -> F; execution plans -> A. Implementer self-approval is
-  rejected.
-- Later PR code-review approval does NOT authorize pre-code implementation.
-- Missing / late / unauthorized / mismatched / unverifiable / API-incomplete
-  evidence fails with a specific reason.
-- A WeChat original may be preserved, but a GitHub binding must honestly keep the
-  original message time; the binding time cannot masquerade as the approval time.
+Trust/bootstrap honesty (workflow): the CI job runs this checker from the PR
+checkout with a read-only GitHub token. Minimal privilege is kept (no write
+creds, no pull_request_target). This DOES mean a PR could modify the checker in
+its own tree; the trust anchor is the protected ``main`` reviewers mapping + the
+original GitHub evidence. The job's description must not claim the PR cannot
+change the checker.
 
 Usage:
-    python scripts/check_test_approval.py --changed-from-file changed_files.z \
-        [--repo OWNER/NAME] [--pr N] [--root .] [--api-fixture-dir DIR]
+    python scripts/check_test_approval.py --changed-from-file F --batch ID \
+        [--repo R] [--pr N] [--root .] [--api-fixture-dir DIR] [--base-ref B]
 
-Exit codes:
-    0  a valid authorized pre-code approval covers this batch (or not applicable:
-       pure documentation)
-    1  approval evidence missing/late/unauthorized/mismatched/unverifiable
-    2  execution/internal error (API unavailable, bad record format)
+Exit codes: 0 valid; 1 evidence invalid; 2 execution/API/format error.
 """
 
 from __future__ import annotations
@@ -42,35 +47,54 @@ import subprocess
 import sys
 from pathlib import Path
 
-# Registry reviewer roles (test plans). Execution plans always by A.
-TEST_PLAN_REVIEWER = {
-    "O1": "F", "O2": "A", "O3": "F", "O4": "F", "O5": "F", "O6": "A",
-}
+try:
+    import yaml
+except ImportError:  # pragma: no cover
+    yaml = None
+
+TEST_PLAN_REVIEWER = {"O1": "F", "O2": "A", "O3": "F", "O4": "F", "O5": "F", "O6": "A"}
 EXECUTION_PLAN_REVIEWER = "A"
 OWNER_ROLES = {"A", "B", "C", "D", "E", "F"}
-
 RECORDS_DIR = "docs/test-approvals"
+REVIEWERS_FILE = "docs/test-approvals/reviewers.yaml"
 
-CODE_PREFIXES = (
-    "tradingagents/", "cli/", "scripts/", "src/",
-    ".github/workflows/", "test/", "tests/", "prompts/",
-)
+CODE_PREFIXES = ("tradingagents/", "cli/", "scripts/", "src/",
+                 ".github/workflows/", "test/", "tests/", "prompts/")
 DOC_PREFIXES = ("docs/", "transcripts/")
 DOC_EXACT = {"README.md", "AGENTS.md", "Prompt.md", "Report.md"}
 
 
 class ExecutionError(RuntimeError):
-    """API/history/format problem -> exit 2."""
+    pass
 
 
-# ----------------------------------------------------------------- API abstraction
+# --------------------------------------------------------------- trusted identity
+def load_reviewers(root: Path) -> dict[str, str]:
+    """login -> role, from the reviewed mapping file. Missing/empty -> error."""
+    p = root / REVIEWERS_FILE
+    if not p.is_file():
+        raise ExecutionError(f"trusted reviewers mapping not found: {REVIEWERS_FILE}")
+    if yaml is None:
+        raise ExecutionError("PyYAML required to read reviewers mapping")
+    data = yaml.safe_load(p.read_text()) or {}
+    logins = data.get("logins", {})
+    if not isinstance(logins, dict) or not logins:
+        raise ExecutionError("reviewers mapping has no logins")
+    mapping: dict[str, str] = {}
+    for login, role in logins.items():
+        role = str(role).upper()
+        if role not in OWNER_ROLES:
+            raise ExecutionError(f"reviewers mapping has invalid role {role!r} for {login}")
+        mapping[str(login)] = role
+    return mapping
+
+
+# --------------------------------------------------------------- API abstraction
 class GitHubAPI:
-    """Resolves original evidence. Override in tests or via --api-fixture-dir."""
-
     def __init__(self, repo: str | None):
         self.repo = repo
 
-    def _gh(self, *args: str) -> dict:  # pragma: no cover - needs network
+    def _gh(self, *args: str) -> dict:  # pragma: no cover - network
         proc = subprocess.run(["gh", *args], capture_output=True, text=True)
         if proc.returncode != 0:
             raise ExecutionError(f"gh api failed: {proc.stderr.strip()[:300]}")
@@ -84,8 +108,6 @@ class GitHubAPI:
 
 
 class FixtureAPI:
-    """Offline fixture-backed resolver: reads <comments>/*.json and <reviews>/*.json."""
-
     def __init__(self, root: Path):
         self.comments = root / "comments"
         self.reviews = root / "reviews"
@@ -103,15 +125,12 @@ class FixtureAPI:
         return json.loads(p.read_text())
 
 
-def make_api(repo: str | None, fixture_dir: Path | None):
-    if fixture_dir is not None:
-        return FixtureAPI(fixture_dir)
-    return GitHubAPI(repo)
+def make_api(repo, fixture_dir):
+    return FixtureAPI(fixture_dir) if fixture_dir is not None else GitHubAPI(repo)
 
 
-# ----------------------------------------------------------------- git helpers
+# --------------------------------------------------------------- git helpers
 def _parse_iso(ts: str) -> _dt.datetime:
-    # GitHub returns e.g. 2026-11-16T15:02:47Z
     return _dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
 
 
@@ -122,162 +141,214 @@ def _git(root: Path, *args: str) -> str:
     return proc.stdout.strip()
 
 
-def earliest_implementation_commits(root: Path, base_ref: str, allowed: set[str]) -> list[tuple[str, str, str]]:
-    """Return [(sha, iso_time, path)] for the earliest commit touching any
-    implementation (code/test/fixture/workflow) path within origin/<base>..HEAD.
-
-    Implementation = a path under CODE_PREFIXES (docs/transcript-only commits are
-    not implementation). Preserves original provenance: uses the commit's own
-    author/committer date from history; a later rebase/cherry-pick does not move
-    the original author date, which is what we compare on.
-    """
-    try:
-        log = _git(root, "log", "--reverse", "--format=%H%x1f%aI%x1f%s",
-                   f"origin/{base_ref}..HEAD")
-    except ExecutionError as exc:
-        # base ref missing -> history incomplete
-        raise ExecutionError(f"cannot read history for origin/{base_ref}..HEAD") from exc
-    if not log:
-        return []
-    out: list[tuple[str, str, str]] = []
-    for line in log.splitlines():
-        parts = line.split("\x1f")
-        if len(parts) != 3:
-            continue
-        sha, iso, _subject = parts
-        files = _git(root, "show", "--name-only", "--format=", "-z", sha)
-        paths = [p for p in files.split("\x00") if p]
-        if any(_is_implementation_path(p) for p in paths):
-            # record the first implementation path for context
-            impl = next(p for p in paths if _is_implementation_path(p))
-            out.append((sha, iso, impl))
-    return out
-
-
-def _is_implementation_path(p: str) -> bool:
-    if p in DOC_EXACT:
-        return False
-    if p.startswith(DOC_PREFIXES):
+def _is_implementation(p: str) -> bool:
+    if p in DOC_EXACT or p.startswith(DOC_PREFIXES):
         return False
     return p.startswith(CODE_PREFIXES)
 
 
-# ----------------------------------------------------------------- record loading
+def earliest_impl_for_files(root: Path, base_ref: str, applicable: set[str]) -> tuple[str, str] | None:
+    """Earliest (author-iso, sha) among commits touching any applicable file.
+
+    Uses ``git log --format=%H %aI -- <paths>`` so we get the earliest commit that
+    touched the *batch's* files (not merely the first topological entry). Raises on
+    unavailable history.
+    """
+    if not applicable:
+        return None
+    try:
+        out = _git(root, "log", "--reverse", "--format=%H%x1f%aI", f"origin/{base_ref}..HEAD",
+                   "--", *sorted(applicable))
+    except ExecutionError as exc:
+        raise ExecutionError(f"cannot read history for origin/{base_ref}..HEAD: {exc}") from exc
+    lines = [ln for ln in out.splitlines() if ln.strip()]
+    if not lines:
+        return None
+    sha, iso = lines[0].split("\x1f", 1)
+    return iso, sha
+
+
+# --------------------------------------------------------------- records
 def load_records(root: Path) -> list[dict]:
     d = root / RECORDS_DIR
-    records: list[dict] = []
+    out: list[dict] = []
     if not d.is_dir():
-        return records
+        return out
     for p in sorted(d.glob("*.json")):
         try:
-            records.append({"__path": str(p.relative_to(root)), **json.loads(p.read_text())})
+            out.append({"__path": str(p.relative_to(root)), **json.loads(p.read_text())})
         except json.JSONDecodeError as exc:
             raise ExecutionError(f"malformed approval record {p}: {exc}") from exc
-    return records
+    return out
 
 
-# ----------------------------------------------------------------- validation
-def _applicable(changed: list[str]) -> bool:
-    return any(_is_implementation_path(p) for p in changed)
+def _applicable(changed: list[str]) -> set[str]:
+    return {p for p in changed if _is_implementation(p)}
 
 
-def _feature_of(record: dict) -> str:
-    feat = str(record.get("feature", "")).strip()
-    return feat[:2].upper() if feat else ""
+def _feature(record: dict) -> str:
+    f = str(record.get("feature", "")).strip()
+    return f[:2].upper() if f else ""
 
 
-def validate_record(record: dict, api, pr: int | None, earliest_iso: str | None) -> list[str]:
-    """Return list of problems for one record (empty = valid)."""
-    problems: list[str] = []
-    feature = _feature_of(record)
-    role = TEST_PLAN_REVIEWER.get(feature)
-    if role is None:
-        problems.append(f"unknown feature {record.get('feature')!r}; cannot resolve reviewer role")
-        return problems
-
-    # Required structural fields (a machine record is an index, not approval).
-    for field in ("approval_kind", "evidence", "plan_sha", "plan_version",
-                  "requirement_ids", "approved_test_ids",
-                  "allowed_files", "approval_time"):
-        if not record.get(field):
-            problems.append(f"missing field: {field}")
-    if problems:
-        return problems
-
-    # Resolve original evidence.
-    ev = record["evidence"]
-    if ev.get("type") == "issue_comment":
-        try:
-            original = api.get_issue_comment(int(ev["id"]))
-        except ExecutionError as exc:
-            problems.append(f"evidence unverifiable: {exc}")
-            return problems
-        author = original.get("user", {}).get("login", "")
-        otime = original.get("created_at", "")
-    elif ev.get("type") == "review":
+# --------------------------------------------------------------- validation
+def _resolve_evidence(record: dict, api, pr: int | None) -> tuple[str, str, str]:
+    """Return (author_login, original_iso, body) for the record's evidence."""
+    ev = record.get("evidence") or {}
+    etype = ev.get("type")
+    if etype == "issue_comment":
+        o = api.get_issue_comment(int(ev["id"]))
+        return o.get("user", {}).get("login", ""), o.get("created_at", ""), o.get("body", "")
+    if etype == "review":
         if pr is None:
-            problems.append("review evidence requires --pr")
-            return problems
+            raise ExecutionError("review evidence requires --pr")
+        o = api.get_review(pr, int(ev["id"]))
+        # A review's state APPROVED alone is not pre-code approval; caller checks body.
+        return o.get("user", {}).get("login", ""), o.get("submitted_at", ""), o.get("body", "")
+    raise ExecutionError(f"unknown evidence type {etype!r}")
+
+
+def _covers_all(allowed: list[str], applicable: set[str]) -> list[str]:
+    """Return applicable files NOT covered by any allowed glob/prefix/exact."""
+    missing = []
+    for f in applicable:
+        ok = False
+        for a in allowed:
+            if a.endswith("/") and f.startswith(a):
+                ok = True
+            elif "*" in a:
+                import fnmatch
+                if fnmatch.fnmatch(f, a):
+                    ok = True
+            elif f == a:
+                ok = True
+        if not ok:
+            missing.append(f)
+    return missing
+
+
+def validate_batch(records, api, pr, batch_id, applicable, reviewers, earliest) -> list[str]:
+    """Validate the whole batch: require BOTH kinds, batch/scope binding, meaning."""
+    problems: list[str] = []
+
+    # Collect valid-ish records for this batch, per kind.
+    test_ok = None
+    exec_ok = None
+    for rec in records:
+        rp = rec.get("__path", "<record>")
+        if rec.get("batch_id") != batch_id:
+            continue
+        feature = _feature(rec)
+        role_needed = TEST_PLAN_REVIEWER.get(feature)
+        if role_needed is None:
+            problems.append(f"{rp}: unknown feature {rec.get('feature')!r}")
+            continue
         try:
-            original = api.get_review(pr, int(ev["id"]))
+            author, otime, body = _resolve_evidence(rec, api, pr)
         except ExecutionError as exc:
-            problems.append(f"evidence unverifiable: {exc}")
-            return problems
-        author = original.get("user", {}).get("login", "")
-        otime = original.get("submitted_at", "")
-    else:
-        problems.append(f"unknown evidence type {ev.get('type')!r}")
-        return problems
+            problems.append(f"{rp}: evidence unverifiable: {exc}")
+            continue
+        role = reviewers.get(author)
+        if role is None:
+            problems.append(f"{rp}: evidence author {author!r} is not an authorized reviewer")
+            continue
+        if not otime:
+            problems.append(f"{rp}: evidence has no original timestamp")
+            continue
 
-    # Evidence author must be a real GitHub user and match the record if declared.
-    if not author:
-        problems.append("evidence has no author")
-    if ev.get("author") and author and str(ev["author"]) != author:
-        problems.append(
-            f"evidence author {author!r} does not match record author {ev.get('author')!r}"
-        )
+        kinds = rec.get("approval_kinds") or ([rec.get("approval_kind")] if rec.get("approval_kind") else [])
+        kinds = [k for k in kinds if k]
 
-    # Reviewer role / authorization.
-    reviewer_role = str(ev.get("reviewer_role", "")).strip()
-    if reviewer_role not in OWNER_ROLES:
-        problems.append("evidence reviewer_role not a known role")
-    if record["approval_kind"] == "test_plan" and reviewer_role != role:
-        problems.append(f"unauthorized reviewer: test plan for {feature} must be reviewed by {role}, got {reviewer_role!r}")
-    if record["approval_kind"] == "execution_plan" and reviewer_role != EXECUTION_PLAN_REVIEWER:
-        problems.append(f"unauthorized reviewer: execution plan must be reviewed by {EXECUTION_PLAN_REVIEWER}, got {reviewer_role!r}")
+        # Meaning: evidence body must reference plan sha AND version.
+        plan_sha = str(rec.get("plan_sha", ""))
+        plan_ver = str(rec.get("plan_version", ""))
+        is_delegation = bool(rec.get("delegation"))
+        if plan_sha and plan_sha[:7] not in body and plan_sha not in body:
+            problems.append(f"{rp}: evidence body does not reference approved plan_sha {plan_sha!r}")
+            continue
+        if (not is_delegation) and plan_ver and plan_ver not in body:
+            problems.append(f"{rp}: evidence body does not reference approved plan_version {plan_ver!r}")
+            continue
+        if is_delegation:
+            # delegation records are only used by _delegated(); skip kind handling
+            continue
 
-    # Implementer cannot self-approve.
-    if record.get("implementer") and str(record["implementer"]) == ev.get("reviewer_role"):
-        problems.append("self-approval: implementer equals approver role")
+        # Time: original approval must precede earliest impl for applicable files.
+        if earliest is not None and _parse_iso(otime) >= _parse_iso(earliest[0]):
+            problems.append(f"{rp}: late approval {otime} not before first impl {earliest[0]}")
+            continue
 
-    # Original timestamp present and matches the record (no backdating).
-    if not otime:
-        problems.append("evidence has no original timestamp")
-    else:
-        try:
-            if _parse_iso(otime) != _parse_iso(record["approval_time"]):
-                problems.append(
-                    f"approval_time {record['approval_time']} does not match original evidence time {otime}"
-                )
-        except (ValueError, AttributeError):
-            problems.append("unparseable timestamp")
+        # Scope: allowed files must cover every applicable file; no exclusion hit.
+        allowed = [str(a) for a in rec.get("allowed_files", [])]
+        excluded = [str(a) for a in rec.get("excluded_files", [])]
+        import fnmatch
+        for f in applicable:
+            for ex in excluded:
+                if (ex.endswith("/") and f.startswith(ex)) or fnmatch.fnmatch(f, ex) or f == ex:
+                    problems.append(f"{rp}: applicable file {f} is inside approved exclusions ({ex})")
+        missing = _covers_all(allowed, applicable)
+        if missing:
+            problems.append(f"{rp}: approved scope does not cover applicable file(s): {missing}")
 
-    # Pre-code ordering: approval must precede earliest implementation.
-    if earliest_iso is not None and otime:
-        try:
-            if _parse_iso(otime) >= _parse_iso(earliest_iso):
-                problems.append(
-                    f"late approval: approval {otime} is not before first implementation {earliest_iso}"
-                )
-        except ValueError:
-            pass
+        # Authorization per kind + self-approval + delegation.
+        implementers = set(rec.get("implementers", [])) | {x for x in [rec.get("implementer")] if x}
+        if author in implementers:
+            problems.append(f"{rp}: self-approval (evidence author {author} is an implementer)")
+            continue
 
+        for kind in kinds:
+            if kind == "test_plan":
+                ok = (role == role_needed) or _delegated(
+                    records, api, pr, reviewers, batch_id, feature, "test_plan", plan_sha)
+                if ok:
+                    test_ok = rec
+                else:
+                    problems.append(f"{rp}: test_plan for {feature} must be reviewed by {role_needed} (or a recorded delegation); author role {role!r}")
+            elif kind == "execution_plan":
+                ok = (role == EXECUTION_PLAN_REVIEWER) or _delegated(
+                    records, api, pr, reviewers, batch_id, feature, "execution_plan", plan_sha)
+                if ok:
+                    exec_ok = rec
+                else:
+                    problems.append(f"{rp}: execution_plan must be reviewed by {EXECUTION_PLAN_REVIEWER} (or a recorded delegation); author role {role!r}")
+            else:
+                problems.append(f"{rp}: unknown approval kind {kind!r}")
+
+    if test_ok is None:
+        problems.append("missing required test-plan approval for this batch")
+    if exec_ok is None:
+        problems.append("missing required execution-plan approval for this batch")
     return problems
 
 
-def main(argv: list[str] | None = None) -> int:
+def _delegated(records, api, pr, reviewers, batch_id, feature, kind, plan_sha) -> bool:
+    """True if a separate delegation record authorizes this kind for this batch."""
+    for rec in records:
+        d = rec.get("delegation")
+        if not d:
+            continue
+        if d.get("batch_id") != batch_id or d.get("kind") != kind:
+            continue
+        if d.get("plan_sha") and plan_sha and d["plan_sha"][:7] != plan_sha[:7]:
+            continue
+        try:
+            author, otime, body = _resolve_evidence(rec, api, pr)
+        except ExecutionError:
+            return False
+        role = reviewers.get(author)
+        # A delegation must be granted by an authorized A (or the role that owns it).
+        if role != "A":
+            return False
+        if d.get("to_role") != ("F" if kind == "test_plan" else EXECUTION_PLAN_REVIEWER):
+            return False
+        # The delegation evidence must reference the grantee/scope.
+        return not (d.get("plan_sha") and d["plan_sha"][:7] not in body and d["plan_sha"] not in body)
+
+
+def main(argv=None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--changed-from-file", type=Path, required=True)
+    parser.add_argument("--batch", required=True)
     parser.add_argument("--repo", default=None)
     parser.add_argument("--pr", type=int, default=None)
     parser.add_argument("--root", type=Path, default=Path("."))
@@ -286,56 +357,52 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     root = args.root.resolve()
-    raw = args.changed_from_file.read_bytes()
-    changed = [p.decode("utf-8", "replace") for p in raw.split(b"\x00") if p]
-
-    if not _applicable(changed):
-        print("OK: no implementation change in this batch; Test Approval gate not applicable")
+    changed = [p.decode("utf-8", "replace") for p in args.changed_from_file.read_bytes().split(b"\x00") if p]
+    applicable = _applicable(changed)
+    if not applicable:
+        print("OK: no implementation change; Test Approval gate not applicable")
         return 0
 
-    records = load_records(root)
-    if not records:
-        print("TEST APPROVAL FAILED: implementation change with no approval record "
-              f"under {RECORDS_DIR}/", file=sys.stderr)
-        return 1
-
-    base_ref = args.base_ref or os.environ.get("GITHUB_BASE_REF", "")
-    earliest_iso = None
-    if not base_ref:
-        print("ERROR: no base ref to compare approval against first implementation",
-              file=sys.stderr)
-        return 2
     try:
-        earliest = earliest_implementation_commits(root, base_ref, set())
+        reviewers = load_reviewers(root)
+        records = load_records(root)
     except ExecutionError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
-    if earliest:
-        earliest_iso = earliest[0][1]
+
+    if not records:
+        print("TEST APPROVAL FAILED: implementation change but no approval records", file=sys.stderr)
+        return 1
+
+    base_ref = args.base_ref or os.environ.get("GITHUB_BASE_REF", "")
+    if not base_ref:
+        print("ERROR: no base ref for history comparison", file=sys.stderr)
+        return 2
+    try:
+        earliest = earliest_impl_for_files(root, base_ref, applicable)
+    except ExecutionError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
+    if earliest is None:
+        # applicable files changed but no impl commit found -> do not silently pass
+        print("TEST APPROVAL FAILED: applicable files changed but no implementation "
+              "commit found in origin/base..HEAD (ambiguous history)", file=sys.stderr)
+        return 1
 
     api = make_api(args.repo, args.api_fixture_dir)
+    try:
+        problems = validate_batch(records, api, args.pr, args.batch, applicable, reviewers, earliest)
+    except ExecutionError as exc:
+        print(f"ERROR: {exc}", file=sys.stderr)
+        return 2
 
-    all_problems: list[str] = []
-    any_valid = False
-    for rec in records:
-        try:
-            problems = validate_record(rec, api, args.pr, earliest_iso)
-        except ExecutionError as exc:
-            print(f"ERROR validating {rec.get('__path')}: {exc}", file=sys.stderr)
-            return 2
-        if problems:
-            all_problems.extend(f"{rec.get('__path')}: {p}" for p in problems)
-        else:
-            any_valid = True
-
-    if any_valid:
-        print("OK: authorized pre-code approval verified for this batch")
-        return 0
-
-    print("TEST APPROVAL FAILED:", file=sys.stderr)
-    for p in all_problems:
-        print(f"  - {p}", file=sys.stderr)
-    return 1
+    if problems:
+        print("TEST APPROVAL FAILED:", file=sys.stderr)
+        for p in problems:
+            print(f"  - {p}", file=sys.stderr)
+        return 1
+    print(f"OK: batch {args.batch} has valid pre-code test-plan + execution-plan approval")
+    return 0
 
 
 if __name__ == "__main__":

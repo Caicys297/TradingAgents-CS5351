@@ -50,3 +50,34 @@ generalized to later O2 or CI batches.
 Net push diff (`before..after`) is **not** per-commit verification; it reports the
 aggregate changed paths of the push. Per-commit verification remains an open
 A/F decision for REQ-GOV-07.
+
+## Hardening (second pass)
+
+The checker now enforces, not merely lists:
+- **Trusted identity** via `docs/test-approvals/reviewers.yaml` (login→role). The
+  record's declared role is ignored; the original evidence author's real login is
+  mapped to a role. Implementers come from batch evidence; self-approval rejected.
+- **Batch binding**: records declare `batch_id`; the job uses `pr-<number>`.
+  Allowed files must cover every applicable implementation file; excluded files
+  are rejected. A historical record cannot authorize a different PR.
+- **Both kinds required**: test-plan approval (role per Registry, or delegation)
+  AND execution-plan approval (A, or delegation). One record may approve both.
+  Removed the "any valid record passes the PR" shortcut.
+- **Meaning/immutability**: the original evidence **body** must reference the
+  approved `plan_sha` and `plan_version`. A review `state=APPROVED` on a later PR
+  is not pre-code approval.
+- **Delegation**: evidence-backed only (granting A's original comment references
+  the scope); default roles unchanged. Validated against the real O2 Stage-2
+  A→F example (PR #18 comments `7004478311` / review `5972069186`, `aa9fda60`,
+  v0.4) — scoped to that batch, not all O2.
+- **History**: earliest implementation commit is computed over the batch's
+  applicable files (`git log ... -- <paths>`), not the first topological entry;
+  unavailable/ambiguous history → error; no impl commit despite applicable
+  changes → failure.
+
+## Workflow honesty (corrected)
+The `test approval` job runs the checker **from the PR checkout** with a
+read-only `GITHUB_TOKEN` (no write creds, no `pull_request_target`). A PR can
+therefore modify its own checker; trust anchors are the protected `main`
+reviewers mapping and the original read-only-resolved GitHub evidence. The job
+comment no longer claims the PR cannot change its checker.
