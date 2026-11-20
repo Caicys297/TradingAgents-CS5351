@@ -1,0 +1,4 @@
+{
+  "_policy": "Existing findings accepted at baseline; owners/remediation/exception approval are recorded separately and reviewed by A/C. New High/Critical IDs block. This file must not be widened by a PR's own changes.",
+  "findings": []
+}

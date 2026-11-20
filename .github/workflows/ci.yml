@@ -5,6 +5,10 @@ on:
     branches: [main, 'v[0-9]+.[0-9]+.[0-9]+']
   pull_request:
 
+permissions:
+  contents: read
+  pull-requests: read
+
 concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
@@ -65,3 +69,82 @@ jobs:
         # The repo is fully clean under the strict select, so we lint everything
         # (generated results/ is excluded via pyproject extend-exclude).
         run: ruff check .
+
+  requirements-schema:
+    name: requirements schema
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install validation deps
+        run: |
+          python -m pip install --upgrade pip
+          pip install "PyYAML==6.0.3" "jsonschema==4.26.0"
+      - name: Validate requirements registry
+        run: python scripts/validate_requirements.py
+
+  type-check:
+    name: type check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install (dev + pinned type tool)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install "mypy==1.18.2" "types-PyYAML==6.0.12.20250915"
+      - name: Check for new type diagnostics vs baseline
+        run: python scripts/typecheck.py
+
+  dependency-audit:
+    name: dependency audit
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install (dev + pinned scanner) into the audited env
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+          pip install "pip-audit==2.9.0"
+      - name: Audit installed environment (direct + transitive)
+        run: python scripts/dep_audit.py
+
+  ai-use-log:
+    name: ai-use log
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Determine changed files
+        id: changed
+        # Compare the PR's changed files to the merge base (a PR must not be able
+        # to bypass by only touching the log). Use the three-dot merge-base diff.
+        run: |
+          git fetch --no-tags origin "${{ github.base_ref }}" || true
+          base="origin/${{ github.base_ref }}"
+          changed=$(git diff --name-only "$base"...HEAD)
+          printf 'changed=%s\n' "$(echo "$changed" | tr '\n' ' ')" > "$GITHUB_OUTPUT"
+          echo "Changed files:"; echo "$changed"
+      - name: Check AI-use evidence for code/prompt changes
+        # Skip cleanly only when the diff proves no code/prompt change.
+        run: |
+          changed="${{ steps.changed.outputs.changed }}"
+          if ! echo "$changed" | grep -Eq '(^| )(tradingagents/|cli/|scripts/|prompts/|\.github/workflows/|test/)'; then
+            echo "No code/prompt changes in this PR; AI-use gate not applicable."
+            exit 0
+          fi
+          args=""; for f in $changed; do args="$args --changed-file $f"; done
+          python scripts/check_ai_use_log.py $args
