@@ -212,8 +212,18 @@ def _o5_batch_id(request: MacroNewsRequest, candidates: list[MacroNewsCandidate]
 
 
 class O5InvariantError(ValueError):
-    def __init__(self, invariant: str):
+    """An invariant failed after selection; the batch is suppressed.
+
+    Carries the batch identity and the pre-suppression selected count so the
+    caller can emit truthful V-INVARIANT evidence instead of discarding what it
+    already knows.
+    """
+
+    def __init__(self, invariant: str, *, batch_id: str | None = None,
+                 pre_suppression_selected_count: int = 0):
         self.invariant = invariant
+        self.batch_id = batch_id
+        self.pre_suppression_selected_count = pre_suppression_selected_count
         super().__init__(invariant)
 
 
@@ -257,16 +267,28 @@ def _select_o5_batch(
 ) -> tuple[SelectorResult, str]:
     candidates = [_map_news_dict_to_candidate(article) for article in articles]
     result = select_macro_news(candidates, request)
-    _check_o5_invariants(candidates, request, result)
-    return result, _o5_batch_id(request, candidates)
+    # The batch identity is known before the invariant check, so a violation can
+    # report it rather than losing it.
+    batch_id = _o5_batch_id(request, candidates)
+    try:
+        _check_o5_invariants(candidates, request, result)
+    except O5InvariantError as exc:
+        raise O5InvariantError(
+            exc.invariant,
+            batch_id=batch_id,
+            pre_suppression_selected_count=len(result.selected),
+        ) from exc
+    return result, batch_id
 
 
 def _o5_empty_kind(result: SelectorResult) -> str:
     """Pick the V-FILTERED-EMPTY ``empty_kind`` for this batch.
 
-    All-valid-but-all-irrelevant input maps to ``ALL_IRRELEVANT``: that is the
-    existing Interface section 4 enum member describing this cause exactly, so
-    no enum or public field is added.
+    ``ALL_IRRELEVANT`` is used only when candidates exist, filtering completed
+    normally, and every candidate was irrelevant (D decision). It is never used
+    for FILTER_UNAVAILABLE or LIMIT_ZERO, which are separate variants. The enum
+    member already exists in Interface section 4; no enum or public field is
+    added.
     """
     codes = {item.reason_code for item in result.decisions}
     if codes and codes <= {"NO_MACRO_EVIDENCE"}:
@@ -536,8 +558,9 @@ def get_global_news_yfinance(
         # an upstream outage, so it returns a caller-facing suppression notice
         # rather than raising a non-vendor exception through the router.
         _record_o5_evidence(
-            "V-INVARIANT", batch_id=None, violated_invariant=exc.invariant,
-            pre_suppression_selected_count=0, published_selected_count=0,
+            "V-INVARIANT", batch_id=exc.batch_id, violated_invariant=exc.invariant,
+            pre_suppression_selected_count=exc.pre_suppression_selected_count,
+            published_selected_count=0,
         )
         return _o5_invariant_failure_text()
 

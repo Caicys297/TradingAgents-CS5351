@@ -288,28 +288,78 @@ def test_s4_t04d_all_irrelevant_uses_the_all_irrelevant_enum_member(monkeypatch,
     assert event["empty_kind"] == "ALL_IRRELEVANT"
 
 
-def test_s4_i5_failing_sink_leaves_result_unchanged(monkeypatch, caplog):
-    class Boom:
-        def emit(self, event):
-            raise RuntimeError("sink down")
+def _one_macro_article():
+    return [[_nested("Fed holds rates", "Policy unchanged",
+                     "https://example.test/fed", "2026-09-27T10:00:00Z")]]
 
+
+def _run_with_sink(monkeypatch, sink, caplog):
     monkeypatch.setattr(news, "get_config", lambda: {
         "global_news_lookback_days": 2, "global_news_article_limit": 10,
         "global_news_queries": ["q1"],
     })
     monkeypatch.setattr(news, "yf_retry", lambda fn: fn())
-    Search, _ = _search_returning([[_nested(
-        "Fed holds rates", "Policy unchanged", "https://example.test/fed", "2026-09-27T10:00:00Z")]])
+    Search, _ = _search_returning(_one_macro_article())
     monkeypatch.setattr(news.yf, "Search", Search)
-    token = news._o5_evidence_sink.set(Boom())
+    token = news._o5_evidence_sink.set(sink)
     try:
         with caplog.at_level("ERROR", logger="tradingagents.o5.evidence"):
             result = news.get_global_news_yfinance("2026-09-28", look_back_days=2, limit=1)
     finally:
         news._o5_evidence_sink.reset(token)
-    # The honest business result is unchanged by a sink failure ...
-    assert isinstance(result, str) and "Fed holds rates" in result
-    # ... and the failure is logged, not swallowed.
+    return result
+
+
+def test_s4_i5_failing_sink_matches_working_sink_control(monkeypatch, caplog):
+    """I5: an emit failure must not change the honest business result."""
+    control_sink = MemorySink()
+    caplog.clear()
+    control = _run_with_sink(monkeypatch, control_sink, caplog)
+    control_events = list(control_sink.events)
+    assert [e["variant"] for e in control_events] == ["V-SELECTED"]
+    assert "SINK_FAILED" not in caplog.text
+
+    class Boom(MemorySink):
+        def emit(self, event):
+            raise RuntimeError("sink down")
+
+    failing_sink = Boom()
+    caplog.clear()
+    failing = _run_with_sink(monkeypatch, failing_sink, caplog)
+
+    # Complete string equality against the control on identical input.
+    assert failing == control
+    assert isinstance(failing, str) and "Fed holds rates" in failing
+    # The failing sink retained no successful event.
+    assert failing_sink.events == []
+    # The failure is reported independently, not swallowed.
+    assert "SINK_FAILED" in caplog.text
+
+
+def test_s4_builder_failure_diagnostic_is_not_i5b(monkeypatch, caplog):
+    """A builder exception must keep the honest result and retain no success.
+
+    This is a diagnostic for ``_build_o5_evidence`` raising; it is NOT I5b,
+    which stays in S5 (production sink construction).
+    """
+    control_sink = MemorySink()
+    caplog.clear()
+    control = _run_with_sink(monkeypatch, control_sink, caplog)
+    assert [e["variant"] for e in control_sink.events] == ["V-SELECTED"]
+
+    real_build = news._build_o5_evidence
+
+    def exploding_build(*args, **kwargs):
+        raise ValueError("builder down")
+
+    monkeypatch.setattr(news, "_build_o5_evidence", exploding_build)
+    failing_sink = MemorySink()
+    caplog.clear()
+    failing = _run_with_sink(monkeypatch, failing_sink, caplog)
+    monkeypatch.setattr(news, "_build_o5_evidence", real_build)
+
+    assert failing == control          # same honest business result
+    assert failing_sink.events == []   # no false retained success
     assert "SINK_FAILED" in caplog.text
 
 
@@ -333,10 +383,51 @@ def test_s4_invariant_violation_suppresses_publication(monkeypatch, adapter):
     # Public API stays str: a suppressed batch returns a notice, never raises.
     result = news.get_global_news_yfinance("2026-09-28", look_back_days=2, limit=1)
     assert isinstance(result, str)
-    assert "###" not in result  # nothing from the tampered batch is published
+    assert "###" not in result          # nothing from the tampered batch is published
+    assert "Tampered" not in result     # and never the tampered text
     assert [event["variant"] for event in adapter.events] == ["V-INVARIANT"]
-    assert adapter.events[0]["violated_invariant"] == "INV-O5-01"
-    assert adapter.events[0]["published_selected_count"] == 0
+    event = adapter.events[0]
+    assert event["violated_invariant"] == "INV-O5-01"
+    # One item was selected before suppression, so the truthful pre-count is 1.
+    assert event["pre_suppression_selected_count"] == 1
+    assert event["published_selected_count"] == 0
+    # The batch identity is known before the check and must not be dropped.
+    assert isinstance(event["batch_id"], str) and event["batch_id"].startswith("b:")
+    # Interface section 4.1: V-INVARIANT carries a resolved (str) rules version.
+    assert event["rules_version"] == "o5-rules-v1.1-draft"
+
+
+def test_s4_invariant_batch_id_matches_the_unsuppressed_batch(monkeypatch, adapter):
+    """The V-INVARIANT batch_id equals the id the same input produces on success."""
+    article = _nested("Fed holds rates", "Policy unchanged",
+                      "https://example.test/fed", "2026-09-27T10:00:00Z")
+
+    class Search:
+        def __init__(self, **kwargs):
+            self.news = [article]  # same input on every call
+
+    monkeypatch.setattr(news.yf, "Search", Search)
+
+    # Control: the untouched batch reports its id on V-SELECTED.
+    news.get_global_news_yfinance("2026-09-28", look_back_days=2, limit=1)
+    control_id = adapter.events[0]["batch_id"]
+    assert adapter.events[0]["variant"] == "V-SELECTED"
+
+    adapter.events.clear()
+    from dataclasses import replace as _replace
+
+    real_select = news.select_macro_news
+
+    def tampering_select(candidates, request):
+        result = real_select(candidates, request)
+        result.selected = [_replace(item, title="Tampered") for item in result.selected]
+        return result
+
+    monkeypatch.setattr(news, "select_macro_news", tampering_select)
+    news.get_global_news_yfinance("2026-09-28", look_back_days=2, limit=1)
+    invariant_event = adapter.events[0]
+    assert invariant_event["variant"] == "V-INVARIANT"
+    assert invariant_event["batch_id"] == control_id
 
 
 def test_s4_filter_unavailable_text_is_distinct_from_filtered_empty(monkeypatch, adapter):
