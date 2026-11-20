@@ -72,6 +72,9 @@ class ScriptedChatModel(BaseChatModel):
     # Set on the per-Analyst copy returned by ``bind_tools``; empty on the
     # shared instance, which is only used to build those copies.
     _analyst: str = ""
+    # W-12 opt-in: answer a real Bull Researcher prompt instead of treating an
+    # unbound, unscripted call as an error. Off by default.
+    answer_real_bull: bool = False
 
     @property
     def _llm_type(self):
@@ -106,6 +109,16 @@ class ScriptedChatModel(BaseChatModel):
             # that knows its Analyst is not the object called. That prompt is
             # still the Analyst's own and lists the tools it offers, so the
             # Analyst is read from those names -- not from call order.
+            if self.answer_real_bull:
+                # W-12 opt-in: a real Bull Researcher prompt is answered with an
+                # untagged message and no usage, so the call is genuinely
+                # unattributed rather than scripted as an Analyst turn.
+                text = " ".join(str(getattr(m, "content", m)) for m in (messages or []))
+                if "Bull Analyst" in text:
+                    self.executions.append("bull")
+                    return ChatResult(
+                        generations=[ChatGeneration(message=AIMessage(content="Bull case."))]
+                    )
             key = self._analyst_of_prompt(messages)
         turns = self.script[key]
         index = sum(1 for label in self.executions if label == key)
@@ -223,7 +236,7 @@ def _offline_tools(monkeypatch):
     return patched
 
 
-def _build_fixture_graph(script, record=None, monkeypatch=None, wrap_up_analysts=()):
+def _build_fixture_graph(script, record=None, monkeypatch=None, wrap_up_analysts=(), real_bull=False):
     """Return a TradingAgentsGraph whose workflow is the analysts + fixture_final.
 
     Production is retained for everything these cases measure: ``run_analysis``,
@@ -234,6 +247,10 @@ def _build_fixture_graph(script, record=None, monkeypatch=None, wrap_up_analysts
 
     ``wrap_up_analysts`` caps those analysts at one tool round, so their second
     turn is the production ``wrap_up`` turn rather than an ordinary one.
+
+    ``real_bull`` is default-off and used only by W-12: when set, the Bull
+    Researcher is built by production instead of being replaced by a no-op, so
+    its real node can be observed. Every existing caller is unaffected.
     """
     max_tool_rounds = 1
     from langgraph.graph import END
@@ -245,7 +262,13 @@ def _build_fixture_graph(script, record=None, monkeypatch=None, wrap_up_analysts
         # One model object serves every Analyst, as production's shared client
         # does; it routes by the tools each Analyst binds, so concurrent calls
         # cannot consume each other's scripted turn.
-        model = ScriptedChatModel(script=copy.deepcopy(script), executions=[])
+        model = ScriptedChatModel(
+            script=copy.deepcopy(script),
+            executions=[],
+            # W-12 opts in via the record, so the flag is set where the model is
+            # built rather than after the graph already holds it.
+            answer_real_bull=bool((record or {}).get("answer_real_bull")),
+        )
 
         class _Client:
             def __init__(self, *a, **k):
@@ -312,6 +335,10 @@ def _build_fixture_graph(script, record=None, monkeypatch=None, wrap_up_analysts
                 "create_conservative_debator",
                 "create_portfolio_manager",
             ):
+                # W-12 opts in to the real Bull node; every other caller keeps
+                # the no-op replacement exactly as before.
+                if real_bull and factory_name == "create_bull_researcher":
+                    continue
                 monkeypatch_target = record.get("monkeypatch")
                 if monkeypatch_target is not None:
                     monkeypatch_target.setattr(
@@ -803,6 +830,18 @@ def test_w15b_new_checkpoint_persists_state(monkeypatch, tmp_path):
     cache_dir = tmp_path / "cache"
     graph_instances = []
 
+    # W-3: the new-checkpoint path must still build exactly one statistics
+    # handler, so the handler count is observed here rather than assumed.
+    checkpoint_handlers = []
+    real_handler_cls = run_mod.StatsCallbackHandler
+
+    def counting_handler(keys=None):
+        handler = real_handler_cls(keys)
+        checkpoint_handlers.append(handler)
+        return handler
+
+    monkeypatch.setattr(run_mod, "StatsCallbackHandler", counting_handler)
+
     def build_with_tmp_cache(selections, checkpoint_flag):
         config = real_build(selections, checkpoint_flag)
         config["data_cache_dir"] = str(cache_dir)
@@ -853,6 +892,9 @@ def test_w15b_new_checkpoint_persists_state(monkeypatch, tmp_path):
 
     with _live_refresh_recorder(monkeypatch, harness):
         run_mod.run_analysis(checkpoint=True, flags=dict(RUN_FLAGS))
+
+    # W-3: one handler on the new-checkpoint path as well.
+    assert len(checkpoint_handlers) == 1, "the checkpoint path must also build one handler"
 
     snap = _last_live_display(harness)
     assert snap["stats"] == W15_STATS
@@ -1080,3 +1122,567 @@ def test_w10_unknown_input_known_output():
     assert market["input_tokens"] == {"value": None, "status": "unknown"}
     assert market["output_tokens"] == {"value": 5, "status": "complete"}
     assert _w910_market_cells(handler) == ("Unknown", "5")
+
+
+# ---------------------------------------------------------------------------
+# W-1 / W-2 / W-5 — handler construction and single registration
+#
+# W-1: the handler learns this run's plan keys.
+# W-2: exactly one handler serves the ordinary path.
+# W-5: one registration path, observed at three points — the request the
+#      propagator is asked for, the config the stream actually runs with, and
+#      the constructor receiving no callbacks. W-4 (real fake-chat execution
+#      with independent call counts) is reused unchanged: it is the
+#      ``test_tc_o6_14`` case above.
+# ---------------------------------------------------------------------------
+
+
+def _single_run_with_observers(monkeypatch, *, analysts=("market", "news")):
+    """Run one analysis while recording handler construction and registration."""
+    from cli import run as run_mod
+
+    seen = {"handlers": [], "ctor_callbacks": [], "graph_args": [], "stream_config": []}
+    real_handler = run_mod.StatsCallbackHandler
+
+    def recording_handler(keys=None):
+        handler = real_handler(keys)
+        seen["handlers"].append(handler)
+        return handler
+
+    monkeypatch.setattr(run_mod, "StatsCallbackHandler", recording_handler)
+
+    record = {}
+    graph_cls = _build_fixture_graph(
+        _script(_market_script(), _news_script()), record, monkeypatch
+    )
+
+    real_init = graph_cls.__init__
+
+    def recording_init(self, selected, config=None, debug=False, callbacks=None):
+        seen["ctor_callbacks"].append(callbacks)
+        real_init(self, selected, config=config, debug=debug, callbacks=callbacks)
+        real_get_args = self.propagator.get_graph_args
+
+        def get_args(callbacks=None):
+            seen["graph_args"].append(callbacks)
+            return real_get_args(callbacks=callbacks)
+
+        self.propagator.get_graph_args = get_args
+
+        real_stream_run = self.stream_run
+
+        def stream_run(graph_input, **kwargs):
+            seen["stream_config"].append(kwargs.get("config"))
+            return real_stream_run(graph_input, **kwargs)
+
+        self.stream_run = stream_run
+
+    graph_cls.__init__ = recording_init
+    monkeypatch.setattr(run_mod, "TradingAgentsGraph", graph_cls)
+
+    harness = _make_harness(monkeypatch, list(analysts))
+    run_mod.run_analysis(checkpoint=False, flags=dict(RUN_FLAGS))
+    return seen, harness
+
+
+def test_w1_handler_receives_plan_keys(monkeypatch):
+    """W-1: the statistics handler is built from this run's plan keys."""
+    from tradingagents.graph.analyst_execution import build_analyst_execution_plan
+
+    seen, _ = _single_run_with_observers(monkeypatch)
+
+    expected = [spec.key for spec in build_analyst_execution_plan(["market", "news"]).specs]
+    assert expected == ["market", "news"]
+    assert len(seen["handlers"]) == 1
+    assert seen["handlers"][0]._valid_keys == set(expected)
+
+
+def test_w2_single_handler_ordinary(monkeypatch):
+    """W-2: exactly one handler object serves the ordinary path."""
+    seen, harness = _single_run_with_observers(monkeypatch)
+
+    assert len(seen["handlers"]) == 1, "the ordinary path must build exactly one handler"
+    handler = seen["handlers"][0]
+
+    # It is the handler the run's own statistics reflect: both Analysts were
+    # counted by that one object, not split across several.
+    stats = handler.get_agent_stats()
+    assert set(stats["analysts"]) == {"market", "news"}
+    assert stats["analysts"]["market"]["calls"] == 2
+    assert stats["analysts"]["news"]["calls"] == 1
+    assert stats["unattributed_calls"] == 0
+
+
+def test_w5_single_registration_path(monkeypatch):
+    """W-5: the handler is registered once, through the graph execution config."""
+    seen, _ = _single_run_with_observers(monkeypatch)
+
+    assert len(seen["handlers"]) == 1
+    handler = seen["handlers"][0]
+
+    # A. the request asked of the propagator carries the handler once
+    assert len(seen["graph_args"]) == 1, seen["graph_args"]
+    requested = seen["graph_args"][0]
+    assert requested is not None
+    assert list(requested) == [handler]
+
+    # B. the config the stream actually ran with carries it once
+    assert len(seen["stream_config"]) == 1
+    config = seen["stream_config"][0] or {}
+    callbacks = (config.get("callbacks") or [])
+    assert callbacks.count(handler) == 1
+
+    # C. the constructor was not given callbacks, so nothing registered twice
+    assert seen["ctor_callbacks"] == [None]
+
+
+# ---------------------------------------------------------------------------
+# W-6 — empty analyst selection is rejected before anything is constructed
+# ---------------------------------------------------------------------------
+
+
+def test_w6_empty_selection_rejected(monkeypatch):
+    """W-6: an empty selection raises ValueError before handler/graph/client setup."""
+    import pytest
+
+    from cli import run as run_mod
+
+    monkeypatch.setattr(run_mod, "unattended_gaps", lambda flags: [])
+    harness_selections = {
+        "ticker": TICKER,
+        "analysis_date": TRADE_DATE,
+        "asset_type": "stock",
+        "research_depth": 1,
+        "quick_think_llm": "scripted",
+        "deep_think_llm": "scripted",
+        "backend_url": None,
+        "llm_provider": "openai",
+        "output_language": "English",
+        "analysts": [],
+    }
+    monkeypatch.setattr(
+        run_mod, "get_user_selections", lambda flags=None: dict(harness_selections)
+    )
+    monkeypatch.setattr(run_mod, "unattended_gaps", lambda flags: [])
+
+    built = {"handler": 0, "graph": 0}
+
+    def counting_handler(keys=None):
+        built["handler"] += 1
+        raise AssertionError("handler must not be constructed for an empty selection")
+
+    def counting_graph(*a, **k):
+        built["graph"] += 1
+        raise AssertionError("graph must not be constructed for an empty selection")
+
+    monkeypatch.setattr(run_mod, "StatsCallbackHandler", counting_handler)
+    monkeypatch.setattr(run_mod, "TradingAgentsGraph", counting_graph)
+
+    # The message must not be locked to exact wording, only the type.
+    with pytest.raises(ValueError):
+        run_mod.run_analysis(
+            checkpoint=False,
+            flags={"ticker": TICKER, "date": TRADE_DATE, "analysts": [], "save": False},
+        )
+    assert built == {"handler": 0, "graph": 0}
+
+
+
+# ---------------------------------------------------------------------------
+# W-7 — a reversed selection still renders canonical Analyst order
+# ---------------------------------------------------------------------------
+
+
+def test_w7_reversed_selection_keeps_canonical_rows(monkeypatch):
+    """W-7: rows follow ANALYST_ORDER whatever order the selection arrives in."""
+    from cli import run as run_mod
+    from cli.display import ANALYST_ORDER
+    from cli.models import AnalystType
+
+    handler_records = []
+    real_handler = run_mod.StatsCallbackHandler
+
+    def recording_handler(keys=None):
+        handler = real_handler(keys)
+        handler_records.append(handler)
+        return handler
+
+    monkeypatch.setattr(run_mod, "StatsCallbackHandler", recording_handler)
+
+    # A genuinely reversed input: news first, then market.
+    harness = _make_harness(monkeypatch, ["news", "market"])
+    harness["selections"]["analysts"] = [AnalystType.NEWS, AnalystType.MARKET]
+
+    record = {}
+    graph_cls = _build_fixture_graph(
+        _script(_market_script(), _news_script()), record, monkeypatch
+    )
+    monkeypatch.setattr(run_mod, "TradingAgentsGraph", graph_cls)
+
+    run_mod.run_analysis(checkpoint=False, flags=dict(RUN_FLAGS))
+
+    # The plan (and so the handler's keys) is in canonical order, not input order.
+    handler = handler_records[-1]
+    canonical = [key for key in ANALYST_ORDER if key in {"market", "news"}]
+    assert canonical == ["market", "news"]
+    assert handler._valid_keys == set(canonical)
+
+    # The rendered rows are canonical, with unattributed last.
+    table, _text = _capture_summary_table(handler)
+    rows = [r[0] for r in _table_rows(table)]
+    assert rows == ["Market Analyst", "News Analyst", "unattributed calls"]
+
+
+# ---------------------------------------------------------------------------
+# W-8b — a Market wrap_up start missing its identity key
+#
+# A single forwarder is the only registered handler. It strips agent_key from
+# exactly one event (the first in-scope Market wrap_up start), keeping scope,
+# run_id and every other event verbatim.
+# ---------------------------------------------------------------------------
+
+
+class _MissingKeyForwarder:
+    """Forwards every callback once, dropping agent_key from one target start."""
+
+    # LangChain's callback manager reads these on every handler.
+    ignore_chain = False
+    ignore_llm = False
+    ignore_agent = False
+    ignore_retriever = False
+    ignore_chat_model = False
+    ignore_custom_event = False
+    raise_error = False
+
+    def __init__(self, inner):
+        self.inner = inner
+        self.dropped = 0
+        self.forwarded = []
+        self._seen = set()
+
+    def __getattr__(self, name):
+        # Any callback the manager dispatches is forwarded verbatim exactly once,
+        # so the wrapper cannot silently swallow an event type it does not know.
+        if name.startswith("on_"):
+            def forward(*args, **kwargs):
+                self.forwarded.append(name)
+                return getattr(self.inner, name)(*args, **kwargs)
+
+            return forward
+        return getattr(self.inner, name)
+
+    def _forward(self, _cb_name, *args, **kwargs):
+        self.forwarded.append(_cb_name)
+        return getattr(self.inner, _cb_name)(*args, **kwargs)
+
+    def on_chat_model_start(self, serialized, messages, *, run_id=None, metadata=None, **kwargs):
+        meta = metadata or {}
+        is_target = (
+            self.dropped == 0
+            and meta.get("scope") == "analyst"
+            and meta.get("agent_key") == "market"
+            and meta.get("langgraph_node") == "wrap_up"
+        )
+        if is_target and run_id not in self._seen:
+            self._seen.add(run_id)
+            self.dropped += 1
+            copied = {k: v for k, v in meta.items() if k != "agent_key"}
+            return self.inner.on_chat_model_start(
+                serialized, messages, run_id=run_id, metadata=copied, **kwargs
+            )
+        return self._forward("on_chat_model_start", serialized, messages, run_id=run_id, metadata=metadata, **kwargs)
+
+    def on_llm_end(self, response, *, run_id=None, **kwargs):
+        return self._forward("on_llm_end", response, run_id=run_id, **kwargs)
+
+    def on_llm_start(self, serialized, prompts, *, run_id=None, metadata=None, **kwargs):
+        return self._forward("on_llm_start", serialized, prompts, run_id=run_id, metadata=metadata, **kwargs)
+
+    def on_llm_error(self, error, *, run_id=None, **kwargs):
+        return self._forward("on_llm_error", error, run_id=run_id, **kwargs)
+
+    def on_tool_start(self, serialized, input_str, *, run_id=None, metadata=None, **kwargs):
+        return self._forward("on_tool_start", serialized, input_str, run_id=run_id, metadata=metadata, **kwargs)
+
+    def get_stats(self):
+        return self.inner.get_stats()
+
+    def get_agent_stats(self):
+        return self.inner.get_agent_stats()
+
+
+def test_w8b_missing_identity_renders_one(monkeypatch):
+    """W-8b: dropping Market wrap_up's agent_key moves that call to unattributed."""
+    from cli import run as run_mod
+
+    forwarders = []
+    real_handler = run_mod.StatsCallbackHandler
+
+    def wrapping_handler(keys=None):
+        forwarder = _MissingKeyForwarder(real_handler(keys))
+        forwarders.append(forwarder)
+        return forwarder
+
+    monkeypatch.setattr(run_mod, "StatsCallbackHandler", wrapping_handler)
+
+    record = {}
+    graph_cls = _build_fixture_graph(
+        _script(_market_script(), _news_script()),
+        record,
+        monkeypatch,
+        wrap_up_analysts=("market",),
+    )
+    monkeypatch.setattr(run_mod, "TradingAgentsGraph", graph_cls)
+
+    _make_harness(monkeypatch, ["market", "news"])
+    run_mod.run_analysis(checkpoint=False, flags=dict(RUN_FLAGS))
+
+    assert len(forwarders) == 1, "the forwarder must be the sole registered handler"
+    forwarder = forwarders[0]
+    assert forwarder.dropped == 1, "exactly one Market wrap_up start loses its key"
+
+    stats = forwarder.get_agent_stats()
+    market = stats["analysts"]["market"]
+    news = stats["analysts"]["news"]
+
+    # Market keeps its ordinary call (100/20); the wrap_up call moved out.
+    assert market["calls"] == 1
+    assert market["input_tokens"] == {"value": 100, "status": "complete"}
+    assert market["output_tokens"] == {"value": 20, "status": "complete"}
+    assert stats["unattributed_calls"] == 1
+    # News is untouched.
+    assert news["calls"] == 1
+
+    # The rendered table shows the moved call where the handler counts it.
+    table, _text = _capture_summary_table(forwarder)
+    rows = {r[0]: r for r in _table_rows(table)}
+    assert rows["Market Analyst"][1] == "1"
+    assert rows["unattributed calls"][1] == "1"
+
+
+# ---------------------------------------------------------------------------
+# W-11 — a News-only run renders only News, plus the unattributed row
+# ---------------------------------------------------------------------------
+
+
+def test_w11_news_only_rendered_table(monkeypatch):
+    """W-11: News-only shows just the News row and the unattributed line."""
+    from cli import run as run_mod
+    from cli.models import AnalystType
+
+    handlers = []
+    real_handler = run_mod.StatsCallbackHandler
+
+    def recording_handler(keys=None):
+        handler = real_handler(keys)
+        handlers.append(handler)
+        return handler
+
+    monkeypatch.setattr(run_mod, "StatsCallbackHandler", recording_handler)
+
+    harness = _make_harness(monkeypatch, ["news"])
+    harness["selections"]["analysts"] = [AnalystType.NEWS]
+    record = {}
+    graph_cls = _build_fixture_graph(
+        _script(_market_script(), _news_script()), record, monkeypatch
+    )
+    monkeypatch.setattr(run_mod, "TradingAgentsGraph", graph_cls)
+    run_mod.message_buffer.init_for_analysis(["news"])
+
+    run_mod.run_analysis(checkpoint=False, flags=dict(RUN_FLAGS))
+
+    handler = handlers[-1]
+    table, _text = _capture_summary_table(handler)
+    rows = [r[0] for r in _table_rows(table)]
+    assert rows == ["News Analyst", "unattributed calls"]
+
+
+# ---------------------------------------------------------------------------
+# W-14 — completion order around Live.__exit__
+# ---------------------------------------------------------------------------
+
+
+def test_w14_completion_order(monkeypatch):
+    """W-14: Live exits before the summary; completion precedes the report options."""
+    from cli import run as run_mod
+
+    events = []
+
+    import rich.live as rich_live
+
+    class RecordingLive(rich_live.Live):
+        def __exit__(self, *exc):
+            try:
+                return super().__exit__(*exc)
+            finally:
+                events.append("live_exit")
+
+    monkeypatch.setattr(run_mod, "Live", RecordingLive)
+
+    real_summary = run_mod.display_agent_summary
+
+    def recording_summary(*args, **kwargs):
+        result = real_summary(*args, **kwargs)
+        events.append("summary")
+        return result
+
+    monkeypatch.setattr(run_mod, "display_agent_summary", recording_summary)
+
+    record = {}
+    graph_cls = _build_fixture_graph(
+        _script(_market_script(), _news_script()), record, monkeypatch
+    )
+    monkeypatch.setattr(run_mod, "TradingAgentsGraph", graph_cls)
+    _make_harness(monkeypatch, ["market", "news"])
+
+    # The harness installs its own _offer_reports; wrap that, not the original,
+    # so the report-option boundary is observed where the run actually reaches it.
+    harness_offer = run_mod._offer_reports
+
+    def recording_offer(*args, **kwargs):
+        result = harness_offer(*args, **kwargs)
+        events.append("report_options")
+        return result
+
+    monkeypatch.setattr(run_mod, "_offer_reports", recording_offer)
+
+    # The harness installs its own console; wrap its print so the notice and the
+    # elapsed line can be placed in the order without leaving that capture.
+    fake_console = run_mod.console
+    real_print = fake_console.print
+
+    def recording_print(*args, **kwargs):
+        result = real_print(*args, **kwargs)
+        text = " ".join(str(a) for a in args)
+        if "Analysis Complete" in text:
+            events.append("completion")
+        elif "⏱" in text:
+            events.append("elapsed")
+        return result
+
+    fake_console.print = recording_print
+
+    run_mod.run_analysis(checkpoint=False, flags=dict(RUN_FLAGS))
+
+    # Presence first, then order: a missing event must fail loudly.
+    assert "live_exit" in events, events
+    assert "summary" in events, events
+    assert "completion" in events, events
+    assert "report_options" in events, events
+
+    idx = {name: events.index(name) for name in ("live_exit", "completion", "summary", "report_options")}
+    assert idx["live_exit"] < idx["summary"], "the summary must be shown after Live exits"
+    assert idx["completion"] < idx["summary"], "the completion notice precedes the summary"
+    assert idx["summary"] < idx["report_options"], "report options come last"
+
+
+
+# ---------------------------------------------------------------------------
+# W-12 — an out-of-scope Bull call must not disturb the Analyst statistics
+#
+# Opt-in: the real Bull Researcher is built (``real_bull=True``) and the
+# scripted model answers its prompt. A single probe is the sole registered
+# forwarding callback, so every event reaches the handler exactly once.
+# ---------------------------------------------------------------------------
+
+
+class _BullProbe:
+    """Sole forwarding callback; captures the one Bull start/end pair."""
+
+    ignore_chain = False
+    ignore_llm = False
+    ignore_agent = False
+    ignore_retriever = False
+    ignore_chat_model = False
+    ignore_custom_event = False
+    raise_error = False
+
+    def __init__(self, inner, holder):
+        self.inner = inner
+        self.holder = holder
+
+    def __getattr__(self, name):
+        if name.startswith("on_"):
+            def forward(*args, **kwargs):
+                return getattr(self.inner, name)(*args, **kwargs)
+
+            return forward
+        return getattr(self.inner, name)
+
+    def on_chat_model_start(self, serialized, messages, *, run_id=None, metadata=None, **kwargs):
+        meta = metadata or {}
+        node = meta.get("langgraph_node")
+        scope = meta.get("scope")
+        self.holder["events"].append(("start", node, scope, run_id))
+        if node == "Bull Researcher" and scope != "analyst":
+            self.holder["target_starts"].append(run_id)
+        return self.inner.on_chat_model_start(
+            serialized, messages, run_id=run_id, metadata=metadata, **kwargs
+        )
+
+    def on_llm_end(self, response, *, run_id=None, **kwargs):
+        self.holder["events"].append(("end", None, None, run_id))
+        if run_id in self.holder["target_starts"]:
+            self.holder["target_ends"].append(run_id)
+        return self.inner.on_llm_end(response, run_id=run_id, **kwargs)
+
+    def get_stats(self):
+        return self.inner.get_stats()
+
+    def get_agent_stats(self):
+        return self.inner.get_agent_stats()
+
+
+def test_w12_out_of_scope_summary_unchanged(monkeypatch):
+    """W-12: a real Bull call leaves named stats and unattributed at zero."""
+    from cli import run as run_mod
+
+    holder = {"events": [], "target_starts": [], "target_ends": []}
+    probes = []
+    real_handler = run_mod.StatsCallbackHandler
+
+    def probing_handler(keys=None):
+        probe = _BullProbe(real_handler(keys), holder)
+        probes.append(probe)
+        return probe
+
+    monkeypatch.setattr(run_mod, "StatsCallbackHandler", probing_handler)
+
+    record = {"answer_real_bull": True}
+    graph_cls = _build_fixture_graph(
+        _script(_market_script(), _news_script()), record, monkeypatch, real_bull=True
+    )
+    monkeypatch.setattr(run_mod, "TradingAgentsGraph", graph_cls)
+
+    _make_harness(monkeypatch, ["market", "news"])
+    run_mod.run_analysis(checkpoint=False, flags=dict(RUN_FLAGS))
+
+    assert len(probes) == 1, "the probe must be the sole registered callback"
+    probe = probes[0]
+
+    # Exactly one Bull start and one matching successful end.
+    assert len(holder["target_starts"]) == 1, holder["events"]
+    assert len(holder["target_ends"]) == 1, holder["events"]
+    assert holder["target_starts"][0] == holder["target_ends"][0]
+
+    # No Analyst event occurred between them.
+    start_i = next(
+        i
+        for i, e in enumerate(holder["events"])
+        if e[0] == "start" and e[1] == "Bull Researcher" and e[3] == holder["target_starts"][0]
+    )
+    end_i = next(
+        i
+        for i, e in enumerate(holder["events"])
+        if e[0] == "end" and e[3] == holder["target_ends"][0]
+    )
+    between = holder["events"][start_i + 1 : end_i]
+    assert not [e for e in between if e[2] == "analyst"], between
+
+    stats = probe.get_agent_stats()
+    # The Bull call is out of scope: no named row, no unattributed count.
+    assert set(stats["analysts"]) == {"market", "news"}
+    assert stats["unattributed_calls"] == 0
+    assert stats["analysts"]["market"]["calls"] == 2
+    assert stats["analysts"]["news"]["calls"] == 1
+
