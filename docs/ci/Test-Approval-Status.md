@@ -1,33 +1,52 @@
-# Test Approval Gate — Status (rules proposed, not yet confirmed)
+# Test Approval Gate — Implemented (A-authorized rules)
 
-Per the closure record, the Test Approval rules are **proposed**, not confirmed by A/B.
-This batch does **not** enable an invented policy as mandatory, and there is **no**
-Test Approval checker implemented here (doing so before A/B confirmation would fabricate
-policy).
+A confirmed the gate rules (PR #30 comment `7043217684`, 2026-11-20), authorizing
+implementation per REQ-GOV-01/02. This batch implements the checker, offline
+tests, and CI wiring on the closure branch. **This does not retroactively approve
+already-written work** (see "Process gap for this batch").
 
-## Proposed rules (summary, pending A/B)
-- Reuse `docs/test-approvals/TEMPLATE.md`; each approved batch links an immutable plan
-  SHA/version, requirement/test IDs, allowed files and exclusions.
-- Approval authority from the registry: O2/O6 test plans → A; O1/O3/O4/O5 test plans → F;
-  execution plan → A. Implementer cannot self-approve.
-- The original approval time must precede the batch's first **implementation** commit
-  (test/fixture/workflow commits count; doc-plan commits do not).
-- Small corrections within an approved scope reuse the approval; only requirement-outcome,
-  public-interface, file-ownership, or material-scope changes require re-approval.
-- The automated job must not fabricate GitHub timestamps; missing/late approval is referred
-  to A/B, not rewritten historically.
+## Implemented behavior (`scripts/check_test_approval.py`)
+- Reviewer roles from the Registry: **O2/O6 test plans → A; O1/O3/O4/O5 → F;
+  execution plans → A.** Implementer self-approval rejected.
+- Validates **original GitHub evidence** (issue comment or PR review): author,
+  original timestamp, reviewer role; a machine record only **indexes** it.
+- Requires immutable `plan_sha` + `plan_version`, requirement IDs, approved test
+  IDs, allowed files, original `approval_time`.
+- Compares approval time against the batch's **earliest implementation commit**
+  (code/test/fixture/workflow; docs/transcripts are not implementation), using
+  **author dates** so rebase/cherry-pick provenance is preserved.
+- Fails with a specific reason on: missing record, late approval, unauthorized
+  reviewer, self-approval, approver/evidence author mismatch, backdated
+  (mismatched) time, unverifiable evidence / API failure, incomplete history.
+- Later PR code-review cannot substitute for pre-code approval.
+- Pure-documentation changes → explicit "not applicable".
 
-## Positive example (from B, real record)
-- PR #8 comment `6920115438`, `2026-11-16T15:02:47Z`, plan `b0287da` / v0.3 / v0.1,
-  two approved files.
+## CI wiring
+Job `test approval` (PR-only), NUL-separated changed files, least-privilege token
+(`GH_TOKEN` read-only), does not execute untrusted PR code with privileged creds.
 
-## Negative examples (must fail)
-- Missing record; approval later than first implementation commit; unauthorized/self-approval;
-  scope/version mismatch; API/history incomplete.
+## Offline tests (`test/offline/test_check_test_approval.py`, 12)
+Positive (valid pre-code approval; in-scope follow-up reusing approval);
+negatives (missing, late, self, unauthorized, version/field mismatch, backdated
+time, API failure, incomplete history, cherry-pick provenance preserved,
+docs-only not-applicable). Fixture-backed API + genuine temp Git histories.
 
-## What this batch does/does-not do
-- **Does:** document the concrete record format and the positive/negative examples above.
-- **Does not:** implement the checker, add a passing placeholder, or approve any PR.
-- **To proceed:** A/B confirm the rules (or one concrete change). F then implements the
-  checker + offline tests matching the confirmed policy, and A/admin wires its stable
-  check name once it exists.
+## Process gap for THIS batch (reported, not fabricated)
+A's comment `7043217684` confirms the **rules** and authorizes implementation of
+the gate. It is **not** a pre-code approval of the already-written semantic
+runner / gate code on this branch, and there is **no** machine record under
+`docs/test-approvals/` covering this CI batch. Per policy, the rule-confirmation
+timestamp is not treated as retroactive approval. **Action:** if this batch is to
+satisfy the gate, A/B must create a genuine pre-code approval record (or A
+explicitly scopes it out as approved in-scope CI corrections). Until then this is
+an honest, unresolved process item — not a passing record.
+
+## Historical positive example
+PR #8 comment `6920115438` (2026-11-16T15:02:47Z, plan `b0287da` v0.3/v0.1,
+two O2 Phase-1 files) is used only as a **narrow O2 Phase-1 positive**; it is not
+generalized to later O2 or CI batches.
+
+## Note on push coverage
+Net push diff (`before..after`) is **not** per-commit verification; it reports the
+aggregate changed paths of the push. Per-commit verification remains an open
+A/F decision for REQ-GOV-07.

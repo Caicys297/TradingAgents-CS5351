@@ -126,6 +126,38 @@ jobs:
           GITHUB_EVENT_NAME: ${{ github.event_name }}
         run: python scripts/dep_audit.py
 
+  test-approval:
+    name: test approval
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Collect changed files (NUL-separated)
+        env:
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "${GITHUB_BASE_REF}"
+          git rev-parse --verify "origin/${GITHUB_BASE_REF}" >/dev/null
+          git diff --name-only -z "origin/${GITHUB_BASE_REF}...HEAD" > changed_files.z
+      - name: Verify pre-code approval for implementation changes
+        # Least privilege: reads evidence via gh (read-only token); does not run
+        # untrusted PR code. Machine records index evidence; the checker verifies
+        # the original GitHub evidence + pre-code ordering.
+        env:
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: >
+          python scripts/check_test_approval.py
+          --changed-from-file changed_files.z
+          --repo "${{ github.repository }}"
+          --pr "${{ github.event.pull_request.number }}"
+
   ai-use-log:
     name: ai-use log
     runs-on: ubuntu-latest
