@@ -313,8 +313,9 @@ def run_analysis(checkpoint: bool | None = None, portfolio=None, flags=None):
     # runs of the same ticker and date never share one. A failure stops the run
     # here, before any graph work, and leaves existing files untouched.
     try:
-        # results_dir here is already the run's ticker/date directory, so the
-        # reservation takes that directly rather than rebuilding it.
+        # Pass the configured results root: the helper appends the safe ticker
+        # and trade date itself, then the run directory beneath them. Passing an
+        # already-suffixed directory would nest ticker/date twice.
         run_context = _reserve_run_directory(config["results_dir"], selections["ticker"], selections["analysis_date"])
     except RunDirectoryUnavailable as exc:
         console.print(f"[red]{exc}[/red]")

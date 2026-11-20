@@ -74,9 +74,13 @@ def test_offset_aware_timestamp_is_converted_not_truncated():
 @pytest.mark.unit
 def test_global_news_future_flat_article_excluded(monkeypatch):
     # #1007: a flat, future-dated global article must not appear in a historical run.
-    future_article = {"title": "FUTURE EVENT", "publisher": "P", "link": "l",
-                      "providerPublishTime": _epoch("2025-06-01")}
-    past_article = {"title": "PAST EVENT", "publisher": "P", "link": "l",
+    # Both titles carry a same-field R1-MP anchor+context so that, once the
+    # date window admits them, O5 classifies them as macro evidence. Only the
+    # in-window one may appear; the future one must still be dropped.
+    future_article = {"title": "ECB cuts deposit rate by 25 basis points", "publisher": "P",
+                      "link": "l", "providerPublishTime": _epoch("2025-06-01")}
+    past_article = {"title": "Fed holds rates as officials flag slower disinflation",
+                    "publisher": "P", "link": "l",
                     "providerPublishTime": _epoch("2025-05-05")}
 
     class FakeSearch:
@@ -85,8 +89,8 @@ def test_global_news_future_flat_article_excluded(monkeypatch):
 
     monkeypatch.setattr(ynews.yf, "Search", FakeSearch)
     out = ynews.get_global_news_yfinance("2025-05-09", look_back_days=7, limit=10)
-    assert "PAST EVENT" in out
-    assert "FUTURE EVENT" not in out  # #1007
+    assert "Fed holds rates as officials flag slower disinflation" in out
+    assert "ECB cuts deposit rate by 25 basis points" not in out  # #1007
 
 
 @pytest.mark.unit
@@ -354,7 +358,8 @@ def test_out_of_window_articles_do_not_consume_the_article_budget(monkeypatch):
     """
     stale = [{"title": f"OLD {i}", "publisher": "P", "link": "l",
               "providerPublishTime": _epoch("2025-01-01")} for i in range(2)]
-    wanted = {"title": "IN WINDOW", "publisher": "P", "link": "l",
+    wanted = {"title": "Fed holds rates steady in latest policy meeting",
+              "publisher": "P", "link": "l",
               "providerPublishTime": _epoch("2025-05-08")}
     pages = [stale, [wanted]]
 
@@ -370,14 +375,23 @@ def test_out_of_window_articles_do_not_consume_the_article_budget(monkeypatch):
 
     out = ynews.get_global_news_yfinance("2025-05-09")
 
-    assert "IN WINDOW" in out
+    assert "Fed holds rates steady in latest policy meeting" in out
     assert "OLD 0" not in out
 
 
 @pytest.mark.unit
 def test_the_article_limit_still_caps_what_is_returned(monkeypatch):
-    articles = [{"title": f"NEWS {i}", "publisher": "P", "link": "l",
-                 "providerPublishTime": _epoch("2025-05-08")} for i in range(5)]
+    # Five distinct macro-bearing headlines so title deduplication cannot
+    # remove any of them and the cap is what limits the output.
+    titles = [
+        "Fed holds rates steady",
+        "ECB cuts deposit rate by 25 basis points",
+        "Bank of Japan keeps policy rate unchanged",
+        "Federal Reserve minutes show split over rate cuts",
+        "Bank of England holds rates as inflation eases",
+    ]
+    articles = [{"title": title, "publisher": "P", "link": "l",
+                 "providerPublishTime": _epoch("2025-05-08")} for title in titles]
 
     class FakeSearch:
         def __init__(self, *a, **k):

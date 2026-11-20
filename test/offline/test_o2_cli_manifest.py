@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import json
 from contextlib import nullcontext
 from pathlib import Path
@@ -9,37 +10,47 @@ from types import SimpleNamespace
 
 import pytest
 
+from cli import run as run_mod
 from tradingagents.dataflows.symbols import safe_ticker_component
 from tradingagents.repro import manifest as manifest_module
 
-try:
-    from cli import run as run_mod
-except ModuleNotFoundError:
-    run_mod = None
-
-
 TICKER = "NVDA"
 TRADE_DATE = "2026-11-19"
-RUN_ID = "run1"
 STAMP = "20260101_000000"
+COLLISION_ID = "0" * 32
+COLLISION_IDS = ("a" * 32, "b" * 32, "c" * 32)
+FIRST_RUN_ID = "1" * 32
+SECOND_RUN_ID = "2" * 32
 REQUIRED_HOOKS = (
     "_reserve_run_directory",
     "_finalize_run_manifest",
     "_artifact_references",
     "RunDirectoryUnavailable",
 )
-HOOKS_READY = run_mod is not None and all(
-    hasattr(run_mod, name) for name in REQUIRED_HOOKS
+MISSING_HOOKS = [name for name in REQUIRED_HOOKS if not hasattr(run_mod, name)]
+if MISSING_HOOKS:
+    raise RuntimeError(
+        "missing required C-owned Stage 2 CLI hooks: " + ", ".join(MISSING_HOOKS)
+    )
+
+pytestmark = pytest.mark.unit
+
+SAVED_SECTIONS = (
+    "1_analysts/market.md",
+    "2_research/bull.md",
+    "2_research/bear.md",
+    "2_research/manager.md",
+    "3_trading/trader.md",
+    "4_risk/aggressive.md",
+    "4_risk/conservative.md",
+    "4_risk/neutral.md",
+    "5_portfolio/decision.md",
 )
-
-pytestmark = [
-    pytest.mark.unit,
-    pytest.mark.skipif(
-        not HOOKS_READY,
-        reason="CLI runtime dependencies or C-owned Stage 2 hooks are unavailable",
-    ),
-]
-
+LIVE_SECTIONS = (
+    "investment_plan.md",
+    "trader_investment_plan.md",
+    "final_trade_decision.md",
+)
 FINAL_STATE = {
     "market_report": "Market report body.",
     "investment_debate_state": {
@@ -107,8 +118,65 @@ class _FakeBuffer:
 
 
 class _FakeConsole:
+    def __init__(self):
+        self.lines = []
+
     def print(self, *args, **kwargs):
-        return None
+        self.lines.append(" ".join(str(arg) for arg in args))
+
+    @property
+    def text(self):
+        return "\n".join(self.lines)
+
+
+class _WriteFailingFile:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def write(self, data):
+        raise OSError("state log write failed")
+
+
+class _CloseFailingFile:
+    def __init__(self, handle):
+        self._handle = handle
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self._handle.close()
+        if exc_type is None:
+            raise OSError("state log close failed")
+        return False
+
+    def __getattr__(self, name):
+        return getattr(self._handle, name)
+
+
+def _state_log_input(final_state, ticker, trade_date):
+    return {
+        **final_state,
+        "company_of_interest": ticker,
+        "trade_date": trade_date,
+        "sentiment_report": final_state.get("sentiment_report", ""),
+        "news_report": final_state.get("news_report", ""),
+        "fundamentals_report": final_state.get("fundamentals_report", ""),
+        "investment_debate_state": {
+            **final_state["investment_debate_state"],
+            "history": final_state["investment_debate_state"].get("history", ""),
+            "current_response": final_state["investment_debate_state"].get(
+                "current_response", ""
+            ),
+        },
+        "risk_debate_state": {
+            **final_state["risk_debate_state"],
+            "history": final_state["risk_debate_state"].get("history", ""),
+        },
+    }
 
 
 def _install_harness(
@@ -118,9 +186,11 @@ def _install_harness(
     save=True,
     html=True,
     fail_save=False,
-    state_log_failure=False,
-    reserve_failure=False,
+    state_log_failure=None,
+    reserve_collision=False,
     external_save=False,
+    fail_manifest_write=False,
+    rating="Hold",
 ):
     results_root = tmp_path / "results"
     live_reports = results_root / TICKER / TRADE_DATE / "reports"
@@ -142,14 +212,18 @@ def _install_harness(
     harness = {
         "calls": [],
         "results_root": results_root,
+        "run_base": results_root / TICKER / TRADE_DATE / "runs",
         "live_reports": live_reports,
         "state_log": state_log,
         "saved_path": saved_path,
         "save_calls": 0,
-        "save_return": None,
-        "artifacts": None,
-        "manifest": None,
-        "manifest_path": None,
+        "record_decision_calls": 0,
+        "graph": None,
+        "console": _FakeConsole(),
+        "effective_rating": rating,
+        "final_state": {**FINAL_STATE, "final_rating": rating},
+        "reservation_attempts": [],
+        "rating_before_manifest_failure": None,
     }
 
     config = {
@@ -159,6 +233,10 @@ def _install_harness(
         "quick_think_llm": "quick-model",
         "analysts": ["market"],
         "output_language": "English",
+        "input_condensation_audit_note": "note-from-run",
+        "api_key": "sk-secret",
+        "password": "pw-secret",
+        "unknown_field": "drop-me",
     }
     selections = {
         "ticker": TICKER,
@@ -167,43 +245,45 @@ def _install_harness(
         "analysts": [SimpleNamespace(value="market")],
     }
 
-    def fake_reserve(results_dir, ticker, trade_date):
-        harness["calls"].append("reserve")
-        if reserve_failure:
-            raise run_mod.RunDirectoryUnavailable("no run directory")
-        run_dir = (
-            Path(results_dir) / safe_ticker_component(ticker) / trade_date / "runs" / RUN_ID
-        )
-        run_dir.mkdir(parents=True, exist_ok=False)
-        return SimpleNamespace(run_id=RUN_ID, run_dir=run_dir)
+    if reserve_collision:
+        collision = harness["run_base"] / COLLISION_ID
+        collision.mkdir(parents=True, exist_ok=True)
+        (collision / "keep.txt").write_text("keep", encoding="utf-8")
 
-    def fake_finalize(run_context, *, config, artifacts):
-        harness["calls"].append("finalize")
-        manifest = manifest_module.build_manifest(
-            ticker=TICKER,
-            asset_type="stock",
-            analysis_date=TRADE_DATE,
-            analysts=["market"],
-            config=config,
-            runtime=manifest_module.collect_runtime_metadata(git_metadata=None),
-            artifacts=artifacts,
-        )
-        path = manifest_module.write_manifest(
-            Path(run_context.run_dir) / "manifest.json", manifest
-        )
-        harness["artifacts"] = list(artifacts)
-        harness["manifest"] = manifest
-        harness["manifest_path"] = path
-        return SimpleNamespace(
-            success=True,
-            manifest_path=path,
-            artifacts=list(artifacts),
-            error=None,
-        )
+        def collision_uuid4():
+            harness["reservation_attempts"].append(COLLISION_ID)
+            return SimpleNamespace(hex=COLLISION_ID)
+
+        monkeypatch.setattr(run_mod, "uuid", SimpleNamespace(uuid4=collision_uuid4))
+
+    if fail_manifest_write:
+        def fail_write(*args, **kwargs):
+            harness["rating_before_manifest_failure"] = run_mod.run_rating(
+                harness["final_state"]
+            )
+            raise OSError("manifest write failed")
+
+        monkeypatch.setattr(manifest_module, "write_manifest", fail_write)
+
+    if state_log_failure:
+        assert state_log_failure in {"write", "close"}
+        real_open = builtins.open
+
+        def failing_open(path, mode="r", *args, **kwargs):
+            if "TradingAgentsStrategy_logs" in str(path) and "w" in mode:
+                if state_log_failure == "write":
+                    return _WriteFailingFile()
+                return _CloseFailingFile(real_open(path, mode, *args, **kwargs))
+            return real_open(path, mode, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", failing_open)
+
+    real_graph_class = run_mod.TradingAgentsGraph
 
     class FakeGraph:
         def __init__(self, analysts, *, config, debug):
             harness["calls"].append("graph_init")
+            harness["graph"] = self
             self.config = config
             self.propagator = _FakePropagator()
 
@@ -217,14 +297,23 @@ def _install_harness(
             return state
 
         def stream_run(self, state, **kwargs):
-            yield [], FINAL_STATE
+            yield [], harness["final_state"]
 
         def record_decision(self, ticker, trade_date, final_state):
             harness["calls"].append("record_decision")
+            harness["record_decision_calls"] += 1
             if state_log_failure:
-                raise OSError("state log write failed")
+                real_graph_class._log_state(
+                    self,
+                    trade_date,
+                    _state_log_input(final_state, ticker, trade_date),
+                )
+                return
             state_dir.mkdir(parents=True, exist_ok=True)
             state_log.write_text(json.dumps({"decision": "Hold"}), encoding="utf-8")
+
+        def run_settings(self):
+            return {}
 
         def clear_checkpoint_on_success(self, ticker, trade_date, asset_type, portfolio):
             return None
@@ -245,10 +334,9 @@ def _install_harness(
                 raise OSError("report save failed")
             from tradingagents.reporting import write_report_tree
 
-            harness["save_return"] = write_report_tree(
+            return write_report_tree(
                 final_state, ticker, save_path, settings=None, html=html
             )
-            return harness["save_return"]
 
     monkeypatch.setattr(run_mod, "TradingAgentsGraph", FakeGraph)
     monkeypatch.setattr(run_mod, "get_user_selections", lambda flags=None: dict(selections))
@@ -264,17 +352,12 @@ def _install_harness(
     monkeypatch.setattr(run_mod, "update_research_team_status", lambda *args, **kwargs: None)
     monkeypatch.setattr(run_mod, "display_agent_summary", lambda *args, **kwargs: None)
     monkeypatch.setattr(run_mod, "display_complete_report", lambda *args, **kwargs: None)
-    monkeypatch.setattr(run_mod, "console", _FakeConsole())
-    monkeypatch.setattr(run_mod, "is_review", lambda rating: False)
-    monkeypatch.setattr(run_mod, "run_rating", lambda state: "Hold")
+    monkeypatch.setattr(run_mod, "console", harness["console"])
     monkeypatch.setattr(run_mod, "message_buffer", _FakeBuffer())
-    monkeypatch.setattr(run_mod, "_reserve_run_directory", fake_reserve, raising=False)
-    monkeypatch.setattr(run_mod, "_finalize_run_manifest", fake_finalize, raising=False)
-    return harness, config, save, html
+    return harness, save, html
 
 
-def _run(monkeypatch, tmp_path, **options):
-    harness, config, save, html = _install_harness(monkeypatch, tmp_path, **options)
+def _invoke(harness, save, html):
     run_mod.run_analysis(
         checkpoint=False,
         flags={
@@ -289,125 +372,229 @@ def _run(monkeypatch, tmp_path, **options):
     return harness
 
 
-def _artifacts_by_path(harness):
-    return {
-        artifact["path"].replace("\\", "/"): artifact
-        for artifact in harness["artifacts"]
+def _run(monkeypatch, tmp_path, **options):
+    harness, save, html = _install_harness(monkeypatch, tmp_path, **options)
+    return _invoke(harness, save, html)
+
+
+def _run_dir(harness):
+    dirs = [path for path in harness["run_base"].iterdir() if path.is_dir()]
+    assert len(dirs) == 1, dirs
+    return dirs[0]
+
+
+def _manifest(harness):
+    path = _run_dir(harness) / "manifest.json"
+    assert path.is_file()
+    return path, json.loads(path.read_text(encoding="utf-8"))
+
+
+def _artifact_paths(manifest):
+    return [artifact["path"].replace("\\", "/") for artifact in manifest["artifacts"]]
+
+
+def _saved_root(harness):
+    return harness["saved_path"].relative_to(harness["results_root"]).as_posix()
+
+
+def _expected_paths(harness, *, include_saved):
+    expected = {
+        f"{safe_ticker_component(TICKER)}/{TRADE_DATE}/message_tool.log",
+        f"{safe_ticker_component(TICKER)}/TradingAgentsStrategy_logs/full_states_log_{TRADE_DATE}.json",
     }
+    expected.update(
+        f"{safe_ticker_component(TICKER)}/{TRADE_DATE}/reports/{name}"
+        for name in LIVE_SECTIONS
+    )
+    if include_saved:
+        root = _saved_root(harness)
+        expected.update(f"{root}/{name}" for name in SAVED_SECTIONS)
+        expected.add(f"{root}/complete_report.md")
+        expected.add(f"{root}/complete_report.html")
+    return expected
 
 
-def _assert_shared_artifact(paths, suffix):
-    matches = [
-        path
-        for path in paths
-        if path.endswith(suffix)
-    ]
-    assert len(matches) == 1, (suffix, paths)
-    assert paths[matches[0]]["stability"] == "shared_mutable"
+def _assert_exact_inventory(harness, *, include_saved):
+    _, manifest = _manifest(harness)
+    artifacts = manifest["artifacts"]
+    paths = _artifact_paths(manifest)
+    expected = _expected_paths(harness, include_saved=include_saved)
+
+    assert set(paths) == expected
+    assert len(paths) == len(set(paths))
+    assert {artifact["stability"] for artifact in artifacts} == {"shared_mutable"}
+    assert all(artifact["name"] for artifact in artifacts)
+    return manifest
 
 
-def test_success_registers_written_artifacts_and_excludes_stale_files(
+def test_real_cli_success_writes_manifest_exact_inventory_and_output(
     monkeypatch, tmp_path
 ):
     harness = _run(monkeypatch, tmp_path, save=True, html=True)
-    paths = _artifacts_by_path(harness)
-    saved_root = f"reports/{TICKER}_{STAMP}/"
+    manifest = _assert_exact_inventory(harness, include_saved=True)
+    manifest_path, _ = _manifest(harness)
 
-    assert harness["calls"].index("reserve") < harness["calls"].index("graph_init")
-    assert harness["calls"].index("save_reports") < harness["calls"].index("finalize")
+    assert "graph_init" in harness["calls"]
     assert harness["save_calls"] == 1
-    assert harness["save_return"] == harness["saved_path"] / "complete_report.md"
+    assert manifest["identity"]["ticker"] == TICKER
+    assert manifest_path.parent == _run_dir(harness)
+    assert "Manifest written to:" in harness["console"].text
+    assert str(manifest_path) in harness["console"].text
+    assert "stale.md" not in harness["console"].text
 
-    assert saved_root + "complete_report.md" in paths
-    assert saved_root + "complete_report.html" in paths
-    assert saved_root + "1_analysts/market.md" in paths
-    assert saved_root + "2_research/bull.md" in paths
-    _assert_shared_artifact(paths, f"{TICKER}/{TRADE_DATE}/reports/investment_plan.md")
-    _assert_shared_artifact(paths, f"{TICKER}/{TRADE_DATE}/reports/final_trade_decision.md")
-    _assert_shared_artifact(paths, f"{TICKER}/{TRADE_DATE}/message_tool.log")
-    _assert_shared_artifact(
-        paths, f"{TICKER}/TradingAgentsStrategy_logs/full_states_log_{TRADE_DATE}.json"
+
+def test_real_reservation_retries_and_isolates_two_runs(monkeypatch, tmp_path):
+    harness, save, html = _install_harness(
+        monkeypatch, tmp_path, save=False, html=False
     )
-    assert saved_root + "stale.md" not in paths
-    assert f"{TICKER}/{TRADE_DATE}/reports/stale.md" not in paths
+    run_base = harness["run_base"]
+    run_base.mkdir(parents=True, exist_ok=True)
+    for collision_id in COLLISION_IDS:
+        collision = run_base / collision_id
+        collision.mkdir()
+        (collision / "keep.txt").write_text(collision_id, encoding="utf-8")
+
+    sequence = [
+        COLLISION_IDS[0],
+        FIRST_RUN_ID,
+        COLLISION_IDS[1],
+        COLLISION_IDS[2],
+        SECOND_RUN_ID,
+    ]
+    attempts = []
+
+    def uuid4():
+        value = sequence[len(attempts)]
+        attempts.append(value)
+        return SimpleNamespace(hex=value)
+
+    monkeypatch.setattr(run_mod, "uuid", SimpleNamespace(uuid4=uuid4))
+    _invoke(harness, save, html)
+    _invoke(harness, save, html)
+
+    assert attempts == sequence
+    assert harness["calls"].count("graph_init") == 2
+    assert harness["record_decision_calls"] == 2
+    run_dirs = {
+        path.name: path
+        for path in run_base.iterdir()
+        if path.name in {FIRST_RUN_ID, SECOND_RUN_ID}
+    }
+    assert set(run_dirs) == {FIRST_RUN_ID, SECOND_RUN_ID}
+    manifests = [
+        json.loads((run_dirs[run_id] / "manifest.json").read_text(encoding="utf-8"))
+        for run_id in (FIRST_RUN_ID, SECOND_RUN_ID)
+    ]
+    assert len(manifests) == 2
+    assert manifests[0]["identity"] == manifests[1]["identity"]
+    for collision_id in COLLISION_IDS:
+        assert (run_base / collision_id / "keep.txt").read_text(
+            encoding="utf-8"
+        ) == collision_id
 
 
-def test_declined_save_excludes_only_the_optional_save_tree(monkeypatch, tmp_path):
+def test_declined_save_excludes_only_optional_tree(monkeypatch, tmp_path):
     harness = _run(monkeypatch, tmp_path, save=False, html=True)
-    paths = _artifacts_by_path(harness)
 
     assert harness["save_calls"] == 0
-    assert all(not path.startswith(f"reports/{TICKER}_{STAMP}/") for path in paths)
-    _assert_shared_artifact(paths, f"{TICKER}/{TRADE_DATE}/reports/investment_plan.md")
-    _assert_shared_artifact(paths, f"{TICKER}/{TRADE_DATE}/message_tool.log")
-    _assert_shared_artifact(
-        paths, f"{TICKER}/TradingAgentsStrategy_logs/full_states_log_{TRADE_DATE}.json"
-    )
+    _assert_exact_inventory(harness, include_saved=False)
 
 
-def test_whole_save_failure_registers_no_optional_files_even_with_partial_leftover(
-    monkeypatch, tmp_path
-):
+def test_whole_save_failure_excludes_partial_leftover(monkeypatch, tmp_path):
     harness = _run(monkeypatch, tmp_path, save=True, html=True, fail_save=True)
-    paths = _artifacts_by_path(harness)
 
     assert (harness["saved_path"] / "partial.md").is_file()
-    assert all(not path.startswith(f"reports/{TICKER}_{STAMP}/") for path in paths)
-    _assert_shared_artifact(paths, f"{TICKER}/{TRADE_DATE}/reports/investment_plan.md")
-    _assert_shared_artifact(paths, f"{TICKER}/{TRADE_DATE}/message_tool.log")
-    _assert_shared_artifact(
-        paths, f"{TICKER}/TradingAgentsStrategy_logs/full_states_log_{TRADE_DATE}.json"
-    )
+    _assert_exact_inventory(harness, include_saved=False)
 
 
-def test_external_save_succeeds_but_is_omitted_from_the_manifest(monkeypatch, tmp_path):
+def test_external_save_is_written_but_omitted_from_manifest(monkeypatch, tmp_path):
     harness = _run(monkeypatch, tmp_path, save=True, html=True, external_save=True)
-    paths = _artifacts_by_path(harness)
+    _, manifest = _manifest(harness)
+    paths = _artifact_paths(manifest)
 
     assert harness["save_calls"] == 1
     assert (harness["saved_path"] / "complete_report.md").is_file()
     assert all("external_reports" not in path for path in paths)
-    _assert_shared_artifact(paths, f"{TICKER}/{TRADE_DATE}/reports/investment_plan.md")
-    _assert_shared_artifact(paths, f"{TICKER}/{TRADE_DATE}/message_tool.log")
-    _assert_shared_artifact(
-        paths, f"{TICKER}/TradingAgentsStrategy_logs/full_states_log_{TRADE_DATE}.json"
-    )
+    expected = _expected_paths(harness, include_saved=False)
+    assert set(paths) == expected
 
 
-def test_state_log_failure_propagates_and_prevents_manifest_finalization(
-    monkeypatch, tmp_path
-):
-    harness, _, _, _ = _install_harness(
-        monkeypatch, tmp_path, state_log_failure=True
+def test_state_log_write_failure_propagates_without_manifest(monkeypatch, tmp_path):
+    harness, save, html = _install_harness(
+        monkeypatch, tmp_path, state_log_failure="write"
     )
 
     with pytest.raises(OSError, match="state log write failed"):
-        run_mod.run_analysis(
-            checkpoint=False,
-            flags={
-                "ticker": TICKER,
-                "date": TRADE_DATE,
-                "analysts": ["market"],
-                "save": False,
-                "show": False,
-                "html": False,
-            },
-        )
+        _invoke(harness, save, html)
 
     assert harness["state_log"].read_text(encoding="utf-8") == "old state log"
-    assert "finalize" not in harness["calls"]
-    assert harness["manifest_path"] is None
+    assert not (_run_dir(harness) / "manifest.json").exists()
 
 
-def test_reservation_failure_exits_before_graph_and_preserves_existing_files(
+def test_state_log_close_failure_propagates_without_manifest(monkeypatch, tmp_path):
+    harness, save, html = _install_harness(
+        monkeypatch, tmp_path, state_log_failure="close"
+    )
+
+    with pytest.raises(OSError, match="state log close failed"):
+        _invoke(harness, save, html)
+
+    assert harness["state_log"].is_file()
+    assert harness["state_log"].read_text(encoding="utf-8") != "old state log"
+    assert not (_run_dir(harness) / "manifest.json").exists()
+
+
+@pytest.mark.parametrize("rating", ["Hold", "REVIEW"])
+def test_manifest_write_failure_is_fail_soft_with_effective_rating(
+    monkeypatch, tmp_path, rating
+):
+    harness = _run(
+        monkeypatch,
+        tmp_path,
+        save=True,
+        html=True,
+        fail_manifest_write=True,
+        rating=rating,
+    )
+    run_dir = _run_dir(harness)
+    rating_before = harness["rating_before_manifest_failure"]
+    rating_after = run_mod.run_rating(harness["final_state"])
+
+    assert harness["record_decision_calls"] == 1
+    assert harness["effective_rating"] == rating
+    assert harness["final_state"]["final_rating"] == rating
+    assert rating_before == rating
+    assert rating_after == rating
+    assert (harness["saved_path"] / "complete_report.md").is_file()
+    assert not (run_dir / "manifest.json").exists()
+    assert "Manifest not saved" in harness["console"].text
+    assert "analysis result above stands" in harness["console"].text
+    assert "Manifest written to:" not in harness["console"].text
+    if rating == "REVIEW":
+        assert "recorded for review" in harness["console"].text
+    else:
+        assert "recorded for review" not in harness["console"].text
+
+
+def test_tc23_effective_config_allowlist_and_secret_exclusion(monkeypatch, tmp_path):
+    harness = _run(monkeypatch, tmp_path, save=False, html=False)
+    _, manifest = _manifest(harness)
+
+    assert set(manifest["config"]) == set(manifest_module.CONFIG_ALLOWLIST)
+    assert manifest["config"]["input_condensation_audit_note"] == "note-from-run"
+    serialized = json.dumps(manifest, ensure_ascii=False)
+    assert "sk-secret" not in serialized
+    assert "pw-secret" not in serialized
+    assert "unknown_field" not in serialized
+
+
+def test_reservation_collision_exits_before_graph_and_preserves_existing_files(
     monkeypatch, tmp_path
 ):
-    harness, _, _, _ = _install_harness(
-        monkeypatch, tmp_path, reserve_failure=True
+    harness, save, html = _install_harness(
+        monkeypatch, tmp_path, reserve_collision=True
     )
-    existing = tmp_path / "results" / "keep.txt"
-    existing.parent.mkdir(parents=True, exist_ok=True)
-    existing.write_text("keep", encoding="utf-8")
+    keep = harness["run_base"] / COLLISION_ID / "keep.txt"
 
     with pytest.raises(run_mod.typer.Exit):
         run_mod.run_analysis(
@@ -416,11 +603,13 @@ def test_reservation_failure_exits_before_graph_and_preserves_existing_files(
                 "ticker": TICKER,
                 "date": TRADE_DATE,
                 "analysts": ["market"],
-                "save": False,
+                "save": save,
                 "show": False,
-                "html": False,
+                "html": html,
             },
         )
 
+    assert harness["reservation_attempts"] == [COLLISION_ID] * 3
     assert "graph_init" not in harness["calls"]
-    assert existing.read_text(encoding="utf-8") == "keep"
+    assert keep.read_text(encoding="utf-8") == "keep"
+    assert not (_run_dir(harness) / "manifest.json").exists()
