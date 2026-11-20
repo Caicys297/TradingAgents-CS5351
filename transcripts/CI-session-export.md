@@ -1,32 +1,35 @@
-# CI six-gate batch — exported session record
+# CI six-gate batch — authored activity summary (NOT a raw session export)
 
-This is a condensed, redacted export of the OpenCode session that produced the
-consolidated CI gate batch. It records only actions actually performed in that
-session; no prompts, token counts, or outputs are invented. The complete raw
-session is retained by Member F outside the repository for coursework evidence.
+> Correction 5 honesty note: this file is an **authored summary** of work done in
+> an OpenCode session. It is **not** a raw, machine-exported transcript, and it is
+> not claimed to be one. Every item below reflects actions actually performed; no
+> prompts, token counts, or tool outputs are invented. Authenticity is verified by
+> human review, not by this file.
 
 - Task: implement authorized CI gate checkers (Schema, AI-use, type, dependency)
-  in one consolidated PR.
-- Usage scope: repo inspection, checker scripts, offline tests, CI wiring,
-  baselines. No production feature code.
-- Implementation baseline: `a2644eba507493df8305f32cd30003d3eeb33d61`.
+  plus deterministic O5 semantic cases, in one consolidated PR.
+- Usage scope: repository inspection, checker scripts, offline tests, CI workflow
+  wiring, and baseline files. No production feature code changes.
+- Implementation baseline (real main): `99612ca64445ec650b9a5f42203fa166783800b1`.
 
 ## Actions (as performed)
 
-1. Inspected live main `a2644eb` via GitHub API: workflows, pyproject, docs/req,
-   transcripts. Confirmed only ruff as existing tooling.
-2. Created an isolated worktree `feat/ci-six-gates` from `origin/main`.
-3. Created an isolated Python 3.12 venv; `pip install -e ".[dev]"`.
-4. Authored `scripts/validate_requirements.py` (safe YAML with duplicate-key
-   rejection, Draft 2020-12 schema check, duplicate-ID check).
-5. Authored `scripts/check_ai_use_log.py` (structural AI-use evidence check).
-6. Authored `scripts/typecheck.py` (mypy itemized baseline, new-diagnostic
-   blocking) and `scripts/dep_audit.py` (pip-audit installed-env, new-finding
-   blocking, scanner-failure-as-failure).
-7. Generated baselines: `ci/baselines/mypy-baseline.txt` (7 identities),
-   `ci/baselines/pip-audit-baseline.json` (0 findings; 115 deps scanned).
-8. Authored `test/offline/test_ci_gate_checkers.py`; 16 tests passed.
-9. Wired CI jobs in `.github/workflows/ci.yml` (schema, type-check,
-   dependency-audit, ai-use-log) with least-privilege permissions.
+1. Verified upstream state via GitHub API: main `99612ca` (PR #29 O5 merged),
+   PR #27 draft @`1731943`, PR #30 @`da8d328`.
+2. Reconstructed the working base from main `99612ca` (git transport was down;
+   content obtained via GitHub API tarball).
+3. Authored `scripts/validate_requirements.py`, `scripts/check_ai_use_log.py`,
+   `scripts/typecheck.py`, `scripts/dep_audit.py` (corrected for trusted-base
+   baselines, per-diagnostic multiplicity, structural dependency-report
+   validation, and genuine new-entry AI-use checks).
+4. Generated baselines: `ci/baselines/mypy-baseline.txt` (identity-per-occurrence),
+   `ci/baselines/pip-audit-baseline.json`.
+5. Authored offline checker tests in `test/offline/test_ci_gate_checkers.py`.
+6. Wired CI jobs: schema, type-check, dependency-audit, ai-use-log,
+   semantic-deterministic; least-privilege permissions.
 
-Session reference: this file, `transcripts/CI-session-export.md`.
+## Session evidence
+
+- The genuine raw export is retained by Member F outside this repository.
+  A reviewer-accessible copy must be attached by F before final acceptance.
+  This file does not claim a URL or a verified raw export.

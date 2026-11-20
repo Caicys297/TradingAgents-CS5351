@@ -1,62 +1,83 @@
 #!/usr/bin/env python3
-"""Audit CI-installed dependencies and fail on newly introduced High/Critical vulns.
+"""Audit CI-installed dependencies and fail on newly introduced vulnerabilities.
 
-Policy (per A/C + D):
-- Scans the *actually installed* environment (direct + transitive), not just a
-  requirements file.
-- ``ci/baselines/pip-audit-baseline.json`` records the accepted existing
-  findings by (package, id). Newly introduced High/Critical IDs block.
-- Existing findings are *not* silently whitelisted: the baseline file is the
-  documented record and each entry carries a note. Security exceptions require
-  explicit approval (see the baseline's ``_policy`` block) — this script never
-  invents owners, severities, or approvals.
-- A scanner failure / network-database failure is reported as a distinct
-  non-zero outcome, never treated as "clean".
+Policy and honesty notes (corrections 1 & 4):
+- The baseline is read from the **trusted base revision**
+  (``origin/<base>:ci/baselines/pip-audit-baseline.json``), never from the PR tree,
+  so a PR cannot widen its own allowances. Bootstrap uses the PR's file with a
+  clear notice for A review.
+- Scans the *actually installed* environment (direct + transitive).
+- pip-audit's JSON does not carry severity. This checker therefore treats **every
+  new finding as blocking** — a deliberately *conservative temporary* behavior,
+  NOT verified severity-aware High/Critical classification. Adopting severity-aware
+  blocking requires an additional authoritative source (e.g. OSV severity) and an
+  owner decision; that is called out, not fabricated.
+- Allowances are keyed by (package, id, affected-version); an allowance never
+  silently covers a future affected version.
+- Structural validation: a report that is not a well-formed pip-audit document
+  (e.g. ``{}``) is a scanner failure (exit 2), never "clean". Skipped / unresolvable
+  packages are reported. The local editable project is identified separately from
+  unaudited third-party dependencies.
 
 Usage:
     python scripts/dep_audit.py
     python scripts/dep_audit.py --update-baseline   # human-only
 
 Exit codes:
-    0  no new High/Critical findings
-    1  new High/Critical finding(s) (blocking)
-    2  scanner failed / audit could not run (treated as failure; never clean)
+    0  no new findings (and report structure valid)
+    1  new finding(s) beyond the trusted baseline
+    2  scanner failed / report invalid / could not validate
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
 
 BASELINE = Path("ci/baselines/pip-audit-baseline.json")
-BLOCKING_SEVERITIES = {"HIGH", "CRITICAL"}
-HIGH_SIGNAL_FIX = ("No fix", "no fix")  # informational only
+VALID_APPROVAL = {"APPROVED", "ACCEPTED"}
+
+
+class ScannerError(RuntimeError):
+    pass
 
 
 def run_pip_audit() -> dict:
     cmd = [sys.executable, "-m", "pip_audit", "--format", "json", "--progress-spinner", "off"]
     try:
         proc = subprocess.run(cmd, capture_output=True, text=True)
-    except FileNotFoundError:
-        print("ERROR: pip-audit not installed in this environment", file=sys.stderr)
-        raise SystemExit(2) from None
-    # pip-audit exit 1 = vulnerabilities found (still valid JSON); >1 = failure.
+    except FileNotFoundError as exc:
+        raise ScannerError("pip-audit not installed") from exc
     if proc.returncode not in (0, 1):
-        print("ERROR: pip-audit failed to run (network/DB/scanner failure):", file=sys.stderr)
-        print(proc.stderr.strip()[:2000], file=sys.stderr)
-        raise SystemExit(2) from None
+        raise ScannerError(
+            f"pip-audit failed (exit {proc.returncode}): {proc.stderr.strip()[:1500]}"
+        )
     try:
-        return json.loads(proc.stdout)
-    except json.JSONDecodeError:
-        print("ERROR: pip-audit produced non-JSON output; treating as scanner failure", file=sys.stderr)
-        raise SystemExit(2) from None
+        report = json.loads(proc.stdout)
+    except json.JSONDecodeError as exc:
+        raise ScannerError("pip-audit produced non-JSON output") from exc
+    validate_report(report)
+    return report
+
+
+def validate_report(report: object) -> None:
+    """Reject structurally-incomplete reports (e.g. ``{}``) as scanner failures."""
+    if not isinstance(report, dict) or "dependencies" not in report:
+        raise ScannerError("report has no 'dependencies' key (incomplete scan)")
+    if not isinstance(report["dependencies"], list):
+        raise ScannerError("report 'dependencies' is not a list")
+    # pip-audit includes a 'skip_reason'/'skips' in some versions; capture if present.
+    deps = report["dependencies"]
+    if deps and not all(isinstance(d, dict) and "name" in d for d in deps):
+        raise ScannerError("report dependency entries malformed")
 
 
 def findings(report: dict) -> list[tuple[str, str, str, str]]:
-    """Return list of (package, version, vuln_id, fix) from a pip-audit JSON report."""
+    """(package, installed_version, vuln_id, fix)."""
     out: list[tuple[str, str, str, str]] = []
     for dep in report.get("dependencies", []):
         name = dep.get("name", "?")
@@ -64,22 +85,73 @@ def findings(report: dict) -> list[tuple[str, str, str, str]]:
         for vuln in dep.get("vulns", []) or []:
             vid = vuln.get("id", "?")
             fixes = vuln.get("fix_versions", []) or []
-            fix = ",".join(fixes) if fixes else "no fix available"
-            out.append((name, version, vid, fix))
+            out.append((name, version, vid, ",".join(fixes) if fixes else "no fix available"))
     return out
 
 
-def load_baseline() -> dict:
-    if not BASELINE.is_file():
-        return {}
-    return json.loads(BASELINE.read_text())
+def skipped(report: dict) -> list[str]:
+    out: list[str] = []
+    for dep in report.get("dependencies", []):
+        reason = dep.get("skip_reason")
+        if reason:
+            out.append(f"{dep.get('name','?')}=={dep.get('version','?')}: {reason}")
+    return out
 
 
-def baseline_keys(base: dict) -> set[tuple[str, str]]:
-    keys: set[tuple[str, str]] = set()
+def local_editable(report: dict) -> list[str]:
+    """Identify this project's own editable install (not third-party)."""
+    names: list[str] = []
+    for dep in report.get("dependencies", []):
+        name = str(dep.get("name", "")).lower()
+        if name in ("tradingagents",):
+            names.append(f"{dep.get('name')}=={dep.get('version')}")
+    return names
+
+
+def _load_baseline() -> tuple[dict, str]:
+    base_ref = os.environ.get("GITHUB_BASE_REF", "").strip()
+    if os.environ.get("GITHUB_EVENT_NAME") == "pull_request" and base_ref:
+        try:
+            proc = subprocess.run(
+                ["git", "show", f"origin/{base_ref}:{BASELINE.as_posix()}"],
+                capture_output=True, text=True,
+            )
+        except FileNotFoundError:
+            proc = None
+        if proc is not None and proc.returncode == 0:
+            return json.loads(proc.stdout), f"trusted base origin/{base_ref}"
+        print(
+            "BOOTSTRAP: dependency baseline absent on base revision; using this PR's "
+            "checked-in baseline. A must review this initial baseline.",
+            file=sys.stderr,
+        )
+    if BASELINE.is_file():
+        return json.loads(BASELINE.read_text()), f"working tree {BASELINE}"
+    return {"findings": []}, "empty"
+
+
+def baseline_keys(base: dict) -> set[tuple[str, str, str]]:
+    keys: set[tuple[str, str, str]] = set()
     for entry in base.get("findings", []):
-        keys.add((entry.get("package", ""), entry.get("id", "")))
+        pkg = entry.get("package", "")
+        vid = entry.get("id", "")
+        ver = entry.get("affected_version", entry.get("version", ""))
+        keys.add((pkg, vid, ver))
     return keys
+
+
+def validate_baseline(base: dict) -> list[str]:
+    """Reject PENDING owners / unapproved exceptions in the baseline."""
+    problems: list[str] = []
+    for entry in base.get("findings", []):
+        if entry.get("owner", "PENDING") == "PENDING":
+            problems.append(f"baseline finding {entry.get('package')} {entry.get('id')} has no owner")
+        if entry.get("status") and entry["status"] not in VALID_APPROVAL:
+            problems.append(
+                f"baseline finding {entry.get('package')} {entry.get('id')} status "
+                f"{entry.get('status')!r} not approved"
+            )
+    return problems
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -87,52 +159,70 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--update-baseline", action="store_true", help="rewrite baseline (human-only)")
     args = parser.parse_args(argv)
 
-    report = run_pip_audit()
+    try:
+        report = run_pip_audit()
+    except ScannerError as exc:
+        print(f"ERROR: dependency scan failed: {exc}", file=sys.stderr)
+        return 2
+
     found = findings(report)
 
     if args.update_baseline:
         BASELINE.parent.mkdir(parents=True, exist_ok=True)
         doc = {
             "_policy": (
-                "Existing findings accepted at baseline; owners/remediation/exception "
-                "approval are recorded separately and reviewed by A/C. New High/Critical "
-                "IDs block. This file must not be widened by a PR's own changes."
+                "Existing findings; each requires owner + remediation + (for any "
+                "exception) approved status. New findings block. PRs must not widen "
+                "this file. Severity is not provided by pip-audit JSON; new findings "
+                "block conservatively until an authoritative severity source is adopted."
             ),
+            "scanned_packages": len(report.get("dependencies", [])),
             "findings": [
-                {"package": p, "version": v, "id": vid, "fix": fix, "owner": "PENDING", "note": "PENDING"}
+                {
+                    "package": p, "affected_version": v, "id": vid,
+                    "fix": fix, "owner": "PENDING", "status": "PENDING",
+                }
                 for (p, v, vid, fix) in found
             ],
         }
         BASELINE.write_text(json.dumps(doc, indent=2) + "\n")
-        print(f"baseline updated: {len(found)} finding(s)")
+        print(f"baseline updated: {len(found)} finding(s) from {len(report.get('dependencies', []))} packages")
         return 0
 
-    base_keys = baseline_keys(load_baseline())
-    current_keys = {(p, vid) for (p, _v, vid, _f) in found}
+    base, source = _load_baseline()
+    meta_problems = validate_baseline(base)
+    if meta_problems:
+        print("ERROR: baseline metadata invalid (owners/exceptions must be approved):", file=sys.stderr)
+        for p in meta_problems:
+            print(f"  - {p}", file=sys.stderr)
+        return 2
 
-    new = [
-        (p, v, vid, fix)
-        for (p, v, vid, fix) in found
-        if (p, vid) not in base_keys
-    ]
-    # Severity is unavailable from pip-audit's JSON; treat every *new* finding as
-    # potentially High/Critical and block, while surfacing the ID and fix so the
-    # owner can record the authoritative severity from the advisory.
-    new_blocking = new  # conservative: any new finding blocks
+    base_keys = baseline_keys(base)
+    new = [(p, v, vid, fix) for (p, v, vid, fix) in found if (p, vid, v) not in base_keys]
 
-    if new_blocking:
-        print(f"DEPENDENCY AUDIT FAILED: {len(new_blocking)} new finding(s) beyond baseline:", file=sys.stderr)
-        for (p, v, vid, fix) in new_blocking:
+    skip = skipped(report)
+    signed = local_editable(report)
+    print(f"scanned packages: {len(report.get('dependencies', []))} (baseline source: {source})")
+    if signed:
+        print(f"local editable project (audited for version only): {', '.join(signed)}")
+    if skip:
+        print("skipped/unscannable packages (reported, not treated as clean):")
+        for s in skip:
+            print(f"  - {s}")
+
+    if new:
+        print(f"DEPENDENCY AUDIT FAILED: {len(new)} new finding(s) beyond baseline:", file=sys.stderr)
+        for (p, v, vid, fix) in new:
             print(f"  - {p}=={v}  {vid}  fix={fix}", file=sys.stderr)
         print(
-            "  (severity not provided by pip-audit JSON; record authoritative severity "
-            "from the advisory before deciding High/Critical policy; new findings block by default)",
+            "  NOTE: severity not supplied by pip-audit JSON; ALL new findings block "
+            "(conservative temporary policy, not severity-aware). Adopt an authoritative "
+            "severity source + owner decision to refine.",
             file=sys.stderr,
         )
         return 1
 
-    removed = base_keys - current_keys
-    print(f"OK: no new dependency findings ({len(found)} total, {len(removed)} baseline item(s) resolved)")
+    print(f"OK: no new dependency findings ({len(found)} total)")
     return 0
 
 

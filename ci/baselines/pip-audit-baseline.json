@@ -1,4 +1,5 @@
 {
-  "_policy": "Existing findings accepted at baseline; owners/remediation/exception approval are recorded separately and reviewed by A/C. New High/Critical IDs block. This file must not be widened by a PR's own changes.",
+  "_policy": "Existing findings; each requires owner + remediation + (for any exception) approved status. New findings block. PRs must not widen this file. Severity is not provided by pip-audit JSON; new findings block conservatively until an authoritative severity source is adopted.",
+  "scanned_packages": 115,
   "findings": []
 }
