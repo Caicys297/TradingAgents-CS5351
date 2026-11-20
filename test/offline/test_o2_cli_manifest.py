@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 import json
 from contextlib import nullcontext
 from pathlib import Path
@@ -17,6 +18,9 @@ TICKER = "NVDA"
 TRADE_DATE = "2026-11-19"
 STAMP = "20260101_000000"
 COLLISION_ID = "0" * 32
+COLLISION_IDS = ("a" * 32, "b" * 32, "c" * 32)
+FIRST_RUN_ID = "1" * 32
+SECOND_RUN_ID = "2" * 32
 REQUIRED_HOOKS = (
     "_reserve_run_directory",
     "_finalize_run_manifest",
@@ -125,6 +129,56 @@ class _FakeConsole:
         return "\n".join(self.lines)
 
 
+class _WriteFailingFile:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+    def write(self, data):
+        raise OSError("state log write failed")
+
+
+class _CloseFailingFile:
+    def __init__(self, handle):
+        self._handle = handle
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self._handle.close()
+        if exc_type is None:
+            raise OSError("state log close failed")
+        return False
+
+    def __getattr__(self, name):
+        return getattr(self._handle, name)
+
+
+def _state_log_input(final_state, ticker, trade_date):
+    return {
+        **final_state,
+        "company_of_interest": ticker,
+        "trade_date": trade_date,
+        "sentiment_report": final_state.get("sentiment_report", ""),
+        "news_report": final_state.get("news_report", ""),
+        "fundamentals_report": final_state.get("fundamentals_report", ""),
+        "investment_debate_state": {
+            **final_state["investment_debate_state"],
+            "history": final_state["investment_debate_state"].get("history", ""),
+            "current_response": final_state["investment_debate_state"].get(
+                "current_response", ""
+            ),
+        },
+        "risk_debate_state": {
+            **final_state["risk_debate_state"],
+            "history": final_state["risk_debate_state"].get("history", ""),
+        },
+    }
+
+
 def _install_harness(
     monkeypatch,
     tmp_path,
@@ -132,10 +186,11 @@ def _install_harness(
     save=True,
     html=True,
     fail_save=False,
-    state_log_failure=False,
+    state_log_failure=None,
     reserve_collision=False,
     external_save=False,
     fail_manifest_write=False,
+    rating="Hold",
 ):
     results_root = tmp_path / "results"
     live_reports = results_root / TICKER / TRADE_DATE / "reports"
@@ -166,6 +221,7 @@ def _install_harness(
         "graph": None,
         "console": _FakeConsole(),
         "rated_state": None,
+        "rating": rating,
     }
 
     config = {
@@ -203,6 +259,21 @@ def _install_harness(
 
         monkeypatch.setattr(manifest_module, "write_manifest", fail_write)
 
+    if state_log_failure:
+        assert state_log_failure in {"write", "close"}
+        real_open = builtins.open
+
+        def failing_open(path, mode="r", *args, **kwargs):
+            if "TradingAgentsStrategy_logs" in str(path) and "w" in mode:
+                if state_log_failure == "write":
+                    return _WriteFailingFile()
+                return _CloseFailingFile(real_open(path, mode, *args, **kwargs))
+            return real_open(path, mode, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "open", failing_open)
+
+    real_graph_class = run_mod.TradingAgentsGraph
+
     class FakeGraph:
         def __init__(self, analysts, *, config, debug):
             harness["calls"].append("graph_init")
@@ -226,9 +297,17 @@ def _install_harness(
             harness["calls"].append("record_decision")
             harness["record_decision_calls"] += 1
             if state_log_failure:
-                raise OSError("state log write failed")
+                real_graph_class._log_state(
+                    self,
+                    trade_date,
+                    _state_log_input(final_state, ticker, trade_date),
+                )
+                return
             state_dir.mkdir(parents=True, exist_ok=True)
             state_log.write_text(json.dumps({"decision": "Hold"}), encoding="utf-8")
+
+        def run_settings(self):
+            return {}
 
         def clear_checkpoint_on_success(self, ticker, trade_date, asset_type, portfolio):
             return None
@@ -255,7 +334,7 @@ def _install_harness(
 
     def fake_rating(state):
         harness["rated_state"] = state
-        return "Hold"
+        return harness["rating"]
 
     monkeypatch.setattr(run_mod, "TradingAgentsGraph", FakeGraph)
     monkeypatch.setattr(run_mod, "get_user_selections", lambda flags=None: dict(selections))
@@ -272,14 +351,13 @@ def _install_harness(
     monkeypatch.setattr(run_mod, "display_agent_summary", lambda *args, **kwargs: None)
     monkeypatch.setattr(run_mod, "display_complete_report", lambda *args, **kwargs: None)
     monkeypatch.setattr(run_mod, "console", harness["console"])
-    monkeypatch.setattr(run_mod, "is_review", lambda rating: False)
+    monkeypatch.setattr(run_mod, "is_review", lambda rating: rating == "REVIEW")
     monkeypatch.setattr(run_mod, "run_rating", fake_rating)
     monkeypatch.setattr(run_mod, "message_buffer", _FakeBuffer())
     return harness, save, html
 
 
-def _run(monkeypatch, tmp_path, **options):
-    harness, save, html = _install_harness(monkeypatch, tmp_path, **options)
+def _invoke(harness, save, html):
     run_mod.run_analysis(
         checkpoint=False,
         flags={
@@ -292,6 +370,11 @@ def _run(monkeypatch, tmp_path, **options):
         },
     )
     return harness
+
+
+def _run(monkeypatch, tmp_path, **options):
+    harness, save, html = _install_harness(monkeypatch, tmp_path, **options)
+    return _invoke(harness, save, html)
 
 
 def _run_dir(harness):
@@ -360,6 +443,56 @@ def test_real_cli_success_writes_manifest_exact_inventory_and_output(
     assert "stale.md" not in harness["console"].text
 
 
+def test_real_reservation_retries_and_isolates_two_runs(monkeypatch, tmp_path):
+    harness, save, html = _install_harness(
+        monkeypatch, tmp_path, save=False, html=False
+    )
+    run_base = harness["run_base"]
+    run_base.mkdir(parents=True, exist_ok=True)
+    for collision_id in COLLISION_IDS:
+        collision = run_base / collision_id
+        collision.mkdir()
+        (collision / "keep.txt").write_text(collision_id, encoding="utf-8")
+
+    sequence = [
+        COLLISION_IDS[0],
+        FIRST_RUN_ID,
+        COLLISION_IDS[1],
+        COLLISION_IDS[2],
+        SECOND_RUN_ID,
+    ]
+    attempts = []
+
+    def uuid4():
+        value = sequence[len(attempts)]
+        attempts.append(value)
+        return SimpleNamespace(hex=value)
+
+    monkeypatch.setattr(run_mod, "uuid", SimpleNamespace(uuid4=uuid4))
+    _invoke(harness, save, html)
+    _invoke(harness, save, html)
+
+    assert attempts == sequence
+    assert harness["calls"].count("graph_init") == 2
+    assert harness["record_decision_calls"] == 2
+    run_dirs = {
+        path.name: path
+        for path in run_base.iterdir()
+        if path.name in {FIRST_RUN_ID, SECOND_RUN_ID}
+    }
+    assert set(run_dirs) == {FIRST_RUN_ID, SECOND_RUN_ID}
+    manifests = [
+        json.loads((run_dirs[run_id] / "manifest.json").read_text(encoding="utf-8"))
+        for run_id in (FIRST_RUN_ID, SECOND_RUN_ID)
+    ]
+    assert len(manifests) == 2
+    assert manifests[0]["identity"] == manifests[1]["identity"]
+    for collision_id in COLLISION_IDS:
+        assert (run_base / collision_id / "keep.txt").read_text(
+            encoding="utf-8"
+        ) == collision_id
+
+
 def test_declined_save_excludes_only_optional_tree(monkeypatch, tmp_path):
     harness = _run(monkeypatch, tmp_path, save=False, html=True)
 
@@ -388,32 +521,42 @@ def test_external_save_is_written_but_omitted_from_manifest(monkeypatch, tmp_pat
 
 def test_state_log_write_failure_propagates_without_manifest(monkeypatch, tmp_path):
     harness, save, html = _install_harness(
-        monkeypatch, tmp_path, state_log_failure=True
+        monkeypatch, tmp_path, state_log_failure="write"
     )
 
     with pytest.raises(OSError, match="state log write failed"):
-        run_mod.run_analysis(
-            checkpoint=False,
-            flags={
-                "ticker": TICKER,
-                "date": TRADE_DATE,
-                "analysts": ["market"],
-                "save": save,
-                "show": False,
-                "html": html,
-            },
-        )
+        _invoke(harness, save, html)
 
     assert harness["state_log"].read_text(encoding="utf-8") == "old state log"
     assert not (_run_dir(harness) / "manifest.json").exists()
     assert harness["rated_state"] is None
 
 
-def test_manifest_write_failure_is_fail_soft_with_warning_and_no_partial(
-    monkeypatch, tmp_path
+def test_state_log_close_failure_propagates_without_manifest(monkeypatch, tmp_path):
+    harness, save, html = _install_harness(
+        monkeypatch, tmp_path, state_log_failure="close"
+    )
+
+    with pytest.raises(OSError, match="state log close failed"):
+        _invoke(harness, save, html)
+
+    assert harness["state_log"].is_file()
+    assert harness["state_log"].read_text(encoding="utf-8") != "old state log"
+    assert not (_run_dir(harness) / "manifest.json").exists()
+    assert harness["rated_state"] is None
+
+
+@pytest.mark.parametrize("rating", ["Hold", "REVIEW"])
+def test_manifest_write_failure_is_fail_soft_with_effective_rating(
+    monkeypatch, tmp_path, rating
 ):
     harness = _run(
-        monkeypatch, tmp_path, save=True, html=True, fail_manifest_write=True
+        monkeypatch,
+        tmp_path,
+        save=True,
+        html=True,
+        fail_manifest_write=True,
+        rating=rating,
     )
     run_dir = _run_dir(harness)
 
@@ -424,6 +567,10 @@ def test_manifest_write_failure_is_fail_soft_with_warning_and_no_partial(
     assert "Manifest not saved" in harness["console"].text
     assert "analysis result above stands" in harness["console"].text
     assert "Manifest written to:" not in harness["console"].text
+    if rating == "REVIEW":
+        assert "recorded for review" in harness["console"].text
+    else:
+        assert "recorded for review" not in harness["console"].text
 
 
 def test_tc23_effective_config_allowlist_and_secret_exclusion(monkeypatch, tmp_path):
