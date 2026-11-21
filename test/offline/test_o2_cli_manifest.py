@@ -430,10 +430,23 @@ def _assert_exact_inventory(harness, *, include_saved):
 def test_real_cli_success_writes_manifest_exact_inventory_and_output(
     monkeypatch, tmp_path
 ):
-    harness = _run(monkeypatch, tmp_path, save=True, html=True)
+    harness, save, html = _install_harness(
+        monkeypatch, tmp_path, save=True, html=True
+    )
+    real_finalize = run_mod._finalize_run_manifest
+    finalize_calls = []
+
+    def spy_finalize(*args, **kwargs):
+        finalize_calls.append(1)
+        return real_finalize(*args, **kwargs)
+
+    monkeypatch.setattr(run_mod, "_finalize_run_manifest", spy_finalize)
+    _invoke(harness, save, html)
+
     manifest = _assert_exact_inventory(harness, include_saved=True)
     manifest_path, _ = _manifest(harness)
 
+    assert finalize_calls == [1]
     assert "graph_init" in harness["calls"]
     assert harness["save_calls"] == 1
     assert manifest["identity"]["ticker"] == TICKER

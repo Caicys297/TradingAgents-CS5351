@@ -33,5 +33,51 @@ batch, per REQ-GOV-06. The repository does not prescribe a fixed path or schema.
   human context only; it is **not** transcript content and is explicitly NOT accepted
   as session evidence.
 
+## Entry — Draft PR #32 continuation (CI fixes)
+
+- Task: fix two CI failures on Draft PR #32 — make the type-check base-resolution
+  test independent of a real mypy binary, and add this AI-use entry.
+- Usage scope: `scripts/typecheck.py` test, `test/offline/test_ci_gate_checkers.py`,
+  and `transcripts/CI-AI-Use-Log.md`. No production feature code.
+- OpenCode session: `ses_e27f33c94ffeOKeCXPrAQQW93Z`
+  ("Revising CS5351 CI Gate plan for team review") — the session that produced this
+  continuation.
+- Session/export evidence (accessible): `transcripts/CI-session-excerpt.md` (genuine,
+  reviewer-accessible excerpt of the session's real dialogue).
+- Implementation commit: `3ec9c808ff02ea9d982916ebe27968efe1ea6bad` (in the PR #32
+  range `origin/main..HEAD`; follow-up evidence-only commits may reference preceding
+  implementation commits).
+
 > Authenticity/access is verified by humans; the automated check verifies only
 > structure and reference association, not truthfulness.
+
+## Entry — #32 historical-approval compatibility repair (A review 6005119233)
+
+- Task: implement and then tighten the bounded historical natural-language
+  approval compatibility route for #32 (A review 6005119233): bind the real
+  workflow batch, exact original artifact (source PR derived from GitHub's
+  `issue_url`), one kind + full plan identity, original body digest/timestamp,
+  review `APPROVED` state and `commit_id`, and a verified A delegation for F's
+  #18 test approval; align the focused tests to the real #8/#18 evidence, plan
+  identities, versions and scopes.
+- Usage scope: `scripts/check_test_approval.py`,
+  `test/offline/test_check_test_approval.py`, `docs/ci/Test-Approval-Status.md`,
+  and `transcripts/CI-historical-approval-fix-excerpt.md`. No production feature
+  code, type/dependency/semantic logic, or #33 changes.
+- OpenCode session: `ses_e27f33c94ffeOKeCXPrAQQW93Z`.
+- Session/export evidence (genuine, reviewer-accessible, specific to this repair):
+  `transcripts/CI-historical-approval-fix-excerpt.md` — a bounded excerpt derived
+  from a fresh `opencode export` of this session (local paths redacted). This is
+  the covering excerpt for the work described above; the older generic
+  `CI-session-excerpt.md` is not used to establish this repair.
+- Implementation commits (original, preserved): `296146cf6dc969e99db6536f13b5113b270a27bb`
+  (initial route) and `7425efe41dd8b0f32512ad396fa0d9f9782c72e4` (tightened route +
+  tests).
+- Replayed equivalents on the branch (same trees, different identities):
+  `296146cf… → 8e2569431c61a4941774b42a002e439534f1f93b` and
+  `7425efe4… → 37dbc3265d0b158424f54dd46bee1c018e818f97`. Git-over-HTTPS
+  connection failures (github.com:443 unreachable) prevented a normal `git push`,
+  so the commits were re-created through the GitHub Git Data API; this changed
+  commit identities while preserving the final tree (remote HEAD tree ==
+  `f53c29b`). The original SHAs above are kept verbatim; the replayed SHAs are the
+  identities actually reachable from PR #32's branch head (`95860ca…`).

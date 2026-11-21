@@ -39,6 +39,9 @@ BUILDER_PATH = FIXTURE_DIR / "build_o5_t17_fixture.py"
 
 RECORD_COUNT = 1000
 K = 30
+UNIQUE_IDS = 980
+REQUEST_TOPICS = ("MONETARY_POLICY", "INFLATION", "ECONOMIC_ACTIVITY")
+REQUEST_WINDOW = ("2026-10-01T00:00:00Z", "2026-10-07T22:30:00Z")
 WARMUPS = 5
 MEASURED = 30
 THRESHOLD_MS = 100.0
@@ -131,28 +134,53 @@ def _mismatch(result, expected: dict) -> str | None:
 # ------------------------------------------------------------- integrity checks
 
 
-def test_both_hashes_match_manifest_before_any_warmup():
-    """Both fixture and expected SHA-256, plus the fixed invariants (§3a)."""
-
-    _, _, manifest = _load()
-
-    fixture_sha = _sha256(FIXTURE_PATH)
-    expected_sha = _sha256(EXPECTED_PATH)
-    assert fixture_sha == manifest["fixture_sha256"], "fixture hash drift"
-    assert expected_sha == manifest["expected_sha256"], "expected hash drift"
-
-    fixture, expected, _ = _load()
+def _validated_inputs() -> tuple[dict, dict, dict]:
+    fixture, expected, manifest = _load()
+    assert _sha256(FIXTURE_PATH) == manifest["fixture_sha256"], "fixture hash drift"
+    assert _sha256(EXPECTED_PATH) == manifest["expected_sha256"], "expected hash drift"
     assert manifest["record_count"] == RECORD_COUNT
     assert manifest["k"] == K
     assert len(fixture["candidates"]) == RECORD_COUNT
-    assert fixture["unique_ids"] == 980
+    assert fixture["unique_ids"] == UNIQUE_IDS
+    assert len({record["candidate_id"] for record in fixture["candidates"]}) == UNIQUE_IDS
     assert expected["request"]["limit"] == K
-    assert manifest["request_topics"] == expected["request"]["topics"]
+    assert manifest["request_topics"] == expected["request"]["topics"] == list(REQUEST_TOPICS)
     assert manifest["request_window"] == [
         expected["request"]["start_at"],
         expected["request"]["end_at"],
-    ]
+    ] == list(REQUEST_WINDOW)
     assert manifest["rules_version"] == expected["rules_version"] == o5.RULES_VERSION
+    return fixture, expected, manifest
+
+
+def test_both_hashes_match_manifest_before_any_warmup():
+    """The measurement's shared preflight validates both hashes and fixed inputs."""
+
+    _validated_inputs()
+
+
+@pytest.mark.parametrize(
+    "field,invalid",
+    [
+        ("fixture_sha256", "0" * 64),
+        ("expected_sha256", "0" * 64),
+        ("record_count", 999),
+        ("k", 31),
+        ("request_topics", ["INFLATION"]),
+        ("request_window", ["2026-10-02T00:00:00Z", REQUEST_WINDOW[1]]),
+        ("rules_version", "unknown"),
+    ],
+)
+def test_invalid_manifest_stops_before_warmup(monkeypatch, field, invalid):
+    fixture, expected, manifest = _load()
+    manifest[field] = invalid
+    monkeypatch.setattr(sys.modules[__name__], "_load", lambda: (fixture, expected, manifest))
+    calls = []
+    monkeypatch.setattr(o5, "select_macro_news", lambda *args: calls.append(args))
+
+    with pytest.raises(AssertionError):
+        _run_t17()
+    assert calls == []
 
 
 def test_fixture_group_and_id_contract():
@@ -220,9 +248,7 @@ def test_expected_file_is_not_generated_by_the_selector():
 
 
 def _run_t17() -> dict:
-    fixture, expected, manifest = _load()
-    assert _sha256(FIXTURE_PATH) == manifest["fixture_sha256"]
-    assert _sha256(EXPECTED_PATH) == manifest["expected_sha256"]
+    fixture, expected, manifest = _validated_inputs()
 
     candidates = _candidates(fixture)
     request = _request(expected)
