@@ -70,6 +70,14 @@ batch, per REQ-GOV-06. The repository does not prescribe a fixed path or schema.
   from a fresh `opencode export` of this session (local paths redacted). This is
   the covering excerpt for the work described above; the older generic
   `CI-session-excerpt.md` is not used to establish this repair.
-- Implementation commits: `296146cf6dc969e99db6536f13b5113b270a27bb` (initial
-  route) and `7425efe41dd8b0f32512ad396fa0d9f9782c72e4` (tightened route + tests),
-  both in PR #32 range `origin/main..HEAD`.
+- Implementation commits (original, preserved): `296146cf6dc969e99db6536f13b5113b270a27bb`
+  (initial route) and `7425efe41dd8b0f32512ad396fa0d9f9782c72e4` (tightened route +
+  tests).
+- Replayed equivalents on the branch (same trees, different identities):
+  `296146cf… → 8e2569431c61a4941774b42a002e439534f1f93b` and
+  `7425efe4… → 37dbc3265d0b158424f54dd46bee1c018e818f97`. Git-over-HTTPS
+  connection failures (github.com:443 unreachable) prevented a normal `git push`,
+  so the commits were re-created through the GitHub Git Data API; this changed
+  commit identities while preserving the final tree (remote HEAD tree ==
+  `f53c29b`). The original SHAs above are kept verbatim; the replayed SHAs are the
+  identities actually reachable from PR #32's branch head (`95860ca…`).
