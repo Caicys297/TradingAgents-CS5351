@@ -73,6 +73,35 @@ Records at `docs/test-approvals/*.json`, `batch_id=pr-<N>`, `feature=O4`, `plan_
 ### WS-E AI-use and final validation
 AI-use evidence entry for this batch's code changes; focused unit tests per guard + WS-A + six O4 nodes; representative end-to-end negatives (one per protected category, one WS-A intermediate, one O4 failing node, one resolution error); focused regression for the `ci_event` explicit-head adaptation; **one** final regression + Ruff after stabilization; normal remote CI on the final SHA. Administrator sets required checks and verifies actual merge blocking with evidence.
 
+## File / change scope (synchronized with Execution Plan)
+
+The exact planned changed files, identical to the Execution Plan. The **main batch** (WS A–E) and the **separately identified authorization-migration PR** are kept distinct; the migration is a prerequisite merged into `main` before the main batch relies on the new rule.
+
+### Main batch files (WS A–E)
+| File | WS | Owner | Change |
+|---|---|---|---|
+| `scripts/lint_commits.py` | A | F | new: per-commit Ruff via `ci_event.resolve_range` |
+| `scripts/ci_event.py` | A | F | minimal: optional explicit PR-head param (default unchanged) |
+| `test/offline/test_lint_commits.py` | A | F | new: T1–T7 |
+| `scripts/check_contracts.py` + `test/offline/test_contracts_guard.py` | C | F | new guard + negatives |
+| `scripts/check_security.py` + `test/offline/test_security_guard.py` | C | F | new guard + negatives |
+| `scripts/check_api.py` + `test/offline/test_api_guard.py` | C | F | new guard + negatives |
+| `scripts/check_permissions.py` + `test/offline/test_permissions_guard.py` | C | F | new guard + negatives |
+| `docs/ci/governance-guards.yaml` | C | F | new: protected paths/interfaces → node mappings + job names |
+| `.github/workflows/ci.yml` | A/B/C | F | Ruff job edits; new O4 job; governance jobs; applicability includes guard scripts/tests/config/`ci.yml` |
+| `docs/test-approvals/<batch>.json` | D | F | approval record(s) bound to published plan commit + PR |
+| `docs/test-approvals/plans/ci-closure-v5/*` | D | F | this plan set (published) |
+| `transcripts/CI-AI-Use-Log.md` | E | F | AI-use evidence for this batch |
+
+### Separate authorization-migration files (prerequisite PR; not this main batch)
+| File | Change |
+|---|---|
+| `scripts/check_test_approval.py` | narrow authorization addition (constraints below) |
+| `test/offline/test_check_test_approval.py` | focused tests + negatives for the new path and denials |
+| `docs/ci/Test-Approval-Status.md` | document the rule + legacy-gate limitation |
+
+These three migration files are **not** part of the main batch's `allowed_files`; they belong to the separate prerequisite PR, which carries its own approval/evidence (merged into `main` before the main batch relies on the new rule).
+
 ## Migration prerequisite (separate PR; visible, not implemented here)
 Authorization migration enabling non-implementer A to review BOTH plans for genuine F-implemented CI/governance batches. Minimal scope (see Execution Plan §Migration for the same list):
 - Checker: narrow authorization addition preserving author authentication, self-approval prohibition, original timestamps, immutable plan identity, batch binding, scope checks, and existing historical-approval boundaries; no blanket A override.
