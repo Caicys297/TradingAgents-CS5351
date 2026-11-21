@@ -79,5 +79,29 @@ AI-use log and preserve links to genuine agent-session evidence." Session eviden
 
 - Approval of the T17 design and file scope: PR #31 (`fancx777` APPROVED at review `5993326783`;
   `Caicys297` scope confirmation in comment `7040220409`).
+- **File-scope approval for the fifth file.** `Caicys297` (Member A) verified
+  `test/offline/fixtures/o5/build_o5_t17_fixture.py` on PR #33 and agreed to add it to the approved
+  S6 T17 file scope — as offline fixture/frozen-expectation generation only, deriving the oracle from
+  independent rule text and allocation logic, with the three JSON outputs unchanged and no selector,
+  `news.py`, public-interface, or S5 change. Comment `7062448781`,
+  `2026-11-21T12:16:25Z`:
+  https://github.com/Caicys297/TradingAgents-CS5351/pull/33#issuecomment-7062448781
+  A stated this is a **file-scope supplement, not a PR #33 implementation/CI APPROVE**.
 - CI ownership of `.github/workflows/ci.yml`: F (per A's PR #31 note); F added the `o5-perf` job in
   the follow-up commit on this branch.
+
+## Measurement vs. review status (kept distinct)
+
+Two different things must not be conflated:
+
+1. **T17 performance measurement — PASSED on the required runner.** The dedicated
+   `o5 perf (threshold enforced)` job on ubuntu-latest / Python 3.11 (run `44898951061`) is
+   **success** with p95 `81.944 ms`, 5/5 warmups and 30/30 measured calls correct, 4 tests passed.
+   This is the required CI result for T17.
+2. **Final implementation review — PENDING.** A's comment above is a **file-scope** agreement only and
+   explicitly is not an implementation/CI APPROVE of PR #33. F's final review of the completed test
+   and CI (including the Windows encoding follow-up) is still outstanding. A green T17 measurement
+   does **not** by itself approve the implementation, and this draft PR is not claimed as reviewed or
+   mergeable on the strength of the measurement.
+
+The PR remains **Draft** until the final implementation review is recorded.
