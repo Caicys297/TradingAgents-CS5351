@@ -8,6 +8,7 @@ import unicodedata
 from collections import Counter
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 import yfinance as yf
@@ -15,6 +16,7 @@ import yfinance as yf
 from tradingagents.dataflows.config import get_config
 from tradingagents.dataflows.date_window import coverage_gap, in_window
 from tradingagents.dataflows.errors import VendorUnavailableError
+from tradingagents.dataflows.files import locked
 from tradingagents.dataflows.macro_news_filter import (
     DEFAULT_TOPIC_ORDER,
     RULES_VERSION,
@@ -31,6 +33,44 @@ from tradingagents.dataflows.vendors.yahoo.common import yf_retry
 
 _O5_LOGGER = logging.getLogger("tradingagents.o5.evidence")
 _o5_evidence_sink: ContextVar[object | None] = ContextVar("o5_evidence_sink", default=None)
+
+
+class _JsonlEvidenceSink:
+    def __init__(self, run_dir: Path):
+        self.path = run_dir / "o5_evidence.jsonl"
+        self.stream = self.path.open("a+b", buffering=0)
+
+    def emit(self, event: dict[str, object]) -> None:
+        line = (json.dumps(event, ensure_ascii=False, allow_nan=False) + "\n").encode("utf-8")
+        with locked(self.path):
+            start = self.stream.seek(0, 2)
+            try:
+                if self.stream.write(line) != len(line):
+                    raise OSError("incomplete O5 evidence write")
+            except BaseException:
+                self.stream.truncate(start)
+                raise
+
+
+@contextlib.contextmanager
+def o5_evidence_run(run_dir: Path):
+    """Bind the reserved CLI run's evidence destination for the life of the run."""
+    try:
+        sink = _JsonlEvidenceSink(run_dir)
+    except Exception:
+        _O5_LOGGER.exception("SINK_FAILED: O5 evidence file could not be opened")
+        sink = None
+    token = _o5_evidence_sink.set(sink)
+    try:
+        yield
+    finally:
+        _o5_evidence_sink.reset(token)
+        if sink is not None:
+            try:
+                sink.stream.close()
+            except Exception:
+                _O5_LOGGER.exception("SINK_FAILED: O5 evidence file could not be closed")
+
 
 _O5_VARIANTS = {
     "V-INVALID-REQUEST": ("REJECT_REQUEST", "INVALID_REQUEST", "INVALID_REQUEST",
