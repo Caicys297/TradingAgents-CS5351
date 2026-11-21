@@ -51,29 +51,25 @@ batch, per REQ-GOV-06. The repository does not prescribe a fixed path or schema.
 > Authenticity/access is verified by humans; the automated check verifies only
 > structure and reference association, not truthfulness.
 
-## Entry — #32 historical-approval compatibility (A review 6005119233)
+## Entry — #32 historical-approval compatibility repair (A review 6005119233)
 
-- Task: implement the bounded historical-approval compatibility route for #32.
-- Usage scope: `scripts/check_test_approval.py`, its offline tests,
-  `docs/ci/Test-Approval-Status.md`. No production feature code.
-- OpenCode session: `ses_e27f33c94ffeOKeCXPrAQQW93Z` (same CI Gate session).
-- Session/export evidence (accessible): `transcripts/CI-session-excerpt.md`.
-- Implementation commit: `296146cf6dc969e99db6536f13b5113b270a27bb` (PR #32 range).
-
-## Entry — #32 historical-approval route tightening (A review 6005119233, follow-up)
-
-- Task: tighten the historical natural-language approval compatibility route per
-  A's review 6005119233 — bind the real workflow batch, exact artifact, one kind +
-  full plan identity, original body digest/timestamp, review APPROVED state and
-  commit_id, and a verified A delegation for F's #18 test approval; align the
-  focused tests to the real #8/#18 evidence and plan identities.
+- Task: implement and then tighten the bounded historical natural-language
+  approval compatibility route for #32 (A review 6005119233): bind the real
+  workflow batch, exact original artifact (source PR derived from GitHub's
+  `issue_url`), one kind + full plan identity, original body digest/timestamp,
+  review `APPROVED` state and `commit_id`, and a verified A delegation for F's
+  #18 test approval; align the focused tests to the real #8/#18 evidence, plan
+  identities, versions and scopes.
 - Usage scope: `scripts/check_test_approval.py`,
   `test/offline/test_check_test_approval.py`, `docs/ci/Test-Approval-Status.md`,
   and `transcripts/CI-historical-approval-fix-excerpt.md`. No production feature
   code, type/dependency/semantic logic, or #33 changes.
 - OpenCode session: `ses_e27f33c94ffeOKeCXPrAQQW93Z`.
-- Session/export evidence (genuine, reviewer-accessible, specific to THIS fix):
-  `transcripts/CI-historical-approval-fix-excerpt.md` (bounded excerpt from a
-  fresh `opencode export` of this session; local paths redacted).
-- Implementation commit: `7425efe41dd8b0f32512ad396fa0d9f9782c72e4` (PR #32 range
-  `origin/main..HEAD`).
+- Session/export evidence (genuine, reviewer-accessible, specific to this repair):
+  `transcripts/CI-historical-approval-fix-excerpt.md` — a bounded excerpt derived
+  from a fresh `opencode export` of this session (local paths redacted). This is
+  the covering excerpt for the work described above; the older generic
+  `CI-session-excerpt.md` is not used to establish this repair.
+- Implementation commits: `296146cf6dc969e99db6536f13b5113b270a27bb` (initial
+  route) and `7425efe41dd8b0f32512ad396fa0d9f9782c72e4` (tightened route + tests),
+  both in PR #32 range `origin/main..HEAD`.

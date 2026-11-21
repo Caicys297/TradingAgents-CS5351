@@ -207,18 +207,27 @@ implementation batch started after #32 merges; this historical review does not
 retroactively require new marker text on old approvals.
 
 ### Legacy positives/negatives exercised (fixtures preserve original text)
-- Positive: A #8 comment `6920115438` (`b0287da…`) approves BOTH plans; bound as
-  **two entries** — `test-plans/O2-Test-Plan-v0.3-DRAFT.md` (v0.3) and
+The approval **source** is distinct from the **implementation batch**: an approval
+written on PR #8 can authorize a later batch (`pr-16`), and PR #18 approvals can
+authorize batch `pr-23`. The source PR for an issue comment is derived from
+GitHub's returned `issue_url`, never from a record-declared `pr`.
+
+- Positive: A #8 comment `6920115438` (source PR #8; implementation batch `pr-16`)
+  approves BOTH plans; bound as **two entries** —
+  `test-plans/O2-Test-Plan-v0.3-DRAFT.md` (v0.3) and
   `test-plans/O2-OpenCode-Execution-Plan-v0.1-DRAFT.md` (v0.1); scope = phase-1
   manifest writer + its test (`tradingagents/repro/manifest.py`,
   `test/offline/test_o2_manifest.py`).
 - Positive: A #18 comment `7004478311` (exec) + F review #18 `5972069186` (test) on
-  `aa9fda60…` v0.4 Stage-2 plans (`test-plans/O2-Stage-2-Test-Plan-v0.4-DRAFT.md`,
+  `aa9fda60…` v0.4 Stage-2 plans (source PR #18; implementation batch `pr-23`;
+  `test-plans/O2-Stage-2-Test-Plan-v0.4-DRAFT.md`,
   `test-plans/O2-Stage-2-OpenCode-Execution-Plan-v0.4-DRAFT.md`; scope
   `tradingagents/cli/run.py`, `test/offline/test_o2_cli_manifest.py`), F credited
   **only** via A's verified delegation (grantor `7004478311`, earlier timestamp).
   Note: #18 comment `7004545668` is by **B** and cannot authorize.
-- Negative: missing original, edited original, body-digest mismatch, late approval,
-  cross-batch/cross-plan borrowing, out-of-scope, review not `APPROVED`, missing
-  delegation, delegation by B, delegation timestamped after the approval, declared
-  kinds beyond the bound entry, and untrusted (PR-tree-only) mapping.
+- Negative: missing original, edited original, body-digest mismatch, API source PR
+  (`issue_url`) mismatch, late approval, cross-batch/cross-plan borrowing,
+  out-of-scope, review not `APPROVED`, missing delegation, delegation by B,
+  delegation timestamped after the approval, declared kinds beyond the bound entry,
+  and untrusted (PR-tree-only) mapping. (A record that misdeclares its `pr` is not
+  rejected on that basis alone — the source PR comes from `issue_url`.)

@@ -271,6 +271,25 @@ def _feature(record: dict) -> str:
     return f[:2].upper() if f else ""
 
 
+def _pr_from_issue_url(obj: dict) -> int | None:
+    """Derive the source PR number from GitHub's returned ``issue_url``.
+
+    Issue comments carry ``issue_url`` like
+    ``https://api.github.com/repos/o/r/issues/8``. The PR must be taken from this
+    server-provided URL, never from a record-declared ``pr`` field.
+    """
+    url = obj.get("issue_url")
+    if not isinstance(url, str):
+        return None
+    m = re.search(r"/issues/(\d+)\s*$", url.strip())
+    if not m:
+        return None
+    try:
+        return int(m.group(1))
+    except ValueError:
+        return None
+
+
 def _resolve_evidence(record: dict, api, default_pr: int | None) -> tuple[str, str, str, int | None]:
     """Return (author, original_iso, body, source_pr). Evidence may carry its own
     ``pr`` (reviews may belong to another PR than the implementing one)."""
@@ -278,7 +297,7 @@ def _resolve_evidence(record: dict, api, default_pr: int | None) -> tuple[str, s
     etype = ev.get("type")
     if etype == "issue_comment":
         o = api.get_issue_comment(int(ev["id"]))
-        return o.get("user", {}).get("login", ""), o.get("created_at", ""), o.get("body", ""), ev.get("pr")
+        return o.get("user", {}).get("login", ""), o.get("created_at", ""), o.get("body", ""), _pr_from_issue_url(o)
     if etype == "review":
         src_pr = ev.get("pr", default_pr)
         if src_pr is None:
@@ -298,7 +317,8 @@ def _evidence_with_meta(record: dict, api, default_pr):
         o = api.get_issue_comment(int(ev["id"]))
         created = o.get("created_at", "")
         updated = o.get("updated_at", created)
-        return o.get("user", {}).get("login", ""), created, updated, o.get("body", ""), ev.get("pr")
+        return (o.get("user", {}).get("login", ""), created, updated, o.get("body", ""),
+                _pr_from_issue_url(o))
     if etype == "review":
         src_pr = ev.get("pr", default_pr)
         if src_pr is None:
@@ -690,7 +710,7 @@ def _fetch_artifact(api, ev, default_pr):
                 "original_time": o.get("created_at", ""),
                 "updated_time": o.get("updated_at", o.get("created_at", "")),
                 "body": o.get("body", ""), "state": None, "commit_id": None,
-                "pr": ev.get("pr", default_pr)}
+                "pr": _pr_from_issue_url(o)}
     if etype == "review":
         src_pr = ev.get("pr", default_pr)
         if src_pr is None:

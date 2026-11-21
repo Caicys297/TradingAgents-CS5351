@@ -60,10 +60,12 @@ def _commit(r, rel, when, content="x", msg="impl"):
     return _git(r, "rev-parse", "HEAD")
 
 
-def _comment(fix, cid, author, at, body="Approved", updated_at=None):
+def _comment(fix, cid, author, at, body="Approved", updated_at=None, issue_pr=None):
     d = fix / "comments"
     d.mkdir(parents=True, exist_ok=True)
     rec = {"user": {"login": author}, "created_at": at, "body": body}
+    if issue_pr is not None:
+        rec["issue_url"] = f"https://api.github.com/repos/o/r/issues/{issue_pr}"
     if updated_at:
         rec["updated_at"] = updated_at
     (d / f"{cid}.json").write_text(json.dumps(rec))
@@ -841,7 +843,7 @@ def _hist_plan_body(path, scope, ver="v0.3", rid="O2-FR-01", tid="O2-TC-01"):
 
 
 def _hist_entry(**kw):
-    base = {"batch_id": "pr-8", "feature": "O2", "artifact_type": "issue_comment",
+    base = {"batch_id": "pr-16", "feature": "O2", "artifact_type": "issue_comment",
             "artifact_id": 6920115438, "pr": 8, "actor": "Caicys297", "kind": "test_plan",
             "plan_sha": P1_SHA, "plan_path": P1_TEST_PATH, "plan_version": "v0.3",
             "scope": list(P1_SCOPE), "body_sha256": "", "original_time": ""}
@@ -895,7 +897,7 @@ def test_historical_a8_both_plans_accepted(tmp_path):
                     body_sha256=b, original_time="2026-11-16T15:02:47Z"),
     ])
     fix = tmp_path / "fix"
-    _comment(fix, 6920115438, "Caicys297", "2026-11-16T15:02:47Z", body=A8_POST)
+    _comment(fix, 6920115438, "Caicys297", "2026-11-16T15:02:47Z", body=A8_POST, issue_pr=8)
     _plan(fix, P1_SHA, P1_TEST_PATH, text=_hist_plan_body(P1_TEST_PATH, P1_SCOPE, "v0.3"))
     _plan(fix, P1_SHA, P1_EXEC_PATH, text=_hist_plan_body(P1_EXEC_PATH, P1_SCOPE, "v0.1"))
     _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
@@ -904,13 +906,13 @@ def test_historical_a8_both_plans_accepted(tmp_path):
     _record(r, "o2_test.json", feature="O2", approval_kinds=["test_plan"],
             evidence={"type": "issue_comment", "id": 6920115438, "pr": 8},
             plan_sha=P1_SHA, plan_version="v0.3", plan_path=P1_TEST_PATH,
-            allowed_files=P1_SCOPE, implementers=["fancx777"], batch_id="pr-8")
+            allowed_files=P1_SCOPE, implementers=["fancx777"], batch_id="pr-16")
     _record(r, "o2_exec.json", feature="O2", approval_kinds=["execution_plan"],
             evidence={"type": "issue_comment", "id": 6920115438, "pr": 8},
             plan_sha=P1_SHA, plan_version="v0.1", plan_path=P1_EXEC_PATH,
-            allowed_files=P1_SCOPE, implementers=["fancx777"], batch_id="pr-8")
+            allowed_files=P1_SCOPE, implementers=["fancx777"], batch_id="pr-16")
     z = _changed(tmp_path, P1_SCOPE)
-    assert _run(mod, r, z, fix, batch="pr-8", pr=8) == 0
+    assert _run(mod, r, z, fix, batch="pr-16", pr=16) == 0
 
 
 @pytest.mark.unit
@@ -921,10 +923,10 @@ def test_historical_a18_exec_and_f18_review_test(tmp_path):
     r = _hist_repo(tmp_path)
     a = _digest(A18_POST)
     _base_with_historical(r, [
-        _hist_entry(batch_id="pr-18", artifact_id=7004478311, pr=18, kind="execution_plan",
+        _hist_entry(batch_id="pr-23", artifact_id=7004478311, pr=18, kind="execution_plan",
                     plan_sha=S2_SHA, plan_path=S2_EXEC_PATH, plan_version="v0.4",
                     scope=list(S2_SCOPE), body_sha256=a, original_time="2026-11-19T08:58:16Z"),
-        _hist_entry(batch_id="pr-18", artifact_type="review", artifact_id=5972069186, pr=18,
+        _hist_entry(batch_id="pr-23", artifact_type="review", artifact_id=5972069186, pr=18,
                     actor="fancx777", kind="test_plan",
                     plan_sha=S2_SHA, plan_path=S2_TEST_PATH, plan_version="v0.4",
                     scope=list(S2_SCOPE), body_sha256=_digest(F18_REVIEW),
@@ -934,7 +936,7 @@ def test_historical_a18_exec_and_f18_review_test(tmp_path):
                                 "body_sha256": a, "original_time": "2026-11-19T08:58:16Z"}),
     ])
     fix = tmp_path / "fix"
-    _comment(fix, 7004478311, "Caicys297", "2026-11-19T08:58:16Z", body=A18_POST)
+    _comment(fix, 7004478311, "Caicys297", "2026-11-19T08:58:16Z", body=A18_POST, issue_pr=18)
     _write_review(fix, 18, 5972069186, "fancx777", "2026-11-19T09:03:12Z", F18_REVIEW,
                   state="APPROVED", commit_id=S2_SHA)
     _plan(fix, S2_SHA, S2_TEST_PATH, text=_hist_plan_body(S2_TEST_PATH, S2_SCOPE, "v0.4"))
@@ -945,13 +947,13 @@ def test_historical_a18_exec_and_f18_review_test(tmp_path):
     _record(r, "o2_exec.json", feature="O2", approval_kinds=["execution_plan"],
             evidence={"type": "issue_comment", "id": 7004478311, "pr": 18},
             plan_sha=S2_SHA, plan_version="v0.4", plan_path=S2_EXEC_PATH,
-            allowed_files=S2_SCOPE, implementers=["D"], batch_id="pr-18")
+            allowed_files=S2_SCOPE, implementers=["D"], batch_id="pr-23")
     _record(r, "o2_test.json", feature="O2", approval_kinds=["test_plan"],
             evidence={"type": "review", "id": 5972069186, "pr": 18},
             plan_sha=S2_SHA, plan_version="v0.4", plan_path=S2_TEST_PATH,
-            allowed_files=S2_SCOPE, implementers=["D"], batch_id="pr-18")
+            allowed_files=S2_SCOPE, implementers=["D"], batch_id="pr-23")
     z = _changed(tmp_path, S2_SCOPE)
-    assert _run(mod, r, z, fix, batch="pr-18", pr=18) == 0
+    assert _run(mod, r, z, fix, batch="pr-23", pr=23) == 0
 
 
 # ---------------------------------------------------------- helpers for negatives
@@ -962,9 +964,9 @@ def _a8_base(r, **entry_kw):
     _base_with_historical(r, [_hist_entry(**kw)])
 
 
-def _a8_fixture(tmp_path, body=A8_POST, plan_path=P1_TEST_PATH, ver="v0.3"):
+def _a8_fixture(tmp_path, body=A8_POST, plan_path=P1_TEST_PATH, ver="v0.3", issue_pr=8):
     fix = tmp_path / "fix"
-    _comment(fix, 6920115438, "Caicys297", "2026-11-16T15:02:47Z", body=body)
+    _comment(fix, 6920115438, "Caicys297", "2026-11-16T15:02:47Z", body=body, issue_pr=issue_pr)
     _plan(fix, P1_SHA, plan_path, text=_hist_plan_body(plan_path, P1_SCOPE, ver))
     return fix
 
@@ -973,7 +975,7 @@ def _a8_record(r, **kw):
     base = {"feature": "O2", "approval_kinds": ["test_plan"],
             "evidence": {"type": "issue_comment", "id": 6920115438, "pr": 8},
             "plan_sha": P1_SHA, "plan_version": "v0.3", "plan_path": P1_TEST_PATH,
-            "allowed_files": P1_SCOPE, "implementers": ["fancx777"], "batch_id": "pr-8"}
+            "allowed_files": P1_SCOPE, "implementers": ["fancx777"], "batch_id": "pr-16"}
     base.update(kw)
     _record(r, "o2.json", **base)
 
@@ -992,7 +994,7 @@ def test_historical_missing_original_fails(tmp_path):
     _register_commits(r, fix)
     _a8_record(r)
     z = _changed(tmp_path, P1_SCOPE)
-    assert _run(mod, r, z, fix, batch="pr-8", pr=8) == 1
+    assert _run(mod, r, z, fix, batch="pr-16", pr=16) == 1
 
 
 @pytest.mark.unit
@@ -1006,7 +1008,7 @@ def test_historical_late_approval_fails(tmp_path):
     _register_commits(r, fix)
     _a8_record(r)
     z = _changed(tmp_path, P1_SCOPE)
-    assert _run(mod, r, z, fix, batch="pr-8", pr=8) == 1
+    assert _run(mod, r, z, fix, batch="pr-16", pr=16) == 1
 
 
 @pytest.mark.unit
@@ -1022,7 +1024,7 @@ def test_historical_untrusted_mapping_from_pr_fails(tmp_path):
     _register_commits(r, fix)
     _a8_record(r)
     z = _changed(tmp_path, P1_SCOPE)
-    assert _run(mod, r, z, fix, batch="pr-8", pr=8) == 1
+    assert _run(mod, r, z, fix, batch="pr-16", pr=16) == 1
 
 
 @pytest.mark.unit
@@ -1036,7 +1038,7 @@ def test_historical_cross_batch_fails(tmp_path):
     _register_commits(r, fix)
     _a8_record(r, batch_id="pr-23")
     z = _changed(tmp_path, P1_SCOPE)
-    assert _run(mod, r, z, fix, batch="pr-23", pr=8) == 1
+    assert _run(mod, r, z, fix, batch="pr-23", pr=23) == 1
 
 
 @pytest.mark.unit
@@ -1051,7 +1053,7 @@ def test_historical_cross_plan_fails(tmp_path):
     _register_commits(r, fix)
     _a8_record(r, plan_path=other)
     z = _changed(tmp_path, P1_SCOPE)
-    assert _run(mod, r, z, fix, batch="pr-8", pr=8) == 1
+    assert _run(mod, r, z, fix, batch="pr-16", pr=16) == 1
 
 
 @pytest.mark.unit
@@ -1066,7 +1068,7 @@ def test_historical_out_of_scope_fails(tmp_path):
     _register_commits(r, fix)
     _a8_record(r, allowed_files=list(P1_SCOPE) + ["tradingagents/other.py"])
     z = _changed(tmp_path, list(P1_SCOPE) + ["tradingagents/other.py"])
-    assert _run(mod, r, z, fix, batch="pr-8", pr=8) == 1
+    assert _run(mod, r, z, fix, batch="pr-16", pr=16) == 1
 
 
 @pytest.mark.unit
@@ -1077,13 +1079,13 @@ def test_historical_edited_original_fails(tmp_path):
     _a8_base(r)
     fix = tmp_path / "fix"
     _comment(fix, 6920115438, "Caicys297", "2026-11-16T15:02:47Z", body=A8_POST,
-             updated_at="2026-11-16T15:30:00Z")
+             updated_at="2026-11-16T15:30:00Z", issue_pr=8)
     _plan(fix, P1_SHA, P1_TEST_PATH, text=_hist_plan_body(P1_TEST_PATH, P1_SCOPE))
     _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
     _register_commits(r, fix)
     _a8_record(r)
     z = _changed(tmp_path, P1_SCOPE)
-    assert _run(mod, r, z, fix, batch="pr-8", pr=8) == 1
+    assert _run(mod, r, z, fix, batch="pr-16", pr=16) == 1
 
 
 @pytest.mark.unit
@@ -1097,7 +1099,7 @@ def test_historical_body_digest_mismatch_fails(tmp_path):
     _register_commits(r, fix)
     _a8_record(r)
     z = _changed(tmp_path, P1_SCOPE)
-    assert _run(mod, r, z, fix, batch="pr-8", pr=8) == 1
+    assert _run(mod, r, z, fix, batch="pr-16", pr=16) == 1
 
 
 @pytest.mark.unit
@@ -1106,7 +1108,7 @@ def test_historical_review_not_approved_fails(tmp_path):
     mod = _load()
     r = _hist_repo(tmp_path)
     _base_with_historical(r, [
-        _hist_entry(batch_id="pr-18", artifact_type="review", artifact_id=5972069186, pr=18,
+        _hist_entry(batch_id="pr-23", artifact_type="review", artifact_id=5972069186, pr=18,
                     actor="fancx777", kind="test_plan",
                     plan_sha=S2_SHA, plan_path=S2_TEST_PATH, plan_version="v0.4",
                     scope=list(S2_SCOPE), body_sha256=_digest(F18_REVIEW),
@@ -1116,7 +1118,7 @@ def test_historical_review_not_approved_fails(tmp_path):
                                 "body_sha256": _digest(A18_POST),
                                 "original_time": "2026-11-19T08:58:16Z"})])
     fix = tmp_path / "fix"
-    _comment(fix, 7004478311, "Caicys297", "2026-11-19T08:58:16Z", body=A18_POST)
+    _comment(fix, 7004478311, "Caicys297", "2026-11-19T08:58:16Z", body=A18_POST, issue_pr=18)
     _write_review(fix, 18, 5972069186, "fancx777", "2026-11-19T09:03:12Z", F18_REVIEW,
                   state="CHANGES_REQUESTED", commit_id=S2_SHA)
     _plan(fix, S2_SHA, S2_TEST_PATH, text=_hist_plan_body(S2_TEST_PATH, S2_SCOPE, "v0.4"))
@@ -1125,9 +1127,9 @@ def test_historical_review_not_approved_fails(tmp_path):
     _record(r, "o2_test.json", feature="O2", approval_kinds=["test_plan"],
             evidence={"type": "review", "id": 5972069186, "pr": 18},
             plan_sha=S2_SHA, plan_version="v0.4", plan_path=S2_TEST_PATH,
-            allowed_files=S2_SCOPE, implementers=["D"], batch_id="pr-18")
+            allowed_files=S2_SCOPE, implementers=["D"], batch_id="pr-23")
     z = _changed(tmp_path, S2_SCOPE)
-    assert _run(mod, r, z, fix, batch="pr-18", pr=18) == 1
+    assert _run(mod, r, z, fix, batch="pr-23", pr=23) == 1
 
 
 @pytest.mark.unit
@@ -1136,13 +1138,13 @@ def test_historical_missing_delegation_fails(tmp_path):
     mod = _load()
     r = _hist_repo(tmp_path)
     _base_with_historical(r, [
-        _hist_entry(batch_id="pr-18", artifact_type="review", artifact_id=5972069186, pr=18,
+        _hist_entry(batch_id="pr-23", artifact_type="review", artifact_id=5972069186, pr=18,
                     actor="fancx777", kind="test_plan",
                     plan_sha=S2_SHA, plan_path=S2_TEST_PATH, plan_version="v0.4",
                     scope=list(S2_SCOPE), body_sha256=_digest(F18_REVIEW),
                     original_time="2026-11-19T09:03:12Z")])
     fix = tmp_path / "fix"
-    _comment(fix, 7004478311, "Caicys297", "2026-11-19T08:58:16Z", body=A18_POST)
+    _comment(fix, 7004478311, "Caicys297", "2026-11-19T08:58:16Z", body=A18_POST, issue_pr=18)
     _write_review(fix, 18, 5972069186, "fancx777", "2026-11-19T09:03:12Z", F18_REVIEW,
                   state="APPROVED", commit_id=S2_SHA)
     _plan(fix, S2_SHA, S2_TEST_PATH, text=_hist_plan_body(S2_TEST_PATH, S2_SCOPE, "v0.4"))
@@ -1151,9 +1153,9 @@ def test_historical_missing_delegation_fails(tmp_path):
     _record(r, "o2_test.json", feature="O2", approval_kinds=["test_plan"],
             evidence={"type": "review", "id": 5972069186, "pr": 18},
             plan_sha=S2_SHA, plan_version="v0.4", plan_path=S2_TEST_PATH,
-            allowed_files=S2_SCOPE, implementers=["D"], batch_id="pr-18")
+            allowed_files=S2_SCOPE, implementers=["D"], batch_id="pr-23")
     z = _changed(tmp_path, S2_SCOPE)
-    assert _run(mod, r, z, fix, batch="pr-18", pr=18) == 1
+    assert _run(mod, r, z, fix, batch="pr-23", pr=23) == 1
 
 
 @pytest.mark.unit
@@ -1162,7 +1164,7 @@ def test_historical_delegation_by_B_fails(tmp_path):
     mod = _load()
     r = _hist_repo(tmp_path)
     _base_with_historical(r, [
-        _hist_entry(batch_id="pr-18", artifact_type="review", artifact_id=5972069186, pr=18,
+        _hist_entry(batch_id="pr-23", artifact_type="review", artifact_id=5972069186, pr=18,
                     actor="fancx777", kind="test_plan",
                     plan_sha=S2_SHA, plan_path=S2_TEST_PATH, plan_version="v0.4",
                     scope=list(S2_SCOPE), body_sha256=_digest(F18_REVIEW),
@@ -1172,7 +1174,7 @@ def test_historical_delegation_by_B_fails(tmp_path):
                                 "body_sha256": _digest("B note"),
                                 "original_time": "2026-11-19T08:30:00Z"})])
     fix = tmp_path / "fix"
-    _comment(fix, 7004545668, "QinQilun", "2026-11-19T08:30:00Z", body="B note")
+    _comment(fix, 7004545668, "QinQilun", "2026-11-19T08:30:00Z", body="B note", issue_pr=18)
     _write_review(fix, 18, 5972069186, "fancx777", "2026-11-19T09:03:12Z", F18_REVIEW,
                   state="APPROVED", commit_id=S2_SHA)
     _plan(fix, S2_SHA, S2_TEST_PATH, text=_hist_plan_body(S2_TEST_PATH, S2_SCOPE, "v0.4"))
@@ -1181,9 +1183,9 @@ def test_historical_delegation_by_B_fails(tmp_path):
     _record(r, "o2_test.json", feature="O2", approval_kinds=["test_plan"],
             evidence={"type": "review", "id": 5972069186, "pr": 18},
             plan_sha=S2_SHA, plan_version="v0.4", plan_path=S2_TEST_PATH,
-            allowed_files=S2_SCOPE, implementers=["D"], batch_id="pr-18")
+            allowed_files=S2_SCOPE, implementers=["D"], batch_id="pr-23")
     z = _changed(tmp_path, S2_SCOPE)
-    assert _run(mod, r, z, fix, batch="pr-18", pr=18) == 1
+    assert _run(mod, r, z, fix, batch="pr-23", pr=23) == 1
 
 
 @pytest.mark.unit
@@ -1192,7 +1194,7 @@ def test_historical_delegation_after_approval_fails(tmp_path):
     mod = _load()
     r = _hist_repo(tmp_path)
     _base_with_historical(r, [
-        _hist_entry(batch_id="pr-18", artifact_type="review", artifact_id=5972069186, pr=18,
+        _hist_entry(batch_id="pr-23", artifact_type="review", artifact_id=5972069186, pr=18,
                     actor="fancx777", kind="test_plan",
                     plan_sha=S2_SHA, plan_path=S2_TEST_PATH, plan_version="v0.4",
                     scope=list(S2_SCOPE), body_sha256=_digest(F18_REVIEW),
@@ -1202,7 +1204,7 @@ def test_historical_delegation_after_approval_fails(tmp_path):
                                 "body_sha256": _digest(A18_POST),
                                 "original_time": "2026-11-19T09:10:00Z"})])
     fix = tmp_path / "fix"
-    _comment(fix, 7004478311, "Caicys297", "2026-11-19T09:10:00Z", body=A18_POST)
+    _comment(fix, 7004478311, "Caicys297", "2026-11-19T09:10:00Z", body=A18_POST, issue_pr=18)
     _write_review(fix, 18, 5972069186, "fancx777", "2026-11-19T09:03:12Z", F18_REVIEW,
                   state="APPROVED", commit_id=S2_SHA)
     _plan(fix, S2_SHA, S2_TEST_PATH, text=_hist_plan_body(S2_TEST_PATH, S2_SCOPE, "v0.4"))
@@ -1211,9 +1213,9 @@ def test_historical_delegation_after_approval_fails(tmp_path):
     _record(r, "o2_test.json", feature="O2", approval_kinds=["test_plan"],
             evidence={"type": "review", "id": 5972069186, "pr": 18},
             plan_sha=S2_SHA, plan_version="v0.4", plan_path=S2_TEST_PATH,
-            allowed_files=S2_SCOPE, implementers=["D"], batch_id="pr-18")
+            allowed_files=S2_SCOPE, implementers=["D"], batch_id="pr-23")
     z = _changed(tmp_path, S2_SCOPE)
-    assert _run(mod, r, z, fix, batch="pr-18", pr=18) == 1
+    assert _run(mod, r, z, fix, batch="pr-23", pr=23) == 1
 
 
 @pytest.mark.unit
@@ -1227,4 +1229,41 @@ def test_historical_declared_kinds_beyond_binding_fails(tmp_path):
     _register_commits(r, fix)
     _a8_record(r, approval_kinds=["test_plan", "execution_plan"])
     z = _changed(tmp_path, P1_SCOPE)
-    assert _run(mod, r, z, fix, batch="pr-8", pr=8) == 1
+    assert _run(mod, r, z, fix, batch="pr-16", pr=16) == 1
+
+
+@pytest.mark.unit
+def test_historical_api_source_pr_mismatch_fails(tmp_path):
+    """The approval's source PR is derived from GitHub's issue_url; if that PR
+    differs from the bound original `pr`, the binding must not match -> fail."""
+    mod = _load()
+    r = _hist_repo(tmp_path)
+    # Entry bound to source PR #8, but the fetched comment lives in issue/PR #99.
+    _a8_base(r)  # pr=8
+    fix = _a8_fixture(tmp_path, issue_pr=99)
+    _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
+    _register_commits(r, fix)
+    _a8_record(r)
+    z = _changed(tmp_path, P1_SCOPE)
+    assert _run(mod, r, z, fix, batch="pr-16", pr=16) == 1
+
+
+@pytest.mark.unit
+def test_historical_record_declared_pr_ignored(tmp_path, capsys):
+    """A matching API source PR (#8 via issue_url) still binds even if the record
+    declares a different `pr`; the source PR comes from issue_url, not the record.
+    The batch still fails overall only because no execution approval is bound."""
+    mod = _load()
+    r = _hist_repo(tmp_path)
+    _a8_base(r)  # bound pr=8
+    fix = _a8_fixture(tmp_path, issue_pr=8)
+    _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
+    _register_commits(r, fix)
+    # record lies about pr=777, but issue_url says 8 -> binding still matches
+    _a8_record(r, evidence={"type": "issue_comment", "id": 6920115438, "pr": 777})
+    z = _changed(tmp_path, P1_SCOPE)
+    rc = _run(mod, r, z, fix, batch="pr-16", pr=16)
+    err = capsys.readouterr().err
+    assert "credited for ['test_plan']" in err
+    assert "missing required execution-plan approval" in err
+    assert rc == 1
