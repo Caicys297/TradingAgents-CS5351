@@ -59,3 +59,21 @@ batch, per REQ-GOV-06. The repository does not prescribe a fixed path or schema.
 - OpenCode session: `ses_e27f33c94ffeOKeCXPrAQQW93Z` (same CI Gate session).
 - Session/export evidence (accessible): `transcripts/CI-session-excerpt.md`.
 - Implementation commit: `296146cf6dc969e99db6536f13b5113b270a27bb` (PR #32 range).
+
+## Entry — #32 historical-approval route tightening (A review 6005119233, follow-up)
+
+- Task: tighten the historical natural-language approval compatibility route per
+  A's review 6005119233 — bind the real workflow batch, exact artifact, one kind +
+  full plan identity, original body digest/timestamp, review APPROVED state and
+  commit_id, and a verified A delegation for F's #18 test approval; align the
+  focused tests to the real #8/#18 evidence and plan identities.
+- Usage scope: `scripts/check_test_approval.py`,
+  `test/offline/test_check_test_approval.py`, `docs/ci/Test-Approval-Status.md`,
+  and `transcripts/CI-historical-approval-fix-excerpt.md`. No production feature
+  code, type/dependency/semantic logic, or #33 changes.
+- OpenCode session: `ses_e27f33c94ffeOKeCXPrAQQW93Z`.
+- Session/export evidence (genuine, reviewer-accessible, specific to THIS fix):
+  `transcripts/CI-historical-approval-fix-excerpt.md` (bounded excerpt from a
+  fresh `opencode export` of this session; local paths redacted).
+- Implementation commit: `7425efe41dd8b0f32512ad396fa0d9f9782c72e4` (PR #32 range
+  `origin/main..HEAD`).
