@@ -33,5 +33,20 @@ batch, per REQ-GOV-06. The repository does not prescribe a fixed path or schema.
   human context only; it is **not** transcript content and is explicitly NOT accepted
   as session evidence.
 
+## Entry — Draft PR #32 continuation (CI fixes)
+
+- Task: fix two CI failures on Draft PR #32 — make the type-check base-resolution
+  test independent of a real mypy binary, and add this AI-use entry.
+- Usage scope: `scripts/typecheck.py` test, `test/offline/test_ci_gate_checkers.py`,
+  and `transcripts/CI-AI-Use-Log.md`. No production feature code.
+- OpenCode session: `ses_e27f33c94ffeOKeCXPrAQQW93Z`
+  ("Revising CS5351 CI Gate plan for team review") — the session that produced this
+  continuation.
+- Session/export evidence (accessible): `transcripts/CI-session-excerpt.md` (genuine,
+  reviewer-accessible excerpt of the session's real dialogue).
+- Implementation commit: `3ec9c808ff02ea9d982916ebe27968efe1ea6bad` (in the PR #32
+  range `origin/main..HEAD`; follow-up evidence-only commits may reference preceding
+  implementation commits).
+
 > Authenticity/access is verified by humans; the automated check verifies only
 > structure and reference association, not truthfulness.

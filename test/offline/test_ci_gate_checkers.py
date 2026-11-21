@@ -166,7 +166,10 @@ def test_typecheck_trusted_base_ignores_pr_widening(monkeypatch, tmp_path):
 
 
 def test_typecheck_base_resolution_failure_is_exit2(monkeypatch):
+    # Independent of a real mypy binary: stub the tool output so this focused test
+    # only exercises the base-resolution failure path (which must return exit 2).
     mod = _load("typecheck")
+    monkeypatch.setattr(mod, "run_mypy", lambda: [])
 
     def boom(root, env):
         raise mod.ci_event.EventError("cannot resolve base")
