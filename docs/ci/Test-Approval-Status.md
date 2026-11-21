@@ -166,19 +166,39 @@ A bounded, separate route for **legacy natural-language approvals** written befo
 structured markers existed. It is distinct from the structured `TEST-APPROVAL`
 marker route used for new batches.
 
-- **Trusted source:** a base-revision-reviewed
-  `docs/test-approvals/historical-approvals.yaml` (loaded from `origin/<base>`, like
-  `reviewers.yaml`; a PR cannot self-declare). Each entry binds an **exact** original
-  artifact: `artifact_type`, `artifact_id`, `pr`, `actor`, `kinds`, `plan_sha`,
-  `plan_version`, `scope`, `batch`, and (for delegation) `delegated_by`.
-- **Verification:** the checker re-fetches the original GitHub evidence and requires:
-  bound actor == original author; role authorized for the kind (or an A
-  `delegated_by` grant); the immutable plan matches the bound SHA+version; scope
-  equals the binding and is limited to the plan's approved files; and the
-  **original timestamp** (never the mapping's) precedes the first implementation.
-- **Cannot:** accept arbitrary prose by keywords, honor a missing/changed original,
-  allow late approval or out-of-scope batches, or widen scope; the mapping only
-  records interpretation.
+- **Trusted source (protected base):** `docs/test-approvals/historical-approvals.yaml`
+  is loaded from `origin/<base>` only (like `reviewers.yaml`), so a PR cannot
+  self-declare it. **Authorized mappings are reviewed via the protected base:** a
+  maintainer lands/updates this file on the base branch through normal review (it is
+  part of the reviewed base tree A/B approve), and a PR that merely adds or edits the
+  mapping in its own diff is not trusted (see the untrusted-PR-tree negative).
+- **One entry = one kind, one plan:** each entry binds a **singular** `kind`
+  (`test_plan` **or** `execution_plan`) for one plan of one exact original artifact:
+  `batch_id` (the actual workflow batch, e.g. `pr-8`/`pr-18`, not a generic
+  `batch-1`), `feature`, `artifact_type`, `artifact_id`, `pr`, `actor`, `kind`,
+  full plan identity (`plan_sha` 40-hex + `plan_path` + `plan_version`), `scope`,
+  `body_sha256`, `original_time`, and optional `delegation`.
+  Because one artifact may approve multiple plans (e.g. A #8 approves both plans),
+  it is split into **separate entries** by the real plan version/path.
+- **Verification:** the checker re-fetches the original artifact and validates the
+  **actual fetched record**: bound actor == original author; the original was not
+  edited after creation; `body_sha256` matches the fetched body; the fetched
+  `original_time` equals the binding; the record's plan identity (SHA+path+version)
+  matches; for a review the fetched `state` must be `APPROVED` and (when present)
+  `commit_id` must equal the plan SHA. Role must be authorized for the kind, or a
+  **verified delegation** applies (below). Scope equals the binding, is limited to
+  the immutable plan, respects exclusions and covers applicable files, and the
+  **original timestamp** (never the mapping's) precedes first implementation.
+- **Delegation (`delegation`):** instead of a bare `delegated_by` login, the entry
+  binds an authorized A grantor artifact by `artifact_type`/`artifact_id`/`pr` with
+  its `body_sha256` and `original_time`, plus the `grantee` (must equal the approval
+  author) and delegated `kind`. The checker fetches the grantor, requires role A
+  (so a comment by B never authorizes), digest/time match, and the grantor's
+  original time **strictly earlier** than the approval it authorizes.
+- **Cannot:** accept arbitrary prose by keywords, accept a PR-declared/edited/
+  changed/unverifiable original, borrow an entry across batch/kind/plan, widen
+  scope, or count a later record/mapping timestamp as approval; the mapping only
+  records interpretation of the original.
 - **#32 still fails** for lack of a historical pre-code approval for this batch;
   structured route and fail-closed behavior are unchanged.
 
@@ -187,6 +207,18 @@ implementation batch started after #32 merges; this historical review does not
 retroactively require new marker text on old approvals.
 
 ### Legacy positives/negatives exercised (fixtures preserve original text)
-- Positive: A #8 comment `6920115438` (approves BOTH plans, `b0287da` v0.3/v0.1) via binding.
-- Positive: A #18 comment `7004478311` (exec) + F review #18 `5972069186` (test `aa9fda60` v0.4) **with A delegation** (`delegated_by`). Note: #18 comment `7004545668` is by **B** and is NOT accepted as F approval.
-- Negative: missing original, late approval, scope mismatch/unrelated evidence, untrusted (PR-tree-only) mapping.
+- Positive: A #8 comment `6920115438` (`b0287da…`) approves BOTH plans; bound as
+  **two entries** — `test-plans/O2-Test-Plan-v0.3-DRAFT.md` (v0.3) and
+  `test-plans/O2-OpenCode-Execution-Plan-v0.1-DRAFT.md` (v0.1); scope = phase-1
+  manifest writer + its test (`tradingagents/repro/manifest.py`,
+  `test/offline/test_o2_manifest.py`).
+- Positive: A #18 comment `7004478311` (exec) + F review #18 `5972069186` (test) on
+  `aa9fda60…` v0.4 Stage-2 plans (`test-plans/O2-Stage-2-Test-Plan-v0.4-DRAFT.md`,
+  `test-plans/O2-Stage-2-OpenCode-Execution-Plan-v0.4-DRAFT.md`; scope
+  `tradingagents/cli/run.py`, `test/offline/test_o2_cli_manifest.py`), F credited
+  **only** via A's verified delegation (grantor `7004478311`, earlier timestamp).
+  Note: #18 comment `7004545668` is by **B** and cannot authorize.
+- Negative: missing original, edited original, body-digest mismatch, late approval,
+  cross-batch/cross-plan borrowing, out-of-scope, review not `APPROVED`, missing
+  delegation, delegation by B, delegation timestamped after the approval, declared
+  kinds beyond the bound entry, and untrusted (PR-tree-only) mapping.
