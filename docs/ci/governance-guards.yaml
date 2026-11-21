@@ -1,0 +1,72 @@
+# GOV-07 governance guard configuration (WS-C).
+#
+# A path change triggers checking; an actual contract violation blocks.
+# Each governance job reads this file to decide applicability (which changed
+# files map to which existing test nodes) and the permitted exceptions.
+#
+# This file is itself in every guard's applicability set, so editing a guard can
+# never silently skip validation.
+
+contract:
+  # Protected production/contract paths -> existing pytest nodes that establish
+  # the approved completion-entry / rating-consistency / Resume / reservation /
+  # manifest-failure contracts.
+  protected_paths:
+    - cli/run.py
+    - tradingagents/graph/trading_graph.py
+    - tradingagents/agents/state.py
+    - tradingagents/repro/manifest.py
+  nodes:
+    - test/offline/test_evidence_gate_cli_publication.py::test_cli_ordering_reserve_and_manifest
+    - test/offline/test_evidence_gate_cli_publication.py::test_cli_completion_and_review_ordering
+    - test/offline/test_evidence_gate.py::test_t25a_sources_agree_preserved
+    - test/offline/test_evidence_gate_graph_integration.py::test_conflict_downgrades_at_boundary
+    - test/offline/test_evidence_gate_graph_integration.py::test_resume_reaches_gate_with_restored_reports
+    - test/offline/test_evidence_gate_graph_integration.py::test_resume_is_fresh_execution_for_gate
+    - test/offline/test_o2_cli_manifest.py::test_real_reservation_retries_and_isolates_two_runs
+    - test/offline/test_o2_cli_manifest.py::test_reservation_collision_exits_before_graph_and_preserves_existing_files
+    - test/offline/test_o2_cli_manifest.py::test_manifest_write_failure_is_fail_soft_with_effective_rating
+
+security:
+  # Manifest construction/serialization, artifact references and their CLI call
+  # chain. Secret exclusion, base-bounded paths, atomic writes, preserve-on-fail.
+  protected_paths:
+    - tradingagents/repro/manifest.py
+    - cli/run.py
+    - cli/display.py
+    - tradingagents/reporting.py
+  nodes:
+    - test/offline/test_o2_manifest.py::test_o2_tc_06_secret_fields_and_unapproved_keys_are_excluded
+    - test/offline/test_o2_manifest.py::test_o2_tc_16_nested_secret_and_credential_url_are_redacted
+    - test/offline/test_o2_manifest.py::test_o2_tc_16_credential_in_url_query_is_redacted_from_manifest_and_fingerprint
+    - test/offline/test_o2_manifest.py::test_o2_tc_05_artifact_stability_labels_and_relative_paths
+    - test/offline/test_o2_manifest.py::test_o2_tc_13_serialization_failure_leaves_no_partial_manifest
+    - test/offline/test_o2_cli_manifest.py::test_tc23_effective_config_allowlist_and_secret_exclusion
+    - test/offline/test_o2_cli_manifest.py::test_whole_save_failure_excludes_partial_leftover
+    - test/offline/test_o2_cli_manifest.py::test_reservation_collision_exits_before_graph_and_preserves_existing_files
+
+api:
+  # Approved public interfaces and adapters.
+  protected_paths:
+    - tradingagents/graph/trading_graph.py
+    - tradingagents/dataflows/vendors/yahoo/news.py
+    - tradingagents/agents/tools.py
+  nodes:
+    - test/offline/test_evidence_gate_audit.py::test_t20_record_decision_signature_unchanged
+    - test/offline/test_evidence_gate_legacy_boundary.py::test_record_decision_signature_and_none_return_unchanged
+    - test/offline/test_o5_regression.py::test_rt2_public_entry_keeps_signature_and_returns_str
+    - test/offline/test_o5_regression.py::test_rt4b_ticker_news_signature_unchanged
+
+permission:
+  # Workflow/permission guard reads workflows directly; paths below define the
+  # reviewable surface. No exceptions are pre-approved for this batch.
+  protected_paths:
+    - .github/workflows/
+  # Observable baseline enforced by scripts/check_permissions.py:
+  baseline:
+    workflow_permissions:
+      contents: read
+      pull-requests: read
+    pr_reachable_checkout:
+      persist_credentials: false
+  exceptions: []   # each: {path, reason, trusted_ref}
