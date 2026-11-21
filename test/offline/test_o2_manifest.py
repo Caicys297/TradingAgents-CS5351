@@ -116,6 +116,16 @@ def test_o2_tc_05_artifact_stability_labels_and_relative_paths(tmp_path):
         )
 
 
+def test_o2_tc_15_artifact_reference_rejects_relative_traversal(tmp_path):
+    results_root = tmp_path / "results"
+    results_root.mkdir()
+
+    with pytest.raises(manifest_module.ManifestError):
+        manifest_module.make_artifact_reference(
+            "traversal", "../outside.md", "shared_mutable", base=results_root
+        )
+
+
 def test_o2_tc_06_secret_fields_and_unapproved_keys_are_excluded():
     manifest = _manifest(
         config={
