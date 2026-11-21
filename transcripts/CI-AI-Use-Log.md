@@ -50,3 +50,12 @@ batch, per REQ-GOV-06. The repository does not prescribe a fixed path or schema.
 
 > Authenticity/access is verified by humans; the automated check verifies only
 > structure and reference association, not truthfulness.
+
+## Entry — #32 historical-approval compatibility (A review 6005119233)
+
+- Task: implement the bounded historical-approval compatibility route for #32.
+- Usage scope: `scripts/check_test_approval.py`, its offline tests,
+  `docs/ci/Test-Approval-Status.md`. No production feature code.
+- OpenCode session: `ses_e27f33c94ffeOKeCXPrAQQW93Z` (same CI Gate session).
+- Session/export evidence (accessible): `transcripts/CI-session-excerpt.md`.
+- Implementation commit: `296146cf6dc969e99db6536f13b5113b270a27bb` (PR #32 range).
