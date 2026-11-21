@@ -20,6 +20,14 @@ Enforced rules (A-confirmed):
 - Earliest implementation is computed across all batch commits with a defensible
   comparison; non-monotonic/ambiguous/rewritten provenance is reported, not
   silently accepted; incomplete history never becomes success.
+- **CI/governance batch rule (separately authorized migration):** for a genuine
+  batch of a CI/governance feature (``CI``), a **non-implementer A** reviews BOTH
+  the Test Plan and the Execution Plan. This is narrow and feature-scoped: it only
+  changes *who* may approve the test plan for ``CI`` features (A instead of the
+  product-feature reviewer). Self-approval, authenticated original authors and
+  timestamps, immutable-plan identity, batch binding, scope checks, delegation and
+  the historical-approval boundaries are unchanged. It is NOT a blanket A override
+  and does not touch any non-CI feature.
 
 Workflow trust model (accurate): the job runs this from the PR checkout with a
 read-only token; a PR can edit the checker. Trust anchors: the base-revision
@@ -52,6 +60,14 @@ except ImportError:  # pragma: no cover
 
 TEST_PLAN_REVIEWER = {"O1": "F", "O2": "A", "O3": "F", "O4": "F", "O5": "F", "O6": "A"}
 EXECUTION_PLAN_REVIEWER = "A"
+# CI/governance batches (separately authorized migration). For a GENUINE batch of
+# this kind implemented by F, a NON-implementer A reviews BOTH the Test Plan and
+# the Execution Plan. This is a narrow, feature-scoped rule: every other feature
+# keeps its product-feature reviewer from TEST_PLAN_REVIEWER above. It does NOT
+# relax self-approval, timestamps, immutable-plan identity, batch binding, scope,
+# delegation, or the historical-approval boundaries — those all still apply.
+CI_GOVERNANCE_FEATURES = {"CI"}
+CI_GOVERNANCE_TEST_PLAN_REVIEWER = "A"
 OWNER_ROLES = {"A", "B", "C", "D", "E", "F"}
 RECORDS_DIR = "docs/test-approvals"
 REVIEWERS_FILE = "docs/test-approvals/reviewers.yaml"
@@ -269,6 +285,20 @@ def _applicable(changed: list[str]) -> set[str]:
 def _feature(record: dict) -> str:
     f = str(record.get("feature", "")).strip()
     return f[:2].upper() if f else ""
+
+
+def test_plan_reviewer_for(feature: str) -> str | None:
+    """Role required to approve a TEST plan for ``feature``.
+
+    CI/governance batches (``CI``) require non-implementer role A for BOTH plans
+    (the separately authorized migration). All other features use the Registry
+    mapping unchanged; an unknown, non-CI feature returns ``None`` and is rejected
+    by the caller. This only chooses WHO approves; self-approval, timestamps,
+    immutable-plan, batch-binding and scope checks are unaffected.
+    """
+    if feature in CI_GOVERNANCE_FEATURES:
+        return CI_GOVERNANCE_TEST_PLAN_REVIEWER
+    return TEST_PLAN_REVIEWER.get(feature)
 
 
 def _pr_from_issue_url(obj: dict) -> int | None:
@@ -497,7 +527,7 @@ def _verify_binding(rec, api, repo, reviewers, feature, approval_iso, root, prob
     if resolved_pr is not None and oref["pr"] != int(resolved_pr):
         problems.append(f"{rp}: ORIGINAL-APPROVAL pr {oref['pr']} does not match resolved original source pr {resolved_pr}")
         return None
-    if reviewers.get(author) not in (TEST_PLAN_REVIEWER.get(feature), EXECUTION_PLAN_REVIEWER):
+    if reviewers.get(author) not in (test_plan_reviewer_for(feature), EXECUTION_PLAN_REVIEWER):
         problems.append(f"{rp}: clarification author {author!r} not authorized for {feature}")
         return None
     if utime and utime != ctime:
@@ -776,7 +806,7 @@ def _verify_historical(hist_entry, rec, batch_id, reviewers, feature, applicable
             return None
     # role / delegation
     role = reviewers.get(art["author"])
-    need = TEST_PLAN_REVIEWER.get(feature) if kind == "test_plan" else EXECUTION_PLAN_REVIEWER
+    need = test_plan_reviewer_for(feature) if kind == "test_plan" else EXECUTION_PLAN_REVIEWER
     if role != need and not _verify_delegation(hist_entry, art, reviewers, feature, kind,
                                                problems, rp, api, default_pr):
         return None
@@ -854,7 +884,7 @@ def validate_batch(records, api, default_pr, batch_id, applicable, reviewers, ea
         if rec.get("batch_id") != batch_id:
             continue
         feature = _feature(rec)
-        role_needed = TEST_PLAN_REVIEWER.get(feature)
+        role_needed = test_plan_reviewer_for(feature)
         if role_needed is None:
             problems.append(f"{rp}: unknown feature {rec.get('feature')!r}")
             continue

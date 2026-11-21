@@ -231,3 +231,71 @@ GitHub's returned `issue_url`, never from a record-declared `pr`.
   delegation timestamped after the approval, declared kinds beyond the bound entry,
   and untrusted (PR-tree-only) mapping. (A record that misdeclares its `pr` is not
   rejected on that basis alone — the source PR comes from `issue_url`.)
+
+## CI/governance authorization rule (separately authorized migration)
+
+A governing decision (recorded in the CI Closure v5 plans at the approved commit):
+**for genuine F-implemented CI/governance batches, a non-implementer A reviews
+BOTH the Test Plan and the Execution Plan.** This is implemented by a **separate,
+narrowly scoped migration PR** that must merge into `main` *before* the main
+closure batch relies on it. The main implementation batch does **not** authorize
+itself and this migration does **not** authorize the main batch.
+
+### What the rule changes (and only what)
+- A **CI/governance feature** is recognized by the normalized feature key `CI`.
+  For such a batch the **test-plan** reviewer is role **A** (instead of a
+  product-feature reviewer), and the **execution-plan** reviewer remains role **A**
+  as before. So a non-implementer A can approve both plan kinds for a qualifying
+  batch.
+- The mapping is centralized in `test_plan_reviewer_for(feature)`; every other
+  feature keeps its Registry reviewer (`O1/O3/O4/O5 → F`, `O2/O6 → A`). No product
+  feature is re-mapped and **no member is mapped to role F**.
+
+### What stays unchanged (all existing safeguards preserved)
+- **Authenticated original authors + timestamps** from the base-reviewed
+  `reviewers.yaml`, resolved from the real GitHub evidence author.
+- **Self-approval prohibition**: an implementer (by Git/GitHub account association
+  or declared) who is also the evidence author is rejected — for CI batches too.
+- **Immutable plan identity/version, batch binding and file-scope checks**; the
+  declared requirement/test IDs and allowed files must appear in the fetched
+  immutable plan, and every applicable file must be covered.
+- **Independent review + delegation + historical-approval boundaries** are
+  untouched: CI is just a new (feature, role) pair for *who* approves the test
+  plan; the same marker/clarification/delegation/historical machinery applies.
+- **No blanket A override**: A is *not* granted test-plan authority for non-CI
+  features (e.g. an O4 test plan still requires F). This is proven by a focused
+  negative test.
+
+### Focused tests (`test/offline/test_check_test_approval.py`)
+Added (all offline, fixture GitHub API + temporary real Git histories):
+- **Positive**: non-implementer A approves both plan kinds for a genuine
+  F-implemented CI batch → valid.
+- **Negatives (still rejected)**: self-approval; unauthorized (non-A) author; F
+  cannot approve the CI test plan; unrelated batch; late approval; out-of-scope
+  file; plan/version mismatch.
+- **No blanket override**: A cannot approve a non-CI (O4) test plan (product
+  reviewer F still required).
+- **Existing behavior intact**: the pre-existing 61 tests continue to pass.
+
+### Legacy-gate limitation (recorded transparently — needs A's review)
+This PR **modifies `scripts/check_test_approval.py` itself**. The pre-migration
+policy could not validate a **CI** batch at all (CI normalized to an *unknown
+feature* and was rejected), so the *legacy* gate on the merge base cannot
+independently green-light this migration's own policy change. Concretely:
+
+- A PR can modify the checker that runs from the PR checkout; trust anchors remain
+  the protected-`main` `reviewers.yaml` and the read-only-resolved original GitHub
+  evidence. This migration therefore **cannot claim its modified checker
+  independently authorizes its own policy change**, and it does **not** fabricate
+  a passing "Test Approval" result for its own diff.
+- No genuine pre-code CI approval record for *this* migration batch exists yet, and
+  none is fabricated here. Whether this migration is treated as an
+  A-approved in-scope CI/governance change is a **disposition for A**, not a
+  self-granted green. If the "test approval" job is momentarily non-applicable
+  because the diff is treated as governance/docs, that must be an explicit,
+  reviewed decision — not a silent skip.
+- The new rule **does not** retroactively approve the already-written main batch,
+  and it does not authorize the main batch's files (those are outside this
+  migration's three-file scope).
+
+The migration's own evidence is kept separate from the main closure batch.
