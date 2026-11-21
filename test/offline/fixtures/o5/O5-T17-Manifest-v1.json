@@ -1,0 +1,20 @@
+{
+  "adjudication_log": [],
+  "builder": "test/offline/fixtures/o5/build_o5_t17_fixture.py",
+  "expected_sha256": "5a9e292d47da96b4ae6c09592030ce4a6d9f04f3d9b24af8dfcd3e70341c6c1c",
+  "fixture_sha256": "4dbf85d757635699a7e5ab938c6c16fa284693a4d53c2c39fd65255f0ec0fbbe",
+  "implementation_main_sha": "e00d5cafd33869f42960c13bc297f9bf42634760",
+  "k": 30,
+  "record_count": 1000,
+  "request_topics": [
+    "MONETARY_POLICY",
+    "INFLATION",
+    "ECONOMIC_ACTIVITY"
+  ],
+  "request_window": [
+    "2026-10-01T00:00:00Z",
+    "2026-10-07T22:30:00Z"
+  ],
+  "rules_version": "o5-rules-v1.1-draft",
+  "runner": "ubuntu-latest / CPython 3.11.x"
+}

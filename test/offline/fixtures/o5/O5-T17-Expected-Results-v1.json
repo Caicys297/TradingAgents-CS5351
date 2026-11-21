@@ -1,0 +1,66 @@
+{
+  "counts": {
+    "duplicate_count": 20,
+    "input_count": 1000,
+    "invalid_count": 0,
+    "irrelevant_count": 60,
+    "not_selected_limit_count": 890,
+    "out_of_window_count": 0,
+    "selected_count": 30,
+    "skipped_zero_limit_count": 0
+  },
+  "request": {
+    "end_at": "2026-10-07T22:30:00Z",
+    "limit": 30,
+    "start_at": "2026-10-01T00:00:00Z",
+    "topics": [
+      "MONETARY_POLICY",
+      "INFLATION",
+      "ECONOMIC_ACTIVITY"
+    ]
+  },
+  "rules_version": "o5-rules-v1.1-draft",
+  "selected_ids": [
+    "o5:7d440275a146a97949fb5b1ae50b8f86",
+    "o5:9f0654ff4865cac893fa4ae3c660f7f6",
+    "o5:193c6643086f855f20725c45ffccff15",
+    "o5:005ee2a9268b50f32f73b91df7245e66",
+    "o5:ef97809f67062e2939ec7c3fd50bd653",
+    "o5:e8f9602857493d123d23dbc65a01e24b",
+    "o5:46da396f8d762541e98cf9f5bdee19c4",
+    "o5:d0c2a54cd9d87087c05cb5bcdb9544ed",
+    "o5:b863639734553e6593eab5971f3a6cb1",
+    "o5:56ad2c16c121022635ef73ce14314c6d",
+    "o5:2bd6474024166ef226f2935603c19331",
+    "o5:cf2bb314f6484aafa855e8123517e595",
+    "o5:b5a24656f3271a76d73b959974f1a6dc",
+    "o5:5f30dfdd4ea9b21ef60fc255da2e2f86",
+    "o5:08ee703938d0ed8fec69ca6d5810199c",
+    "o5:652d2aaf04189aba5452ef5743b7cdeb",
+    "o5:00b396c91924f569a2ed33abc19bfa38",
+    "o5:f607696f8d4ea983abb68166b5fb34e9",
+    "o5:232d626b1ae4d157ee7be4bdd0dc6f7f",
+    "o5:be2572139fbbc24ba7eca8db79d61613",
+    "o5:a4589788f0347413348882d92ffc49df",
+    "o5:899fb9959d9e0b516d9bb8a4a8f9e24d",
+    "o5:d99325a06e3c82eea96cee4f66d8b5d4",
+    "o5:b6c01db1afacc7fb574507ca7b97030c",
+    "o5:628b22279607f3501c34c5d8a14987fa",
+    "o5:6c59cd72654324d17cf519d24e27206b",
+    "o5:311a67d5d800ac468ac7e3f68764381b",
+    "o5:55dcd929deef23c042229fdb7f98810f",
+    "o5:b2614f3d061f56e1491d6e1dbe76af9b",
+    "o5:452079f1843efc481b1bb30fa083137c"
+  ],
+  "selected_per_topic": {
+    "ECONOMIC_ACTIVITY": 10,
+    "INFLATION": 10,
+    "MONETARY_POLICY": 10
+  },
+  "status": "OK",
+  "topic_order": [
+    "MONETARY_POLICY",
+    "INFLATION",
+    "ECONOMIC_ACTIVITY"
+  ]
+}
