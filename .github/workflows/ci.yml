@@ -83,6 +83,8 @@ jobs:
 
   type-check:
     name: type check
+    # Runs on pull_request AND push. Per-commit verification across the event's
+    # trusted range (REQ-GOV-07 "every commit"); zero/missing push base fails closed.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -96,17 +98,18 @@ jobs:
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
           pip install "mypy==1.18.2" "types-PyYAML==6.0.12.20250915"
-      - name: Check for new type diagnostics vs trusted base baseline
+      - name: Check for new type diagnostics (per-commit range)
         env:
-          # Baseline is read from the merge-base (trusted), not from this PR's tree,
-          # so a PR cannot widen its own allowances. On first introduction the job
-          # bootstraps against THIS PR (A review required); see scripts/typecheck.py.
           GITHUB_BASE_REF: ${{ github.base_ref }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_BEFORE: ${{ github.event.before }}
+          GITHUB_AFTER: ${{ github.event.after }}
         run: python scripts/typecheck.py
 
   dependency-audit:
     name: dependency audit
+    # Runs on pull_request AND push; audits installed env vs trusted base baseline
+    # and reports per-commit dependency-manifest changes. Zero/missing push base fails.
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -124,7 +127,52 @@ jobs:
         env:
           GITHUB_BASE_REF: ${{ github.base_ref }}
           GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_BEFORE: ${{ github.event.before }}
+          GITHUB_AFTER: ${{ github.event.after }}
         run: python scripts/dep_audit.py
+
+  test-approval:
+    name: test approval
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install checker dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install "PyYAML==6.0.3"
+      - name: Collect changed files (NUL-separated)
+        env:
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "${GITHUB_BASE_REF}"
+          git rev-parse --verify "origin/${GITHUB_BASE_REF}" >/dev/null
+          git diff --name-only -z "origin/${GITHUB_BASE_REF}...HEAD" > changed_files.z
+      - name: Verify pre-code approval for implementation changes
+        # Trust/bootstrap model (accurate): this job runs the checker FROM THE PR
+        # CHECKOUT with a read-only GITHUB_TOKEN (no write creds, no
+        # pull_request_target). A PR can therefore modify its own checker; the
+        # trust anchors are the protected `main` reviewers mapping
+        # (docs/test-approvals/reviewers.yaml) and the original GitHub evidence the
+        # checker resolves read-only. Not "untrusted code cannot run".
+        env:
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Batch id: the PR number is used as the batch key by convention; records
+          # must declare the same batch_id to bind approval to this PR.
+          BATCH_ID: "pr-${{ github.event.pull_request.number }}"
+        run: >
+          python scripts/check_test_approval.py
+          --changed-from-file changed_files.z
+          --batch "$BATCH_ID"
+          --repo "${{ github.repository }}"
+          --pr "${{ github.event.pull_request.number }}"
 
   ai-use-log:
     name: ai-use log
@@ -156,6 +204,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -163,21 +213,16 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -e ".[dev]"
-      - name: Run deterministic O5 semantic cases (real entry, offline)
-        # E-confirmed deterministic cases through the real
-        # get_global_news_yfinance entry (merged on main via PR #29):
-        #   - relevant macro news selected (filter-before-slice, fields kept)
-        #   - irrelevant candidates filtered to empty (ALL_IRRELEVANT) + exact counts
-        #   - filter unavailable -> no unvalidated publication (suppression)
-        #   - limit=0 -> zero vendor calls
-        # The upstream-empty test is ADDITIONAL coverage only; the
-        # relevant-success case (s4_selected_path...) is the primary E case.
-        # Non-deterministic text scoring remains deferred (not run here).
-        run: >
-          pytest -v
-          test/offline/test_o5_macro_news_integration.py::test_s4_selected_path_filters_before_slice_and_keeps_fields
-          test/offline/test_o5_macro_news_integration.py::test_s4_t04d_filtered_to_zero_is_not_upstream_empty
-          test/offline/test_o5_macro_news_integration.py::test_s4_t04d_all_irrelevant_uses_the_all_irrelevant_enum_member
-          test/offline/test_o5_macro_news_integration.py::test_s4_filter_unavailable_text_is_distinct_from_filtered_empty
-          test/offline/test_o5_macro_news_integration.py::test_s3_zero_limit_skips_vendor
-          test/offline/test_o5_macro_news_integration.py::test_s3_empty_vendor_pool_is_distinct_from_filtered_pool
+      - name: Run deterministic semantic report (versioned O5 cases + applicability)
+        # Real get_global_news_yfinance via the approved O5 tests (offline, fake
+        # vendor inputs). Emits versioned case IDs + per-case results vs 100%
+        # threshold; fails nonzero on any required failed/missing case OR on a
+        # prompt/model change with no approved applicable case.
+        # Applicability uses the actual event: pull_request -> merge-base vs base;
+        # push -> before/after commit range (new-branch/tag pushes fail closed).
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          GITHUB_BEFORE: ${{ github.event.before }}
+          GITHUB_AFTER: ${{ github.event.after }}
+        run: python scripts/semantic_report.py --json semantic-report.json
