@@ -251,6 +251,28 @@ itself and this migration does **not** authorize the main batch.
   feature keeps its Registry reviewer (`O1/O3/O4/O5 → F`, `O2/O6 → A`). No product
   feature is re-mapped and **no member is mapped to role F**.
 
+### Qualification boundary (enforced, not merely claimed)
+The `CI` label alone does **not** grant A the test-plan authority. The checker runs
+`_ci_governance_qualified(...)` and requires **all** of the following before
+crediting any CI test-plan authority (marker **and** historical routes alike;
+clarification cannot bypass it — it only confirms scope on the same record path):
+- **Genuine F implementation.** The batch's implementers are resolved via the
+  existing authenticated mechanisms (`commit.author.login` GitHub-account
+  association, or the base-trusted `implementers.yaml`), and *every* resolved
+  implementer must have trusted role **F** in the base `reviewers.yaml`. Unknown
+  identity, an unauthenticated login, or any non-F implementer (e.g. an A
+  implementer) disqualifies the batch.
+- **CI/governance scope.** *Every* actual changed (applicable) file **and** every
+  file in the immutable approved scope must be CI/governance paths
+  (`.github/`, `scripts/`, `docs/ci/`, `docs/test-approvals/`, `transcripts/`,
+  `test/`, `tests/`). A product implementation (`tradingagents/`, `cli/`, `src/`,
+  `prompts/`) merely relabelled `CI` is rejected.
+- **A reviews directly.** For CI batches, delegation is **not** allowed to stand in
+  for A on the test plan; only an authenticated role-A author credits it.
+- A record's *claimed* implementers/feature are never sufficient on their own: the
+  boundary is derived from resolved identity + actual changed files + immutable
+  scope.
+
 ### What stays unchanged (all existing safeguards preserved)
 - **Authenticated original authors + timestamps** from the base-reviewed
   `reviewers.yaml`, resolved from the real GitHub evidence author.
@@ -267,15 +289,23 @@ itself and this migration does **not** authorize the main batch.
   negative test.
 
 ### Focused tests (`test/offline/test_check_test_approval.py`)
-Added (all offline, fixture GitHub API + temporary real Git histories):
+All offline (fixture GitHub API + temporary real Git histories), through the normal
+checker entry point (`main`):
 - **Positive**: non-implementer A approves both plan kinds for a genuine
   F-implemented CI batch → valid.
+- **Positive (boundary)**: F implements multiple CI/governance files
+  (`scripts/` + `docs/ci/` + `test/`) and A approves both → valid.
 - **Negatives (still rejected)**: self-approval; unauthorized (non-A) author; F
   cannot approve the CI test plan; unrelated batch; late approval; out-of-scope
   file; plan/version mismatch.
+- **Boundary negatives (qualification enforced)**: a product implementation
+  (`tradingagents/`) relabelled `CI` is rejected; a non-F-implemented batch (role-A
+  implementer, approved by a different A so it is not merely self-approval) is
+  rejected; a batch whose actual changed set mixes a product file with governance
+  files is rejected; an unresolvable implementer identity is rejected.
 - **No blanket override**: A cannot approve a non-CI (O4) test plan (product
   reviewer F still required).
-- **Existing behavior intact**: the pre-existing 61 tests continue to pass.
+- **Existing behavior intact**: the pre-existing tests continue to pass.
 
 ### Legacy-gate limitation (recorded transparently — needs A's review)
 This PR **modifies `scripts/check_test_approval.py` itself**. The pre-migration
