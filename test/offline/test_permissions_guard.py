@@ -165,3 +165,91 @@ def test_resolution_error_fails(tmp_path, monkeypatch):
     monkeypatch.setenv("GITHUB_BEFORE", "0" * 40)
     monkeypatch.setenv("GITHUB_AFTER", "0" * 40)
     assert check_permissions.main(["--root", str(r)]) == 1
+
+
+PRT_BASE = """name: CI
+on:
+  pull_request_target:
+permissions:
+  contents: read
+  pull-requests: read
+jobs:
+  j:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo {EXPR}
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+"""
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("expr", [
+    "${{ secrets.TOKEN }}",
+    "${{ secrets['TOKEN'] }}",
+    '${{ secrets["TOKEN"] }}',
+    "${{ secrets . TOKEN }}",
+    "${{ secrets [ 'TOKEN' ] }}",
+])
+def test_pull_request_target_secret_forms_block(tmp_path, monkeypatch, expr):
+    r = _repo(tmp_path)
+    _change_wf(r, PRT_BASE.replace("{EXPR}", expr))
+    assert _run(monkeypatch, r) == 1
+
+
+@pytest.mark.unit
+def test_pull_request_target_without_secret_passes(tmp_path, monkeypatch):
+    r = _repo(tmp_path)
+    _change_wf(r, PRT_BASE.replace("{EXPR}", "${{ github.sha }}"))
+    assert _run(monkeypatch, r) == 0
+
+
+@pytest.mark.unit
+def test_invalid_permission_value_blocks(tmp_path, monkeypatch):
+    r = _repo(tmp_path)
+    bad = GOOD_WF.replace("  contents: read\n", "  contents: bogus\n")
+    _change_wf(r, bad)
+    assert _run(monkeypatch, r) == 1
+
+
+@pytest.mark.unit
+def test_unknown_permission_scope_blocks(tmp_path, monkeypatch):
+    r = _repo(tmp_path)
+    bad = GOOD_WF.replace("  pull-requests: read\n", "  pull-requests: read\n  made-up-scope: read\n")
+    _change_wf(r, bad)
+    assert _run(monkeypatch, r) == 1
+
+
+@pytest.mark.unit
+def test_non_string_permission_value_blocks(tmp_path, monkeypatch):
+    r = _repo(tmp_path)
+    bad = GOOD_WF.replace("  contents: read\n", "  contents: 123\n")
+    _change_wf(r, bad)
+    assert _run(monkeypatch, r) == 1
+
+
+@pytest.mark.unit
+def test_expression_permission_value_blocks(tmp_path, monkeypatch):
+    r = _repo(tmp_path)
+    bad = GOOD_WF.replace("  contents: read\n", "  contents: ${{ inputs.x }}\n")
+    _change_wf(r, bad)
+    assert _run(monkeypatch, r) == 1
+
+
+@pytest.mark.unit
+def test_none_level_is_valid_and_passes(tmp_path, monkeypatch):
+    r = _repo(tmp_path)
+    ok = GOOD_WF.replace("  pull-requests: read\n", "  pull-requests: none\n")
+    _change_wf(r, ok)
+    assert _run(monkeypatch, r) == 0
+
+
+@pytest.mark.unit
+def test_job_level_invalid_value_blocks(tmp_path, monkeypatch):
+    r = _repo(tmp_path)
+    bad = GOOD_WF.replace(
+        "  j:\n    runs-on: ubuntu-latest\n",
+        "  j:\n    runs-on: ubuntu-latest\n    permissions:\n      contents: nope\n")
+    _change_wf(r, bad)
+    assert _run(monkeypatch, r) == 1

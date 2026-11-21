@@ -99,3 +99,23 @@ batch, per REQ-GOV-06. The repository does not prescribe a fixed path or schema.
   `transcripts/CI-Closure-v5-implementation-excerpt.md` (bounded excerpt from a
   fresh `opencode export`; local paths redacted).
 - Implementation commit: `30bd320ac22e0ed1241361d50ef962b6aece95eb`.
+
+## Entry — PR #37 reviewed-gap fixes (check_permissions + real-contract negatives)
+
+- Task: fix the reviewed gaps on PR #37 within the approved #35 plan — harden
+  `scripts/check_permissions.py` (structural secret-reference detection for
+  `secrets.X`/`secrets['X']`/`secrets["X"]` and whitespace variants; workflow- and
+  job-level permission-value validation recognizing read/write/none and failing
+  closed on unknown scopes / non-string / expressions / unresolved structures), and
+  record three real-contract negative experiments (Contract/Security/API) proving
+  the mapped guards block genuine contract breaks.
+- Usage scope: `scripts/check_permissions.py`,
+  `test/offline/test_permissions_guard.py`, `docs/ci/CI-Closure-v5-Evidence.md`,
+  `transcripts/CI-Closure-v5-gapfix-excerpt.md`. No production feature code changed.
+- OpenCode session: `ses_e27f33c94ffeOKeCXPrAQQW93Z`.
+- Session/export evidence (genuine, reviewer-accessible, specific to this task):
+  `transcripts/CI-Closure-v5-gapfix-excerpt.md` (bounded excerpt from a fresh
+  `opencode export`; local paths redacted). Raw experiment scrollback was not
+  retained as a file; the observed lines are recorded in
+  `docs/ci/CI-Closure-v5-Evidence.md` and the preserved fix reports.
+- Implementation commit: see PR #37 reviewed-gap follow-up commit (below).

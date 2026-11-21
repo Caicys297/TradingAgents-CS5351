@@ -32,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -61,6 +62,23 @@ class PermError(RuntimeError):
     pass
 
 
+VALID_LEVELS = ("read", "write", "none")
+# Canonical valid permission scope keys (GitHub Actions). Unknown scopes fail closed.
+VALID_SCOPES = frozenset((
+    "actions", "attestations", "checks", "contents", "deployments", "discussions",
+    "id-token", "issues", "models", "packages", "pages", "pull-requests",
+    "repository-projects", "security-events", "statuses",
+))
+
+# Matches secrets references in step text: property access (secrets.X) and bracket
+# access with single or double quotes (secrets['X'], secrets["X"]), tolerant of
+# optional whitespace around the dot/brackets.
+_SECRET_REF_RE = re.compile(
+    r"\bsecrets\s*(?:\.\s*[A-Za-z_][A-Za-z0-9_]*"
+    r"|\[\s*(?:'[^']*'|\"[^\"]*\")\s*\])"
+)
+
+
 def _norm(obj) -> dict:
     """Normalize PyYAML's boolean ``on`` key to the string 'on'."""
     if not isinstance(obj, dict):
@@ -68,9 +86,48 @@ def _norm(obj) -> dict:
     return {("on" if k is True else k): v for k, v in obj.items()}
 
 
+def _coerce(p) -> dict:
+    """Normalize a permissions declaration to {scope: level} plus marker keys.
+
+    'write-all' -> {'__write_all__': True}. 'read-all' -> read for valid scopes.
+    A mapping is preserved as-is for value validation. Any scalar/expression that
+    is not a recognized all-form -> {'__ambiguous__': repr} (fail closed).
+    """
+    if p == "write-all":
+        return {"__write_all__": True}
+    if p == "read-all":
+        return dict.fromkeys(VALID_SCOPES, "read")
+    if isinstance(p, dict):
+        return {str(k): v for k, v in p.items()}
+    return {"__ambiguous__": repr(p)}
+
+
+def _validate_decl(decl, where: str, problems: list[str]) -> None:
+    """Validate a raw permissions declaration (scalar or mapping).
+
+    Enforces: recognized all-forms; mapping values are valid read/write/none;
+    scope keys are known; non-string values/expressions fail closed.
+    """
+    if decl == "write-all" or decl == "read-all":
+        return
+    if not isinstance(decl, dict):
+        problems.append(f"{where}: permissions value {decl!r} is not a recognized form")
+        return
+    for scope, level in decl.items():
+        sscope = str(scope)
+        if sscope not in VALID_SCOPES:
+            problems.append(f"{where}: unknown permission scope {sscope!r}")
+        if not isinstance(level, str):
+            problems.append(f"{where}: permission '{sscope}' has non-string value {level!r}")
+            continue
+        if level not in VALID_LEVELS:
+            problems.append(f"{where}: permission '{sscope}' has invalid value {level!r}")
+
+
+
 def _eff_perms(job: dict, wf: dict) -> dict | None:
-    """Return effective permissions for a job, or None if inherited/ambiguous.
-    'write-all' -> {'__write_all__': True}. Unknown expression strings preserved."""
+    """Effective permissions for a job (inheritance honored), or None if no
+    declaration applies. Callers validate the raw decl separately."""
     job_perm = job.get("permissions", "__inherit__")
     if job_perm == "__inherit__":
         wf_perm = wf.get("permissions", "__absent__")
@@ -78,17 +135,6 @@ def _eff_perms(job: dict, wf: dict) -> dict | None:
             return None
         return _coerce(wf_perm)
     return _coerce(job_perm)
-
-
-def _coerce(p) -> dict:
-    if p == "write-all":
-        return {"__write_all__": True}
-    if p == "read-all":
-        return dict.fromkeys(WRITE_SCOPES, "read")
-    if isinstance(p, dict):
-        return {str(k): v for k, v in p.items()}
-    # expression / ambiguous scalar
-    return {"__ambiguous__": str(p)}
 
 
 def _is_pr_reachable(wf: dict) -> bool:
@@ -113,6 +159,33 @@ def _opens_on_pr(wf: dict, event: str) -> bool:
     return False
 
 
+def _find_secret_refs(obj) -> list[str]:
+    """Return any secrets references found in parsed values (structurally).
+
+    Walks dict/list/str leaves, applying ``_SECRET_REF_RE`` to each string so both
+    ``secrets.X`` and ``secrets['X']``/``secrets["X"]`` (with whitespace variants)
+    are detected, independent of YAML quoting/serialization.
+    """
+    hits: list[str] = []
+
+    def walk(v) -> None:
+        if isinstance(v, str):
+            for m in _SECRET_REF_RE.finditer(v):
+                hits.append(m.group(0))
+        elif isinstance(v, dict):
+            for k, val in v.items():
+                if isinstance(k, str):
+                    for m in _SECRET_REF_RE.finditer(k):
+                        hits.append(m.group(0))
+                walk(val)
+        elif isinstance(v, list):
+            for item in v:
+                walk(item)
+
+    walk(obj)
+    return hits
+
+
 def _scan_workflow(path: Path, text: str) -> list[str]:
     if yaml is None:
         raise PermError("PyYAML required")
@@ -128,6 +201,9 @@ def _scan_workflow(path: Path, text: str) -> list[str]:
     # Baseline block present? (restriction removal)
     if "permissions" not in wf:
         problems.append(f"{path.name}: baseline workflow-level 'permissions' block is absent (restriction removal)")
+    # Validate the workflow-level declaration (values/scopes/forms) when present.
+    if "permissions" in wf:
+        _validate_decl(wf.get("permissions"), f"{path.name}:workflow", problems)
 
     pr_reachable = _is_pr_reachable(wf)
     uses_prt = _opens_on_pr(wf, "pull_request_target")
@@ -140,18 +216,21 @@ def _scan_workflow(path: Path, text: str) -> list[str]:
         if not isinstance(job, dict):
             continue
         job_perm = job.get("permissions", "__inherit__")
+        # Validate the job-level declaration (values/scopes/forms) when present.
+        if job_perm != "__inherit__":
+            _validate_decl(job_perm, f"{path.name}:{jname}", problems)
         # effective permissions
         eff = _eff_perms(job, wf)
         if eff is not None:
             if eff.get("__write_all__"):
                 problems.append(f"{path.name}:{jname}: 'permissions: write-all' present")
             if "__ambiguous__" in eff:
-                problems.append(f"{path.name}:{jname}: ambiguous/expression permissions {eff['__ambiguous__']!r}")
+                problems.append(f"{path.name}:{jname}: ambiguous/expression permissions {eff['__ambiguous__']}")
             if pr_reachable:
                 for scope, level in eff.items():
                     if scope.startswith("__"):
                         continue
-                    if str(level) == "write":
+                    if isinstance(level, str) and level == "write":
                         problems.append(f"{path.name}:{jname}: PR-reachable job has write scope '{scope}'")
         # unsafe inheritance: PR-reachable job omitting permissions while workflow grants more than baseline
         if pr_reachable and job_perm == "__inherit__" and isinstance(wf_perm, dict):
@@ -161,9 +240,9 @@ def _scan_workflow(path: Path, text: str) -> list[str]:
 
         # pull_request_target + secrets or PR-head checkout
         if uses_prt:
-            jtext = yaml.safe_dump(job, allow_unicode=True)
-            if "secrets." in jtext:
+            if _find_secret_refs(job):
                 problems.append(f"{path.name}:{jname}: pull_request_target job references secrets")
+            jtext = yaml.safe_dump(job, allow_unicode=True)
             if "github.event.pull_request.head" in jtext or "refs/pull/" in jtext:
                 problems.append(f"{path.name}:{jname}: pull_request_target checks out PR head")
 
