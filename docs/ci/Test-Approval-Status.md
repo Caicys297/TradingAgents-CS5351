@@ -159,3 +159,34 @@ comment no longer claims the PR cannot change its checker.
   `pyproject.toml`, not HEAD; worktree always removed. Controlled-scanner test
   shows two revisions with identical `requirements.txt` but different pyproject
   deps are seen distinctly; an intermediate finding fails while HEAD is clean.
+
+## Historical approval compatibility route (A review 6005119233)
+
+A bounded, separate route for **legacy natural-language approvals** written before
+structured markers existed. It is distinct from the structured `TEST-APPROVAL`
+marker route used for new batches.
+
+- **Trusted source:** a base-revision-reviewed
+  `docs/test-approvals/historical-approvals.yaml` (loaded from `origin/<base>`, like
+  `reviewers.yaml`; a PR cannot self-declare). Each entry binds an **exact** original
+  artifact: `artifact_type`, `artifact_id`, `pr`, `actor`, `kinds`, `plan_sha`,
+  `plan_version`, `scope`, `batch`, and (for delegation) `delegated_by`.
+- **Verification:** the checker re-fetches the original GitHub evidence and requires:
+  bound actor == original author; role authorized for the kind (or an A
+  `delegated_by` grant); the immutable plan matches the bound SHA+version; scope
+  equals the binding and is limited to the plan's approved files; and the
+  **original timestamp** (never the mapping's) precedes the first implementation.
+- **Cannot:** accept arbitrary prose by keywords, honor a missing/changed original,
+  allow late approval or out-of-scope batches, or widen scope; the mapping only
+  records interpretation.
+- **#32 still fails** for lack of a historical pre-code approval for this batch;
+  structured route and fail-closed behavior are unchanged.
+
+**Effective date (A):** normal (marker) enforcement begins for the next
+implementation batch started after #32 merges; this historical review does not
+retroactively require new marker text on old approvals.
+
+### Legacy positives/negatives exercised (fixtures preserve original text)
+- Positive: A #8 comment `6920115438` (approves BOTH plans, `b0287da` v0.3/v0.1) via binding.
+- Positive: A #18 comment `7004478311` (exec) + F review #18 `5972069186` (test `aa9fda60` v0.4) **with A delegation** (`delegated_by`). Note: #18 comment `7004545668` is by **B** and is NOT accepted as F approval.
+- Negative: missing original, late approval, scope mismatch/unrelated evidence, untrusted (PR-tree-only) mapping.

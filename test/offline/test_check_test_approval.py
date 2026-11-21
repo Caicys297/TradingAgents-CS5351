@@ -808,3 +808,171 @@ def test_clarification_marker_plan_mismatch_vs_original_fails(tmp_path):
             clarification={"evidence": {"type": "issue_comment", "id": 782},
                            "plan_sha": FULL_SHA, "plan_version": "v0.3"})
     assert _run(mod, r, z, fix) == 1
+
+
+# ============================================================ Historical compatibility route (A review 6005119233)
+# Real source texts (verbatim short forms) — NOT rewritten into markers.
+A8_POST = ("B，我复核了提交 `b0287da171cb77673bc7c03c4a6b13535d427730` 的 O2 测试计划 "
+           "`v0.3-DRAFT` 和 OpenCode 执行计划 `v0.1-DRAFT`。**批准 B 的第一阶段编码前计划**")
+A18_POST = ("我按 PR #18 当前 HEAD `aa9fda60bb34c126c65d05ac706fc000cdf8da05` 的 **v0.4-DRAFT** "
+            "两份计划复核了范围 ... 以上是 A 对 EXEC v0.4 的编码前执行范围确认")
+F18_REVIEW = ("F 已复核提交 `aa9fda60bb34c126c65d05ac706fc000cdf8da05` 的 O2 Stage 2 测试计划 "
+              "v0.4-DRAFT，批准本版测试设计")
+
+
+def _base_with_historical(r, entries, reviewers=True):
+    """Commit a base-trusted historical-approvals.yaml and point origin/main at it."""
+    import yaml as _yaml
+    d = r / "docs/test-approvals"
+    d.mkdir(parents=True, exist_ok=True)
+    if reviewers:
+        (d / "reviewers.yaml").write_text("logins:\n  Caicys297: A\n  fancx777: F\n")
+    (d / "historical-approvals.yaml").write_text(_yaml.safe_dump({"entries": entries}, allow_unicode=True))
+    _git(r, "add", "-A")
+    _git(r, "commit", "-qm", "base-with-hist")
+    base = _git(r, "rev-parse", "HEAD")
+    subprocess.run(["git", "-C", str(r), "update-ref", "refs/remotes/origin/main", base], check=True)
+
+
+def _write_review(fix, pr, rid, author, at, body):
+    d = fix / "reviews"
+    d.mkdir(parents=True, exist_ok=True)
+    (d / f"{pr}-{rid}.json").write_text(json.dumps(
+        {"user": {"login": author}, "submitted_at": at, "state": "APPROVED", "body": body}))
+
+
+@pytest.mark.unit
+def test_historical_a8_both_plans_accepted(tmp_path):
+    """A's #8 comment 6920115438 (natural language) approves BOTH plans via a
+    base-trusted historical binding; no structured marker in the body."""
+    mod = _load()
+    r = tmp_path / "r"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(r)], check=True)
+    _git(r, "config", "user.email", "t@t")
+    _git(r, "config", "user.name", "t")
+    scope = ["tradingagents/repro/manifest.py"]
+    _base_with_historical(r, [{
+        "feature": "O2", "artifact_type": "issue_comment", "artifact_id": 6920115438,
+        "pr": 8, "actor": "Caicys297", "kinds": ["test_plan", "execution_plan"],
+        "plan_sha": FULL_SHA, "plan_version": "v0.3", "scope": scope,
+        "batch": "o2-phase1", "note": "A 2026-11-16 pre-code approval"}])
+    fix = tmp_path / "fix"
+    _comment(fix, 6920115438, "Caicys297", "2026-11-16T15:02:47Z", body=A8_POST)
+    _plan(fix, FULL_SHA, "test-plans/O2-plan.md")
+    _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
+    _register_commits(r, fix)
+    _record(r, "o2.json", feature="O2", approval_kinds=["test_plan", "execution_plan"],
+            evidence={"type": "issue_comment", "id": 6920115438, "pr": 8},
+            plan_sha=FULL_SHA, plan_version="v0.3", allowed_files=scope,
+            implementers=["fancx777"], batch_id="batch-1")
+    z = _changed(tmp_path, scope)
+    assert _run(mod, r, z, fix) == 0
+
+
+@pytest.mark.unit
+def test_historical_a18_exec_and_f18_review_test(tmp_path):
+    """A #18 comment 7004478311 (exec) + F review 5972069186 (test, aa9fda60 v0.4)
+    accepted via base-trusted historical bindings (two records)."""
+    mod = _load()
+    r = tmp_path / "r"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(r)], check=True)
+    _git(r, "config", "user.email", "t@t")
+    _git(r, "config", "user.name", "t")
+    AA = "aa9fda60" + "0" * 32
+    scope = ["tradingagents/repro/manifest.py"]
+    _base_with_historical(r, [
+        {"feature": "O2", "artifact_type": "issue_comment", "artifact_id": 7004478311,
+         "pr": 18, "actor": "Caicys297", "kinds": ["execution_plan"],
+         "plan_sha": AA, "plan_version": "v0.4", "scope": scope, "batch": "o2-s2"},
+        {"feature": "O2", "artifact_type": "review", "artifact_id": 5972069186,
+         "pr": 18, "actor": "fancx777", "kinds": ["test_plan"], "delegated_by": "Caicys297",
+         "plan_sha": AA, "plan_version": "v0.4", "scope": scope, "batch": "o2-s2"},
+    ])
+    fix = tmp_path / "fix"
+    _comment(fix, 7004478311, "Caicys297", "2026-11-19T08:58:16Z", body=A18_POST)
+    _write_review(fix, 18, 5972069186, "fancx777", "2026-11-19T09:03:12Z", F18_REVIEW)
+    _plan(fix, AA, "test-plans/O2-S2-plan.md",
+          text="# O2 Stage2 v0.4\nO2-FR-01 O2-TC-01 tradingagents/repro/manifest.py\n")
+    _commit(r, "tradingagents/repro/manifest.py", "2026-11-19T10:00:00+00:00")
+    _register_commits(r, fix, login="D")
+    _record(r, "o2_exec.json", feature="O2", approval_kinds=["execution_plan"],
+            evidence={"type": "issue_comment", "id": 7004478311, "pr": 18},
+            plan_sha=AA, plan_version="v0.4", plan_path="test-plans/O2-S2-plan.md",
+            allowed_files=scope, implementers=["D"])
+    _record(r, "o2_test.json", feature="O2", approval_kinds=["test_plan"],
+            evidence={"type": "review", "id": 5972069186, "pr": 18},
+            plan_sha=AA, plan_version="v0.4", plan_path="test-plans/O2-S2-plan.md",
+            allowed_files=scope, implementers=["D"])
+    z = _changed(tmp_path, scope)
+    assert _run(mod, r, z, fix) == 0
+
+
+@pytest.mark.unit
+def test_historical_missing_original_fails(tmp_path):
+    """Record references a comment id with no fixture (original missing) -> fail."""
+    mod = _load()
+    r = tmp_path / "r"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(r)], check=True)
+    _git(r, "config", "user.email", "t@t")
+    _git(r, "config", "user.name", "t")
+    scope = ["tradingagents/repro/manifest.py"]
+    _base_with_historical(r, [{"feature": "O2", "artifact_type": "issue_comment",
+        "artifact_id": 6920115438, "pr": 8, "actor": "Caicys297",
+        "kinds": ["test_plan", "execution_plan"], "plan_sha": FULL_SHA,
+        "plan_version": "v0.3", "scope": scope, "batch": "o2"}])
+    fix = tmp_path / "fix"
+    fix.mkdir()  # no comment fixture
+    _plan(fix, FULL_SHA, "test-plans/O2-plan.md")
+    _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
+    _register_commits(r, fix)
+    _record(r, "o2.json", evidence={"type": "issue_comment", "id": 6920115438, "pr": 8},
+            plan_sha=FULL_SHA, plan_version="v0.3", allowed_files=scope)
+    z = _changed(tmp_path, scope)
+    assert _run(mod, r, z, fix) == 1
+
+
+@pytest.mark.unit
+def test_historical_late_approval_fails(tmp_path):
+    mod = _load()
+    r = tmp_path / "r"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(r)], check=True)
+    _git(r, "config", "user.email", "t@t")
+    _git(r, "config", "user.name", "t")
+    scope = ["tradingagents/repro/manifest.py"]
+    _base_with_historical(r, [{"feature": "O2", "artifact_type": "issue_comment",
+        "artifact_id": 6920115438, "pr": 8, "actor": "Caicys297",
+        "kinds": ["test_plan", "execution_plan"], "plan_sha": FULL_SHA,
+        "plan_version": "v0.3", "scope": scope, "batch": "o2"}])
+    fix = tmp_path / "fix"
+    _comment(fix, 6920115438, "Caicys297", "2026-11-16T15:02:47Z", body=A8_POST)
+    _plan(fix, FULL_SHA, "test-plans/O2-plan.md")
+    # impl BEFORE the original approval time
+    _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T12:00:00+00:00")
+    _register_commits(r, fix)
+    _record(r, "o2.json", evidence={"type": "issue_comment", "id": 6920115438, "pr": 8},
+            plan_sha=FULL_SHA, plan_version="v0.3", allowed_files=scope)
+    z = _changed(tmp_path, scope)
+    assert _run(mod, r, z, fix) == 1
+
+
+@pytest.mark.unit
+def test_historical_untrusted_mapping_from_pr_fails(tmp_path):
+    """A historical mapping added only in the PR tree (not base) is not trusted."""
+    mod = _load()
+    r = _repo(tmp_path)  # base has reviewers.yaml but NO historical file
+    import yaml as _yaml
+    # put the historical file only in the working tree
+    (r / "docs/test-approvals/historical-approvals.yaml").write_text(_yaml.safe_dump({"entries": [{
+        "feature": "O2", "artifact_type": "issue_comment", "artifact_id": 6920115438,
+        "pr": 8, "actor": "Caicys297", "kinds": ["test_plan", "execution_plan"],
+        "plan_sha": FULL_SHA, "plan_version": "v0.3",
+        "scope": ["tradingagents/repro/manifest.py"], "batch": "o2"}]}))
+    fix = tmp_path / "fix"
+    _comment(fix, 6920115438, "Caicys297", "2026-11-16T15:02:47Z", body=A8_POST)
+    _plan(fix, FULL_SHA, "test-plans/O2-plan.md")
+    _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
+    _register_commits(r, fix)
+    _record(r, "o2.json", evidence={"type": "issue_comment", "id": 6920115438, "pr": 8},
+            plan_sha=FULL_SHA, plan_version="v0.3", allowed_files=["tradingagents/repro/manifest.py"])
+    z = _changed(tmp_path, ["tradingagents/repro/manifest.py"])
+    assert _run(mod, r, z, fix) == 1  # base lacks the mapping -> not trusted

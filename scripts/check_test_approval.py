@@ -54,6 +54,7 @@ EXECUTION_PLAN_REVIEWER = "A"
 OWNER_ROLES = {"A", "B", "C", "D", "E", "F"}
 RECORDS_DIR = "docs/test-approvals"
 REVIEWERS_FILE = "docs/test-approvals/reviewers.yaml"
+HISTORICAL_FILE = "docs/test-approvals/historical-approvals.yaml"
 
 CODE_PREFIXES = ("tradingagents/", "cli/", "scripts/", "src/",
                  ".github/workflows/", "test/", "tests/", "prompts/")
@@ -619,8 +620,100 @@ def _resolve_implementers(root: Path, base_ref: str, applicable: set[str], api, 
     return logins
 
 
+def load_historical(root: Path, base_ref: str) -> dict:
+    """Load the reviewed HISTORICAL approval mapping from the base revision.
+
+    This bounded route exists only for legacy natural-language approvals written
+    before structured markers existed. Each entry binds an EXACT original artifact
+    (PR, comment/review id, actor) to feature/kind/plan(s)/version(s)/scope/batch.
+    The mapping is trusted ONLY from the base revision (a PR cannot self-declare a
+    historical approval); its own timestamp is metadata, never the approval time.
+    """
+    if yaml is None:
+        raise ExecutionError("PyYAML required to read historical approvals")
+    try:
+        text = _git(root, "show", f"origin/{base_ref}:{HISTORICAL_FILE}")
+    except ExecutionError as exc:
+        chk = subprocess.run(["git", "-C", str(root), "rev-parse", "--verify",
+                              f"origin/{base_ref}^{{commit}}"], capture_output=True, text=True)
+        if chk.returncode != 0:
+            raise ExecutionError(f"cannot resolve base origin/{base_ref}") from exc
+        return {"entries": []}  # base resolves, no historical file -> none
+    data = yaml.safe_load(text) or {}
+    return {"entries": data.get("entries", []) if isinstance(data.get("entries"), list) else []}
+
+
+def _find_historical(hist: dict, rec: dict, feature: str, src_pr):
+    """Find a historical binding whose EXACT artifact matches this record's evidence."""
+    ev = rec.get("evidence") or {}
+    for e in hist.get("entries", []):
+        if str(e.get("feature", "")).upper()[:2] != feature:
+            continue
+        if e.get("artifact_type") != ev.get("type") or str(e.get("artifact_id")) != str(ev.get("id")):
+            continue
+        if e.get("pr") is not None and src_pr is not None and str(e["pr"]) != str(src_pr):
+            continue
+        return e
+    return None
+
+
+def _verify_historical(hist_entry, rec, author, otime, src_pr, reviewers, feature, applicable,
+                       plan_allowed, api, repo, problems, rp) -> list[str] | None:
+    """Verify a legacy natural-language approval against its bound original.
+
+    Re-fetches nothing new (caller already resolved the original via _evidence_with_meta),
+    but enforces: bound actor == original author; bound kind authorized by role; the
+    ORIGINAL timestamp (not the mapping's) precedes implementation; plan SHA(s)+
+    version(s) match the immutable plan; scope == binding scope and covers applicable
+    files. Returns credit kinds on success, else appends problems and returns None.
+    """
+    actor = str(hist_entry.get("actor", ""))
+    if actor != author:
+        problems.append(f"{rp}: historical binding actor {actor!r} != original evidence author {author!r}")
+        return None
+    kinds = [k for k in hist_entry.get("kinds", []) if k in ("test_plan", "execution_plan")]
+    if not kinds:
+        problems.append(f"{rp}: historical binding has no valid kind")
+        return None
+    for k in kinds:
+        need = TEST_PLAN_REVIEWER.get(feature) if k == "test_plan" else EXECUTION_PLAN_REVIEWER
+        role = reviewers.get(author)
+        if role == need:
+            continue
+        # Evidence-backed delegation: an authorized A may delegate this kind to a
+        # grantee for this specific batch. The binding names `delegated_by` (an A
+        # login) and the grantee is the original evidence author.
+        dby = hist_entry.get("delegated_by")
+        if dby and reviewers.get(str(dby)) == "A" and role in OWNER_ROLES:
+            continue
+        problems.append(f"{rp}: historical {k} actor role {role!r} != {need} (and no valid A delegation)")
+        return None
+    # plan sha/version must match the binding and the record
+    h_sha = str(hist_entry.get("plan_sha", ""))
+    h_ver = str(hist_entry.get("plan_version", ""))
+    if str(rec.get("plan_sha", "")) != h_sha or str(rec.get("plan_version", "")) != h_ver:
+        problems.append(f"{rp}: record plan {rec.get('plan_sha','')[:7]}/{rec.get('plan_version')} "
+                        f"!= historical binding {h_sha[:7]}/{h_ver}")
+        return None
+    # scope: binding scope must equal record scope AND cover applicable files, and be
+    # limited to the immutable plan's approved files (no widening).
+    h_scope = [str(x) for x in hist_entry.get("scope", [])]
+    if sorted(set(h_scope)) != sorted({str(a) for a in rec.get("allowed_files", [])}):
+        problems.append(f"{rp}: record scope != historical binding scope")
+        return None
+    beyond_plan = [f for f in h_scope if f not in plan_allowed]
+    if beyond_plan:
+        problems.append(f"{rp}: historical scope beyond immutable plan: {beyond_plan}")
+        return None
+    missing = _covers_all(h_scope, applicable)
+    if missing:
+        problems.append(f"{rp}: historical scope does not cover applicable files: {missing}")
+        return None
+    return kinds
+
+
 def validate_batch(records, api, default_pr, batch_id, applicable, reviewers, earliest,
-                   root: Path, base_ref: str, repo: str | None) -> list[str]:
+                   root: Path, base_ref: str, repo: str | None, hist: dict) -> list[str]:
     problems: list[str] = []
     test_ok = exec_ok = None
 
@@ -680,11 +773,44 @@ def validate_batch(records, api, default_pr, batch_id, applicable, reviewers, ea
         kinds_declared = [k for k in kinds_declared if k]
         allowed_declared = [str(a) for a in rec.get("allowed_files", [])]
         if marker is None:
-            problems.append(f"{rp}: no explicit TEST-APPROVAL marker in evidence "
-                            "(keyword mentions are not accepted; add the authorized marker)")
+            # Historical natural-language approvals are NOT keyword-parsed. They
+            # are accepted only via a base-trusted reviewed mapping that binds the
+            # exact original artifact; verification happens below against the
+            # re-fetched original evidence + immutable plan + original timestamp.
+            hist_entry = _find_historical(hist, rec, feature, src_pr)
+            if hist_entry is None:
+                problems.append(f"{rp}: no explicit TEST-APPROVAL marker and no trusted "
+                                "historical binding for this original evidence")
+                continue
+            plan_allowed_h = _verify_scope_and_plan(rec, api, repo, applicable, problems, rp)
+            if plan_allowed_h is None:
+                continue
+            # original timestamp (not the mapping's) must precede implementation
+            if earliest["earliest_iso"] is not None and _parse_iso(otime) >= _parse_iso(earliest["earliest_iso"]):
+                problems.append(f"{rp}: late historical approval {otime} not before first impl {earliest['earliest_iso']}")
+                continue
+            hist_kinds = _verify_historical(hist_entry, rec, author, otime, src_pr, reviewers,
+                                            feature, applicable, plan_allowed_h, api, repo, problems, rp)
+            if hist_kinds is None:
+                continue
+            # implementer/self-approval still applies
+            declared = set(rec.get("implementers", [])) | ({rec["implementer"]} if rec.get("implementer") else set())
+            try:
+                resolved = _resolve_implementers(root, base_ref, applicable, api, repo, rec)
+            except ExecutionError as exc:
+                problems.append(f"{rp}: cannot establish implementer identity: {exc}")
+                continue
+            if author in (declared | resolved) or author.lower() in {x.lower() for x in (declared | resolved)}:
+                problems.append(f"{rp}: self-approval (historical actor {author} is an implementer)")
+                continue
+            print(f"NOTE {rp}: HISTORICAL approval accepted via trusted binding "
+                  f"(original {otime}, actor {author})", file=sys.stderr)
+            if "test_plan" in hist_kinds:
+                test_ok = rec
+            if "execution_plan" in hist_kinds:
+                exec_ok = rec
             continue
-        # Credit ONLY the single kind the marker explicitly names. A marker for one
-        # kind must never satisfy another kind, even if the record claims both.
+        # Credit ONLY the single kind the marker explicitly names.
         marker_kind = marker["kind"]
         if marker_kind not in kinds_declared:
             problems.append(f"{rp}: marker kind {marker_kind!r} not among record's declared kinds {kinds_declared}")
@@ -867,6 +993,7 @@ def main(argv=None) -> int:
     try:
         reviewers, bootstrapped = load_reviewers(root, base_ref)
         records = load_records(root)
+        hist = load_historical(root, base_ref)
     except ExecutionError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
@@ -894,7 +1021,7 @@ def main(argv=None) -> int:
     api = make_api(args.repo, args.api_fixture_dir)
     try:
         problems = validate_batch(records, api, args.pr, args.batch, applicable, reviewers, earliest,
-                                  root, base_ref, args.repo)
+                                  root, base_ref, args.repo, hist)
     except ExecutionError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         return 2
