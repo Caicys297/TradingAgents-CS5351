@@ -36,14 +36,21 @@ AI-use log and preserve links to genuine agent-session evidence." Session eviden
 - **OpenCode session:** `ses_e2a9d9cf9ffeDsLIgBv7qpqk4h` (title `CONNECTION_OK`). 1,099 messages
   recorded for this session (user 58, assistant 1,041).
 - **Reviewer-accessible T17 evidence:** `transcripts/O5-S6-T17-session-excerpt.md` — a bounded,
-  **redacted excerpt of real stored message parts** from this session, committed here so reviewers
-  can verify the T17 fixture, oracle, test and measurement work without the private local store.
-  The excerpt is derived mechanically by `transcripts/_build_o5_s6_t17_excerpt.py`: it preserves the
-  original part order, the original `message_id`/`part_id` identifiers and the original UTC
-  timestamps, selects only parts mentioning a T17 verification anchor (`build_o5_t17_fixture`,
-  `test_o5_macro_news_perf`, the `O5-T17-*` files, the fixture/expected hash prefixes, or
-  `select_macro_news`), and states how many parts were omitted and why. Paths, tokens, emails and
-  credentialed URLs are redacted; it is **not** a raw export and **not** an authored summary.
+  **redacted transcript excerpt of real stored message parts** from this session, committed here so
+  reviewers can verify the T17 fixture, oracle, test and measurement work without the private local
+  store. It is generated mechanically by `transcripts/_build_o5_s6_t17_excerpt.py` from the session
+  store (read-only) and contains authentic dialogue: every user T17 prompt, the assistant prose that
+  explains the fixture/oracle/harness/measurement, and the tool results that print the T17 fixture
+  composition (`total relevant 920`, buckets 400/260/260, `duplicate_count 20`), the frozen oracle
+  counts, the fixture/expected hashes, and the p95/measured output. It preserves the original part
+  order, the original `message_id`/`part_id` identifiers and the original UTC timestamps; it states
+  the number of omitted parts and why (navigation steps, non-T17 parts, later audit turns). Paths,
+  tokens, emails and credentialed URLs are redacted; it is **not** a raw export and **not** an
+  authored summary.
+- **How to read it:** open `transcripts/O5-S6-T17-session-excerpt.md` directly in the PR's "Files
+  changed". Each block is headed by its UTC time, role/kind, and the original part/message ids, so a
+  reviewer can tie every quoted fact to a specific stored part of session
+  `ses_e2a9d9cf9ffeDsLIgBv7qpqk4h`.
 - **What this replaces:** the earlier draft cited `transcripts/CI-session-excerpt.md` as the
   reviewer-accessible artefact. That file documents F's six-gate CI interaction and contains **no**
   T17 content, so it is **no longer cited as T17 evidence**. The T17 evidence is now the real,
