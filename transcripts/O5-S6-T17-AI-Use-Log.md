@@ -31,22 +31,26 @@ AI-use log and preserve links to genuine agent-session evidence." Session eviden
   the two Python files are exactly those introduced at this commit; F's later CI commit sits on top
   of it.
 
-## Session evidence (genuine, real)
+## Session evidence (genuine, real, reviewer-accessible)
 
-- **OpenCode session:** `ses_e2a9d9cf9ffeDsLIgBv7qpqk4h` (this machine's OpenCode session store;
-  title `CONNECTION_OK`). 1,099 messages recorded for this session (user 58, assistant 1,041).
-- **Transcript association:** the session content contains this batch's real work — e.g.
-  `select_macro_news` (311 occurrences), the fixture sha256 prefix `4dbf85d7` (39 occurrences),
-  `O5-T17` (1,158 occurrences). This is the machine-verifiable basis for associating the session
-  with the implementation commit; it is not fabricated.
-- **Reviewer-accessible reference file:** `transcripts/CI-session-excerpt.md` (a bounded excerpt of
-  real dialogue already preserved in this repository). Note for reviewers: the `CI-session-excerpt.md`
-  excerpt documents the **six-gate CI** interaction by F, not this T17 batch; it is referenced here
-  only as the repository's existing genuine-session-export artefact, and it is **not** claimed to be
-  the T17 transcript. The T17 interaction is the OpenCode session `ses_e2a9d9cf9ffeDsLIgBv7qpqk4h`
-  above, whose raw export is retained locally and not committed.
-- **Raw export:** not committed to this repository. Status: **available locally, pending redacted
-  export** from the session store. No raw transcript contents are pasted or invented in this file.
+- **OpenCode session:** `ses_e2a9d9cf9ffeDsLIgBv7qpqk4h` (title `CONNECTION_OK`). 1,099 messages
+  recorded for this session (user 58, assistant 1,041).
+- **Reviewer-accessible T17 evidence:** `transcripts/O5-S6-T17-session-excerpt.md` — a bounded,
+  **redacted excerpt of real stored message parts** from this session, committed here so reviewers
+  can verify the T17 fixture, oracle, test and measurement work without the private local store.
+  The excerpt is derived mechanically by `transcripts/_build_o5_s6_t17_excerpt.py`: it preserves the
+  original part order, the original `message_id`/`part_id` identifiers and the original UTC
+  timestamps, selects only parts mentioning a T17 verification anchor (`build_o5_t17_fixture`,
+  `test_o5_macro_news_perf`, the `O5-T17-*` files, the fixture/expected hash prefixes, or
+  `select_macro_news`), and states how many parts were omitted and why. Paths, tokens, emails and
+  credentialed URLs are redacted; it is **not** a raw export and **not** an authored summary.
+- **What this replaces:** the earlier draft cited `transcripts/CI-session-excerpt.md` as the
+  reviewer-accessible artefact. That file documents F's six-gate CI interaction and contains **no**
+  T17 content, so it is **no longer cited as T17 evidence**. The T17 evidence is now the real,
+  redacted excerpt above.
+- **Raw export:** not committed. The full, unredacted store stays private; only the redacted excerpt
+  is published. No raw transcript contents are pasted or invented in this file.
+
 
 ## Verified results (reported truthfully, separately)
 
