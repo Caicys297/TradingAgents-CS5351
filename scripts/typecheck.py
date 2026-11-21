@@ -38,6 +38,9 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ci_event  # noqa: E402
+
 SCOPE = [
     "tradingagents/agents/evidence_gate.py",
     "tradingagents/agents/state.py",
@@ -144,34 +147,11 @@ def run_mypy() -> list[str]:
 
 
 class BaseResolutionError(RuntimeError):
-    """The trusted base ref/commit could not be resolved (git/ref/permission)."""
+    """The trusted base commit could not be resolved."""
 
 
-def _base_commit(base_ref: str) -> str:
-    """Resolve origin/<base> to a commit SHA; raise on any resolution failure."""
-    try:
-        proc = subprocess.run(
-            ["git", "rev-parse", "--verify", f"origin/{base_ref}^{{commit}}"],
-            capture_output=True, text=True,
-        )
-    except FileNotFoundError as exc:
-        raise BaseResolutionError("git not available") from exc
-    if proc.returncode != 0:
-        raise BaseResolutionError(
-            f"cannot resolve origin/{base_ref}: {proc.stderr.strip()[:200]}"
-        )
-    return proc.stdout.strip()
-
-
-def _baseline_state(base_ref: str) -> tuple[str | None, str]:
-    """Return (baseline_text_or_None, base_sha).
-
-    Distinguishes:
-      - base resolves AND file exists  -> text (trusted)
-      - base resolves AND file absent  -> None (genuine first-introduction bootstrap)
-    Raises BaseResolutionError if the base/ref itself cannot be resolved.
-    """
-    base_sha = _base_commit(base_ref)
+def _baseline_at_sha(base_sha: str) -> tuple[str | None, str]:
+    """Return (baseline_text_or_None, base_sha) for a trusted base commit."""
     try:
         proc = subprocess.run(
             ["git", "cat-file", "-e", f"{base_sha}:{BASELINE.as_posix()}"],
@@ -180,34 +160,33 @@ def _baseline_state(base_ref: str) -> tuple[str | None, str]:
     except FileNotFoundError as exc:
         raise BaseResolutionError("git not available") from exc
     if proc.returncode != 0:
-        # Confirm the commit exists but the path does not (genuine absence), vs an
-        # unexpected git failure surfaced during cat-file.
-        return None, base_sha
+        return None, base_sha  # genuinely absent at base
     show = subprocess.run(
         ["git", "show", f"{base_sha}:{BASELINE.as_posix()}"],
         capture_output=True, text=True,
     )
     if show.returncode != 0:
         raise BaseResolutionError(
-            f"baseline exists but could not be read from {base_sha}: {show.stderr.strip()[:200]}"
+            f"baseline exists but unreadable at {base_sha}: {show.stderr.strip()[:200]}"
         )
     return show.stdout, base_sha
 
 
-def load_baseline() -> tuple[Counter, str]:
-    """Return (baseline multiset, source string) from the trusted base revision."""
-    base_ref = os.environ.get("GITHUB_BASE_REF", "").strip()
-    if os.environ.get("GITHUB_EVENT_NAME") == "pull_request" and base_ref:
+def load_baseline(base_sha: str | None) -> tuple[Counter, str]:
+    """Baseline from the trusted base commit. If base_sha is None (no event base),
+    fall back to the working-tree baseline ONLY with a printed notice (never
+    silently), because the caller has already decided the event is unsupported."""
+    if base_sha is not None:
         try:
-            text, base_sha = _baseline_state(base_ref)
+            text, sha = _baseline_at_sha(base_sha)
         except BaseResolutionError as exc:
             print(f"ERROR: cannot resolve trusted base baseline: {exc}", file=sys.stderr)
             raise SystemExit(2) from exc
         if text is not None:
-            return _parse_baseline_text(text), f"trusted base {base_sha[:12]} (origin/{base_ref})"
+            return _parse_baseline_text(text), f"trusted base {sha[:12]}"
         print(
             "BOOTSTRAP: baseline genuinely absent on trusted base "
-            f"{base_sha[:12]}; using this PR's checked-in baseline. A must review this "
+            f"{sha[:12]}; using this PR's checked-in baseline. A must review this "
             "initial baseline before merge.",
             file=sys.stderr,
         )
@@ -216,13 +195,56 @@ def load_baseline() -> tuple[Counter, str]:
     return Counter(), "empty (no baseline)"
 
 
+def _mypy_at_rev(rev: str) -> tuple[list[str], int, str]:
+    """Run mypy over SCOPE at ``rev``. Returns (output_lines, exit_code, stderr).
+
+    Callers MUST inspect exit_code: mypy exit 0 = clean, 1 = diagnostics; any other
+    (or 1 with no parseable diagnostics) is a tool error, not "clean".
+    """
+    import tempfile
+    wt = Path(tempfile.mkdtemp(prefix="tc-commit-"))
+    try:
+        subprocess.run(["git", "worktree", "add", "--detach", str(wt), rev],
+                       capture_output=True, text=True, check=True)
+        cmd = [sys.executable, "-m", "mypy", *SCOPE,
+               "--ignore-missing-imports", "--follow-imports=silent",
+               "--show-error-codes", "--show-error-context", "--no-error-summary", "--no-incremental"]
+        proc = subprocess.run(cmd, capture_output=True, text=True, cwd=wt)
+        return proc.stdout.splitlines(), proc.returncode, proc.stderr
+    finally:
+        subprocess.run(["git", "worktree", "remove", "--force", str(wt)], capture_output=True, text=True)
+
+
+def _mypy_result_ok(lines: list[str], rc: int) -> bool:
+    """True if rc==0, or rc==1 with at least one parseable diagnostic. Anything
+    else (tool error, or rc==1 with no diagnostics) is NOT clean."""
+    if rc == 0:
+        return True
+    if rc == 1:
+        return bool(list(_pair(lines)))
+    return False
+
+
+def _diff_new(current: Counter, baseline: Counter) -> Counter:
+    new: Counter = Counter()
+    for ident, n in current.items():
+        excess = n - baseline.get(ident, 0)
+        if excess > 0:
+            new[ident] = excess
+    return new
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--update", action="store_true", help="rewrite local baseline (human-only)")
+    parser.add_argument("--event", default=None, help="override GITHUB_EVENT_NAME (tests)")
+    parser.add_argument("--base-ref", default=None, help="override GITHUB_BASE_REF (tests)")
+    parser.add_argument("--before", default=None, help="push before SHA (tests)")
+    parser.add_argument("--after", default=None, help="push after SHA (tests)")
     args = parser.parse_args(argv)
 
-    lines = run_mypy()
-    current = parse(lines)
+    root = Path(".").resolve()
+    current = parse(run_mypy())
 
     if args.update:
         BASELINE.parent.mkdir(parents=True, exist_ok=True)
@@ -237,32 +259,77 @@ def main(argv: list[str] | None = None) -> int:
         print(f"baseline updated: {sum(current.values())} diagnostic occurrence(s)")
         return 0
 
-    baseline, source = load_baseline()
-    # Multiset difference: a new occurrence beyond the baseline count is blocking.
-    new: Counter = Counter()
-    for ident, n in current.items():
-        excess = n - baseline.get(ident, 0)
-        if excess > 0:
-            new[ident] = excess
+    env = dict(os.environ)
+    if args.event is not None:
+        env["GITHUB_EVENT_NAME"] = args.event
+    if args.base_ref is not None:
+        env["GITHUB_BASE_REF"] = args.base_ref
+    if args.before is not None:
+        env["GITHUB_BEFORE"] = args.before
+    if args.after is not None:
+        env["GITHUB_AFTER"] = args.after
 
-    if new:
-        total = sum(new.values())
-        print(f"TYPECHECK FAILED: {total} new diagnostic occurrence(s) beyond baseline ({source}):", file=sys.stderr)
-        # Report readable messages for the offending identities (with symbol context).
-        remaining = Counter(new)
-        for m, sym in _pair(lines):
-            ident = _identity(m, sym)
-            if remaining.get(ident, 0) > 0:
-                print(f"  {m.group('path')}:{m.group('line')}: [{sym}] error: {m.group('msg')}"
-                      + (f"  [{m.group('code')}]" if m.group('code') else ""), file=sys.stderr)
-                remaining[ident] -= 1
+    try:
+        rng = ci_event.resolve_range(root, env)
+    except ci_event.EventError as exc:
+        print(f"ERROR: cannot resolve type-check applicability: {exc}", file=sys.stderr)
+        return 2
+
+    baseline, source = load_baseline(rng.base_sha)
+
+    # 1) working tree (PR head) vs trusted base baseline.
+    new_head = _diff_new(current, baseline)
+    failures: list[tuple[str, list[str]]] = []
+    if new_head:
+        failures.append((f"HEAD ({rng.kind})", _report_lines(run_mypy(), new_head)))
+
+    # 2) per-commit: verify EACH commit in the range, using the baseline inherited
+    # from its parent (so a commit that introduces and a later commit that removes
+    # an error still fails at the introducing commit).
+    tool_errors: list[tuple[str, str]] = []
+    for sha in rng.commits:
+        # Compare each commit against the SAME trusted base baseline (new-since-base),
+        # so pre-existing diagnostics (present at base) never count as new, while any
+        # commit that introduces a diagnostic beyond the base baseline fails.
+        commit_lines, rc, err = _mypy_at_rev(sha)
+        if not _mypy_result_ok(commit_lines, rc):
+            tool_errors.append((f"commit {sha[:12]}", f"mypy exit {rc}: {err.strip()[:200]}"))
+            continue
+        cnew = _diff_new(parse(commit_lines), baseline)
+        if cnew:
+            failures.append((f"commit {sha[:12]}", _report_lines(commit_lines, cnew)))
+
+    if tool_errors:
+        print("TYPECHECK FAILED: mypy tool error (not a clean result):", file=sys.stderr)
+        for where, msg in tool_errors:
+            print(f"  [{where}] {msg}", file=sys.stderr)
+        return 1
+
+    if failures:
+        print(f"TYPECHECK FAILED: {len(failures)} scope(s) with new diagnostics (baseline source: {source}):", file=sys.stderr)
+        for where, diag in failures:
+            print(f"  [{where}]:", file=sys.stderr)
+            for d in diag:
+                print(f"    {d}", file=sys.stderr)
         return 1
 
     print(
-        f"OK: no new type diagnostics (baseline source: {source}; "
-        f"{sum(current.values())} current occurrence(s))"
+        f"OK: no new type diagnostics across {len(rng.commits)} commit(s) + HEAD "
+        f"(baseline source: {source}; {sum(current.values())} current occurrence(s))"
     )
     return 0
+
+
+def _report_lines(lines, new: Counter) -> list[str]:
+    out: list[str] = []
+    remaining = Counter(new)
+    for m, sym in _pair(lines):
+        ident = _identity(m, sym)
+        if remaining.get(ident, 0) > 0:
+            out.append(f"{m.group('path')}:{m.group('line')}: [{sym}] {m.group('msg')}"
+                       + (f"  [{m.group('code')}]" if m.group("code") else ""))
+            remaining[ident] -= 1
+    return out
 
 
 if __name__ == "__main__":

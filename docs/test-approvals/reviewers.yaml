@@ -1,0 +1,9 @@
+# Trusted reviewer identity mapping (reviewed source).
+#
+# Binds real GitHub logins to authorized Registry roles. The Test Approval
+# checker ignores any reviewer_role declared in a PR's machine record and derives
+# the role from the *actual* evidence author via this mapping. Changes to this
+# file are themselves a safety-relevant change (reviewed via PR).
+logins:
+  Caicys297: A
+  fancx777: F

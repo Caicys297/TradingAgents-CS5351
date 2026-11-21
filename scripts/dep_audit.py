@@ -38,6 +38,9 @@ import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import ci_event  # noqa: E402
+
 BASELINE = Path("ci/baselines/pip-audit-baseline.json")
 VALID_APPROVAL = {"APPROVED", "ACCEPTED"}
 
@@ -109,58 +112,126 @@ def local_editable(report: dict) -> list[str]:
 
 
 class BaseResolutionError(RuntimeError):
-    """The trusted base ref/commit could not be resolved."""
+    """The trusted base commit could not be resolved."""
 
 
-def _base_commit(base_ref: str) -> str:
+def _baseline_at_sha(base_sha: str) -> tuple[str | None, str]:
     try:
-        proc = subprocess.run(
-            ["git", "rev-parse", "--verify", f"origin/{base_ref}^{{commit}}"],
-            capture_output=True, text=True,
-        )
+        chk = subprocess.run(["git", "cat-file", "-e", f"{base_sha}:{BASELINE.as_posix()}"],
+                             capture_output=True, text=True)
     except FileNotFoundError as exc:
         raise BaseResolutionError("git not available") from exc
-    if proc.returncode != 0:
-        raise BaseResolutionError(f"cannot resolve origin/{base_ref}: {proc.stderr.strip()[:200]}")
-    return proc.stdout.strip()
-
-
-def _baseline_state(base_ref: str) -> tuple[str | None, str]:
-    base_sha = _base_commit(base_ref)
-    chk = subprocess.run(
-        ["git", "cat-file", "-e", f"{base_sha}:{BASELINE.as_posix()}"],
-        capture_output=True, text=True,
-    )
     if chk.returncode != 0:
-        return None, base_sha  # genuinely absent on base
-    show = subprocess.run(
-        ["git", "show", f"{base_sha}:{BASELINE.as_posix()}"],
-        capture_output=True, text=True,
-    )
+        return None, base_sha
+    show = subprocess.run(["git", "show", f"{base_sha}:{BASELINE.as_posix()}"],
+                          capture_output=True, text=True)
     if show.returncode != 0:
         raise BaseResolutionError(f"baseline exists but unreadable: {show.stderr.strip()[:200]}")
     return show.stdout, base_sha
 
 
-def _load_baseline() -> tuple[dict, str]:
-    base_ref = os.environ.get("GITHUB_BASE_REF", "").strip()
-    if os.environ.get("GITHUB_EVENT_NAME") == "pull_request" and base_ref:
+def _load_baseline(base_sha: str | None) -> tuple[dict, str]:
+    if base_sha is not None:
         try:
-            text, base_sha = _baseline_state(base_ref)
+            text, sha = _baseline_at_sha(base_sha)
         except BaseResolutionError as exc:
             print(f"ERROR: cannot resolve trusted base baseline: {exc}", file=sys.stderr)
             raise SystemExit(2) from exc
         if text is not None:
-            return json.loads(text), f"trusted base {base_sha[:12]} (origin/{base_ref})"
+            return json.loads(text), f"trusted base {sha[:12]}"
         print(
             "BOOTSTRAP: dependency baseline genuinely absent on trusted base "
-            f"{base_sha[:12]}; using this PR's checked-in baseline. A must review this "
+            f"{sha[:12]}; using this PR's checked-in baseline. A must review this "
             "initial baseline.",
             file=sys.stderr,
         )
     if BASELINE.is_file():
         return json.loads(BASELINE.read_text()), f"working tree {BASELINE}"
     return {"findings": []}, "empty"
+
+
+def _depfiles_changed_per_commit(root: Path, commits: list[str]) -> list[str]:
+    """Commits in the range that change dependency manifests (per-commit check).
+
+    The installed-environment scan covers HEAD; this surfaces any intermediate
+    commit whose declared dependencies changed, so a push cannot hide a dep change
+    behind a later revert. Reported and treated as requiring the audit.
+    """
+    hits: list[str] = []
+    for sha in commits:
+        proc = subprocess.run(["git", "show", "--name-only", "--format=", "-z", sha],
+                              capture_output=True, text=True)
+        paths = [x for x in proc.stdout.split("\x00") if x]
+        if any(p.endswith(("pyproject.toml", "requirements.txt", "requirements-dev.txt"))
+               or p.startswith("requirements") for p in paths):
+            hits.append(sha)
+    return hits
+
+
+def _audit_requirements_at_rev(root: Path, rev: str, scanner=None) -> dict:
+    """Resolve + audit the dependencies the project AT ``rev`` actually installs.
+
+    Aligns with CI's gate dependency group ``.[dev]`` (not core-only ``.``):
+      1. create an isolated git worktree at ``rev`` (so ``.``/pyproject resolve
+         THAT revision's project),
+      2. create an isolated venv (outside the worktree) and ``pip install ".[dev]"``
+         from the worktree,
+      3. audit the installed venv (``pip-audit --path <site-packages>``) — the same
+         dependency group CI installs.
+    A ``scanner(worktree, venv_dir)`` may be injected for controlled tests. Worktree
+    and venv are always removed. Raises ScannerError on tool/parse failure; never
+    audits an extracted HEAD requirements file.
+    """
+    import shutil
+    import tempfile
+    wt = Path(tempfile.mkdtemp(prefix="deprev-wt-"))
+    venv = Path(tempfile.mkdtemp(prefix="deprev-venv-")) / "v"
+    added = False
+    try:
+        add = subprocess.run(["git", "-C", str(root), "worktree", "add", "--detach",
+                              str(wt), rev], capture_output=True, text=True)
+        if add.returncode != 0:
+            raise ScannerError(f"cannot create worktree for {rev[:12]}: {add.stderr.strip()[:200]}")
+        added = True
+        if not (wt / "pyproject.toml").is_file():
+            raise ScannerError(f"no pyproject.toml at {rev[:12]}; cannot resolve '.[dev]'")
+
+        if scanner is not None:
+            report = scanner(wt, venv)
+        else:
+            mk = subprocess.run([sys.executable, "-m", "venv", str(venv)],
+                                capture_output=True, text=True)
+            if mk.returncode != 0:
+                raise ScannerError(f"venv create failed for {rev[:12]}: {mk.stderr.strip()[:200]}")
+            vpy = venv / "bin" / "python"
+            inst = subprocess.run([str(vpy), "-m", "pip", "install", "-q", ".[dev]"],
+                                  capture_output=True, text=True, cwd=wt)
+            if inst.returncode != 0:
+                raise ScannerError(f"install '.[dev]' failed for {rev[:12]} (exit {inst.returncode}): "
+                                   f"{inst.stderr.strip()[:200]}")
+            # Audit the installed venv's site-packages using the CI interpreter,
+            # which has the pinned pip-audit installed (.[dev] does NOT include
+            # pip-audit, so the fresh revision venv cannot run it itself).
+            sitepkgs = str(venv / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages")
+            proc = subprocess.run([sys.executable, "-m", "pip_audit", "--path", sitepkgs,
+                                   "--format", "json", "--progress-spinner", "off"],
+                                  capture_output=True, text=True, cwd=wt)
+            if proc.returncode not in (0, 1):
+                raise ScannerError(f"pip-audit failed for {rev[:12]} (exit {proc.returncode}): "
+                                   f"{proc.stderr.strip()[:200]}")
+            try:
+                report = json.loads(proc.stdout)
+            except json.JSONDecodeError as exc:
+                raise ScannerError(f"pip-audit non-JSON for {rev[:12]}") from exc
+        validate_report(report)
+        return report
+    finally:
+        if added:
+            subprocess.run(["git", "-C", str(root), "worktree", "remove", "--force", str(wt)],
+                           capture_output=True, text=True)
+        else:
+            shutil.rmtree(wt, ignore_errors=True)
+        shutil.rmtree(venv.parent, ignore_errors=True)
 
 
 def baseline_keys(base: dict) -> set[tuple[str, str, str]]:
@@ -190,6 +261,10 @@ def validate_baseline(base: dict) -> list[str]:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--update-baseline", action="store_true", help="rewrite baseline (human-only)")
+    parser.add_argument("--event", default=None)
+    parser.add_argument("--base-ref", default=None)
+    parser.add_argument("--before", default=None)
+    parser.add_argument("--after", default=None)
     args = parser.parse_args(argv)
 
     try:
@@ -222,7 +297,23 @@ def main(argv: list[str] | None = None) -> int:
         print(f"baseline updated: {len(found)} finding(s) from {len(report.get('dependencies', []))} packages")
         return 0
 
-    base, source = _load_baseline()
+    env = dict(os.environ)
+    if args.event is not None:
+        env["GITHUB_EVENT_NAME"] = args.event
+    if args.base_ref is not None:
+        env["GITHUB_BASE_REF"] = args.base_ref
+    if args.before is not None:
+        env["GITHUB_BEFORE"] = args.before
+    if args.after is not None:
+        env["GITHUB_AFTER"] = args.after
+    root = Path(".").resolve()
+    try:
+        rng = ci_event.resolve_range(root, env)
+    except ci_event.EventError as exc:
+        print(f"ERROR: cannot resolve dependency-audit applicability: {exc}", file=sys.stderr)
+        return 2
+
+    base, source = _load_baseline(rng.base_sha)
     meta_problems = validate_baseline(base)
     if meta_problems:
         print("ERROR: baseline metadata invalid (owners/exceptions must be approved):", file=sys.stderr)
@@ -255,7 +346,38 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 1
 
-    print(f"OK: no new dependency findings ({len(found)} total)")
+    # Per-commit dependency audit: audit the dependencies resolved at EACH commit
+    # in the range (not just the installed HEAD env). A commit whose resolved deps
+    # introduce a finding beyond the trusted baseline fails even if HEAD is clean.
+    depfile_commits = set(_depfiles_changed_per_commit(root, rng.commits))
+    per_commit_failures: list[tuple[str, list]] = []
+    scanner_errors: list[str] = []
+    for sha in rng.commits:
+        if sha not in depfile_commits:
+            continue  # deps unchanged at this commit -> same as range base resolution
+        try:
+            crev_report = _audit_requirements_at_rev(root, sha)
+        except ScannerError as exc:
+            scanner_errors.append(str(exc))
+            continue
+        cfound = findings(crev_report)
+        cnew = [(p, v, vid, fix) for (p, v, vid, fix) in cfound if (p, vid, v) not in base_keys]
+        if cnew:
+            per_commit_failures.append((sha[:12], cnew))
+
+    if scanner_errors:
+        print("DEPENDENCY AUDIT FAILED: could not audit some revisions (not clean):", file=sys.stderr)
+        for e in scanner_errors:
+            print(f"  - {e}", file=sys.stderr)
+        return 2
+    if per_commit_failures:
+        print("DEPENDENCY AUDIT FAILED: new finding(s) at intermediate commit(s):", file=sys.stderr)
+        for sha, cnew in per_commit_failures:
+            for (p, v, vid, fix) in cnew:
+                print(f"  - commit {sha}: {p}=={v} {vid} fix={fix}", file=sys.stderr)
+        return 1
+    print(f"OK: no new dependency findings ({len(found)} at HEAD; "
+          f"{len(depfile_commits)} dep-changing commit(s) audited; {len(rng.commits)} commit(s) in range)")
     return 0
 
 
