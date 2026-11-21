@@ -1,0 +1,41 @@
+{
+  "batch_id": "pr-37",
+  "feature": "O4",
+  "approval_kinds": [
+    "execution_plan"
+  ],
+  "evidence": {
+    "type": "issue_comment",
+    "id": 7065978103,
+    "pr": 35
+  },
+  "plan_sha": "ed0589f0041444e72e2b87d6ba0eb4e12858f59e",
+  "plan_version": "v5",
+  "plan_path": "docs/test-approvals/plans/ci-closure-v5/Execution-Plan.md",
+  "requirement_ids": [
+    "WS-A",
+    "ci-closure-v5"
+  ],
+  "approved_test_ids": [
+    "T1",
+    "T7"
+  ],
+  "allowed_files": [
+    "scripts/lint_commits.py",
+    "scripts/ci_event.py",
+    "test/offline/test_lint_commits.py",
+    "scripts/check_contracts.py",
+    "test/offline/test_contracts_guard.py",
+    "scripts/check_security.py",
+    "test/offline/test_security_guard.py",
+    "scripts/check_api.py",
+    "test/offline/test_api_guard.py",
+    "scripts/check_permissions.py",
+    "test/offline/test_permissions_guard.py",
+    "docs/ci/governance-guards.yaml",
+    ".github/workflows/ci.yml"
+  ],
+  "implementers": [
+    "fancx777"
+  ]
+}

@@ -81,3 +81,21 @@ batch, per REQ-GOV-06. The repository does not prescribe a fixed path or schema.
   commit identities while preserving the final tree (remote HEAD tree ==
   `f53c29b`). The original SHAs above are kept verbatim; the replayed SHAs are the
   identities actually reachable from PR #32's branch head (`95860ca…`).
+
+## Entry — CI Closure v5 WS A–C (plan ed0589f)
+
+- Task: implement CI Closure v5 WS A–C — per-commit Ruff (`lint_commits.py`,
+  `ci_event.py` explicit-PR-head), deterministic O4 CI job (six fixed nodes), and
+  the four GOV-07 governance guards (contract/security/api/permission) with
+  bounded negatives and applicability; prepare WS D/E evidence.
+- Usage scope: `scripts/lint_commits.py`, `scripts/ci_event.py`, the four
+  `scripts/check_*.py` guards, their `test/offline/test_*_guard.py` /
+  `test_lint_commits.py` tests, `docs/ci/governance-guards.yaml`,
+  `.github/workflows/ci.yml`, `docs/test-approvals/ci-closure-v5.*.json`,
+  `transcripts/CI-Closure-v5-implementation-excerpt.md`. No production feature
+  code changed.
+- OpenCode session: `ses_e27f33c94ffeOKeCXPrAQQW93Z`.
+- Session/export evidence (genuine, reviewer-accessible, specific to this task):
+  `transcripts/CI-Closure-v5-implementation-excerpt.md` (bounded excerpt from a
+  fresh `opencode export`; local paths redacted).
+- Implementation commit: `30bd320ac22e0ed1241361d50ef962b6aece95eb`.
