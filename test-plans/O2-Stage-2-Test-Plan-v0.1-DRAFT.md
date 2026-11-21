@@ -1,7 +1,7 @@
 # O2 Stage 2 Integration — Test Plan
 
-**Document version:** v0.4-DRAFT (F review corrections; filename unchanged: `…-v0.1-DRAFT.md`)
-**Status:** Draft planning record. A's latest clarification and F's three requested corrections are recorded here; A/F have **not** approved this version and will review the exact updated SHA. Existing formal approvals remain bound to earlier commits (§6). PR #18 remains Draft. This planning update is not implementation approval; no implementation or test/CI result is claimed.
+**Document version:** v0.4-DRAFT (F review corrections; filename unchanged: `…-v0.1-DRAFT.md`; includes post-implementation status addendum)
+**Status:** Historical v0.4-DRAFT planning record. A confirmed the implementation scope and F formally approved the v0.4 test/CI plan at `aa9fda60bb34c126c65d05ac706fc000cdf8da05`. The post-implementation addendum below records current status. Later documentation edits are not pre-code approval. PR #18 remains open for documentation closure; Draft status is unchanged by this documentation commit.
 **Owner:** B (QinQilun)
 **Requirements baseline reference:** PR #9 merge commit `d36a677d4738efd365b6bbcf6f69f993acf8fd3c`. Joint-validation baseline: PR #21 merge `69e91ff115694f3455196e6a4114d4fe653fbb06`; O6 CLI merged via PR #20 `e4b6f9ac625f39579635c840aed98ab8dfefdaf9`. **Actual baseline verified at this plan update: `origin/main` = `102511dd44ad8779a46e09cbefe50edb8a995b45`**; re-verify and record the actual base SHA at implementation time.
 **Plan update binding:** v0.4-DRAFT based on plan commit `aab2636cbb8ca61bd79be1c33647f858ba78ee22`; this update’s commit SHA is reported in PR #18.
@@ -15,9 +15,19 @@
 
 - **A-confirmed implementation scope:** completed normal CLI runs only; no Graph API change; existing legacy report/state/log paths remain; one manifest after analysis and report-save handling; fail-soft analysis result with fail-closed provenance; external saves preserved but omitted; no broadened file scope and no changes to public interfaces, schema, fingerprint, or redaction rules.
 - **A latest clarification:** state-log registration is `shared_mutable` only after `record_decision()` returns normally, at the deterministic path, after write+close, with no `fsync` and no power-loss claim. Report saves, live section reports, and `message_tool.log` require this-invocation write evidence; existence alone is insufficient. Declined or wholly failed optional saves contribute no files from that save directory, including partial leftovers. Custom saves outside `results_dir` remain supported but are omitted from the manifest. C8 records the inventory method for HTML and section files without changing `save_reports()`.
-- **F-confirmed test boundaries:** existing official test IDs only; separation of report-save failure from manifest-write failure; the approved three-platform CI matrix; F owns test review and approved CI workflow changes. F requested three corrections: decline scope, state-log failure path, and C8’s exact `_report_parts()` structure. Formal F approval of this revision and exact SHA remains required.
-- **C ownership and remaining decisions:** C owns `cli/run.py` integration and must document the actual base SHA and exact file scope before implementation. C7 specifies `RunDirectoryUnavailable` converted by `run_analysis` to `typer.Exit(code=1)`. C8 uses existing `_report_parts(final_state)` only to compute the expected inventory; no `save_reports()`, `write_report_tree()`, `reporting.py`, Graph, schema, or public-interface change. **C/A confirmation of the helper integration approach and exact implementation file scope remains pending and is not claimed.**
+- **F-confirmed test boundaries:** existing official test IDs only; separation of report-save failure from manifest-write failure; the approved three-platform CI matrix; F owns test review and approved CI workflow changes. F formally approved this v0.4 revision at `aa9fda60bb34c126c65d05ac706fc000cdf8da05` in [PR #18 review 5972069186](https://github.com/Caicys297/TradingAgents-CS5351/pull/18#pullrequestreview-5972069186). The current-status addendum is not covered by that approval.
+- **C ownership and remaining decisions:** C owns `cli/run.py` integration and must document the actual base SHA and exact file scope before implementation. C7 specifies `RunDirectoryUnavailable` converted by `run_analysis` to `typer.Exit(code=1)`. C8 uses existing `_report_parts(final_state)` only to compute the expected inventory; no `save_reports()`, `write_report_tree()`, `reporting.py`, Graph, schema, or public-interface change. At v0.4 approval time, C/A confirmation of the helper approach/file scope was pending; implementation later merged in PR #23. See the current-status addendum.
 - **Binding:** this update records v0.4-DRAFT decisions from base plan commit `aab2636cbb8ca61bd79be1c33647f858ba78ee22`. This planning update is not implementation approval unless the recorded approvals expressly say otherwise; existing formal approvals cover earlier commits, not this revision’s new contract text or exact SHA.
+
+### Current status addendum (post-implementation, 2026-11-21)
+
+This addendum records current status without changing the historical v0.4 approval at `aa9fda60bb34c126c65d05ac706fc000cdf8da05`; it is not a new pre-code approval.
+
+- **CLI integration:** PR #23 implemented the Stage 2 CLI integration and merged at `48d75c38177ea30ab48d33112aaa812a0499ea63`.
+- **Post-O4 regression:** On main `ff39cc36fe1154925221f25efa32db6c4085bba1`, the O2 writer + CLI target suites recorded **35 passed, 0 failed, 0 skipped**. These are offline fake-Graph integration tests, not a live LLM run.
+- **Follow-up tests:** PR #34 is open at `eb46423beeeeb4f827c7b6278cdbd0ce1974d091`, not merged. Its finalization-once assertion and TC-15 relative-traversal test are **pending merge and are not on main**. Its latest CI run is [44911051864](https://github.com/Caicys297/TradingAgents-CS5351/actions/runs/44911051864), which completed successfully.
+- **Platform CI:** The approved macOS and Windows Python 3.12 O2 target jobs remain **outstanding F-owned CI work**. The current workflow uses Ubuntu runners only; O2-TC-21 platform coverage is not yet complete.
+- Historical pending statements below describe the v0.4 pre-implementation state and are retained for the approval timeline; they are superseded by this addendum for current status.
 
 ## 1. Purpose and boundary
 
@@ -149,9 +159,9 @@ All driven through the real `run_analysis()` with a fake Graph; real file writes
 - F CI matrix: Ubuntu Python 3.11–3.14 full regression plus Python 3.12 non-UTC job; macOS/Windows Python 3.12 writer and CLI manifest target tests.
 - O2-TC-23 maps to O2-FR-05, O2-FR-11, and O2-NFR-03.
 
-### Pending confirmation
+### Historical v0.4 pending items (superseded by the current-status addendum)
 
-Only genuinely unspecified items remain:
+These were the genuinely unspecified items at v0.4 approval time:
 
 - **A:** confirmation of the exact file scope; review of this exact updated SHA.
 - **F:** formal approval of this revised test plan and its added test cases against the exact SHA.
@@ -159,27 +169,27 @@ Only genuinely unspecified items remain:
 
 The earlier B set-choice question is resolved by the approved TC-05 artifact rules: both live and saved per-section sets are included when their own write evidence exists, with the saved set requiring whole-save success.
 
-### Remaining before implementation results are claimed
+### Historical v0.4 remaining items (not current status)
 
 - Verify current `origin/main` at implementation time, record the actual base SHA, and confirm it contains PR #9 merge `d36a677...` and PR #21 merge `69e91ff...`.
-- The interface B tests against is specified in the execution plan (§1 C1–C7, §3); publishing implementation code first is not required by this plan.
+- C must publish the approved `cli/run.py` contract/order and reservation failure exception/exit behavior before B adds `test/offline/test_o2_cli_manifest.py`.
 - Implement and verify the Stage 2 TC-23 CLI expectation in the separate implementation PR.
 - Record actual test and CI results after execution; none are claimed here.
 
 ## 6. Approval and evidence record
 
-**Binding of existing approvals (see execution plan §7 for the full table):** A's approval `5959122354` is bound to `3b60af1`; F's approval `5968062524` is bound to `e03b67d`; F's `5968754538` is a supplement, not a re-approval. **F's approval covers the unchanged TC-ID mapping and CI matrix; it does not approve this revision's new contract cases (C1–C7) or the independent report-writer case.**
+**Binding of existing approvals (see execution plan §7 for the full table):** A's initial approval `5959122354` is bound to `3b60af1`; F's initial approval `5968062524` is bound to `e03b67d`; F's `5968754538` is a supplement. F later formally approved the corrected v0.4 revision at `aa9fda6` in review `5972069186`. Post-implementation documentation in this addendum is not part of those approvals.
 
 - **A Stage 2 scope supplement:** Approved in PR #18 review `5959122354` (bound to `3b60af1`), `2026-11-18T15:00:01Z`
 - **F formal Stage 2 test-plan and CI matrix approval:** Approved in PR #18 review `5968062524` (bound to `e03b67d`), `2026-11-19T01:41:23Z`; still applies to TC-ID mapping and CI matrix only
 - **C/F ownership and timing confirmation:** PR #18 review `5968754538`
 - **A integration contract (C1–C7):** Confirmed; see §4a
 - **Latest A clarification:** Recorded; state log, report/live/log write evidence, declined/whole-failure exclusion, external-path omission, and C8 saved-report inventory are specified.
-- **F review corrections:** Recorded in this v0.4-DRAFT update: decline affects only the optional save tree, state-log write/close failure prevents manifest finalization without registration, and C8 uses the verified `_report_parts()` structure. F formal approval is pending the exact updated SHA; no approval is claimed.
+- **F review corrections:** Recorded in this v0.4-DRAFT update: decline affects only the optional save tree, state-log write/close failure prevents manifest finalization without registration, and C8 uses the verified `_report_parts()` structure. F formally approved the corrected v0.4 revision at `aa9fda6` in [review 5972069186](https://github.com/Caicys297/TradingAgents-CS5351/pull/18#pullrequestreview-5972069186).
 - **Plan update binding:** Base plan commit `aab2636cbb8ca61bd79be1c33647f858ba78ee22`; this update’s commit SHA is reported in PR #18.
-- **Pending:** F's formal approval of this revised test plan and added cases against the exact SHA; A's file-scope confirmation and review of this SHA; C/A confirmation of the `_report_parts` helper integration approach and exact implementation file scope. No C/A confirmation is claimed.
+- **Historical v0.4 pending items:** F formal approval, A file-scope confirmation, and C/A helper confirmation were pending at the original v0.4 review point. The v0.4 plan was then approved at `aa9fda60bb34c126c65d05ac706fc000cdf8da05`; implementation merged via PR #23. Current status is in §0.1.
 - **PR #21 writer/TC-23 synchronization:** Merged at `69e91ff115694f3455196e6a4114d4fe653fbb06`
 - **O6 CLI integration:** Merged at `e4b6f9ac625f39579635c840aed98ab8dfefdaf9` (PR #20)
 - **Actual baseline at this revision:** `origin/main` `102511dd44ad8779a46e09cbefe50edb8a995b45`
-- **Implementation/test execution/CI results:** Not claimed
+- **Implementation/test execution/CI results:** Not claimed by the original v0.4 record; current status is recorded in §0.1. This addendum is not implementation approval.
 - **Reapproval:** Any material scope, expected-result, path, test-ID, or ownership change requires an updated plan and renewed approval before implementation.
