@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import builtins
 import json
+import logging
 from contextlib import nullcontext
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,7 +12,11 @@ from types import SimpleNamespace
 import pytest
 
 from cli import run as run_mod
+from tradingagents.agents.state import AgentState
+from tradingagents.agents.tools import get_global_news
+from tradingagents.dataflows.config import run_config
 from tradingagents.dataflows.symbols import safe_ticker_component
+from tradingagents.dataflows.vendors.yahoo import news
 from tradingagents.repro import manifest as manifest_module
 
 TICKER = "NVDA"
@@ -626,3 +631,259 @@ def test_reservation_collision_exits_before_graph_and_preserves_existing_files(
     assert "graph_init" not in harness["calls"]
     assert keep.read_text(encoding="utf-8") == "keep"
     assert not (_run_dir(harness) / "manifest.json").exists()
+
+# ---------------------------------------------------------------------------
+# O5 S5 run-directory handoff (approved scope: this file, PR #36 README
+# `dc010f8`). These enter through the real ``run_analysis`` and keep the real
+# ``o5_evidence_run`` scope and JSONL sink. Only external services -- model,
+# vendor transport and terminal rendering -- are replaced. The graph itself is
+# the O2 harness stand-in, because a full LangGraph run is not offline-observable;
+# the O5 event is produced by a real ToolNode -> router -> Yahoo adapter call.
+# ---------------------------------------------------------------------------
+
+S5_LIMIT_ZERO = "No macro news items were requested because the result limit is zero."
+
+
+def _s5_rows(run_dir):
+    path = Path(run_dir) / "o5_evidence.jsonl"
+    if not path.is_file():
+        return []
+    return [json.loads(line) for line in path.read_bytes().splitlines()]
+
+
+def _s5_tool_chain_call():
+    """One real ToolNode -> router -> Yahoo adapter call at LIMIT_ZERO."""
+    from langchain_core.messages import AIMessage
+    from langgraph.graph import END, START, StateGraph
+    from langgraph.prebuilt import ToolNode
+
+    builder = StateGraph(AgentState)
+    builder.add_node("tools", ToolNode([get_global_news]))
+    builder.add_edge(START, "tools")
+    builder.add_edge("tools", END)
+    compiled = builder.compile()
+    state = {
+        "trade_date": TRADE_DATE,
+        "messages": [
+            AIMessage(
+                content="",
+                tool_calls=[
+                    {
+                        "name": "get_global_news",
+                        "id": "s5-c",
+                        "args": {"curr_date": TRADE_DATE, "limit": 0},
+                    }
+                ],
+            )
+        ],
+    }
+    with run_config({"tool_vendors": {"get_global_news": "yfinance"}}):
+        return compiled.invoke(state)["messages"][-1].content
+
+
+def _s5_patch_stream(monkeypatch, graph_class, *, before=None, failure=None):
+    """Patch ``graph_class.stream_run`` so a step runs inside the CLI scope.
+
+    Installed after ``_install_harness`` so it targets the class the CLI will
+    actually use. ``before`` runs once, on the first stream entry; ``failure``
+    is constructed and raised instead.
+    """
+    real = graph_class.stream_run
+    seen = []
+
+    def stream_run(self, state, **kwargs):
+        if failure is not None:
+            raise failure("injected stream failure")
+        if before is not None and not getattr(self, "_s5_streamed", False):
+            # Once per graph instance: a second CLI run builds a second graph.
+            self._s5_streamed = True
+            seen.append(True)
+            before()
+        yield from real(self, state, **kwargs)
+
+    monkeypatch.setattr(graph_class, "stream_run", stream_run)
+    return seen
+
+
+def _s5_harness(monkeypatch, tmp_path):
+    harness, save, html = _install_harness(monkeypatch, tmp_path)
+    return harness, save, html
+
+
+def test_s5_t01_real_tool_chain_persists_into_reserved_run_dir(monkeypatch, tmp_path):
+    harness, save, html = _s5_harness(monkeypatch, tmp_path)
+    observed = []
+    _s5_patch_stream(
+        monkeypatch,
+        run_mod.TradingAgentsGraph,
+        before=lambda: observed.append(_s5_tool_chain_call()),
+    )
+    _invoke(harness, save, html)
+
+    run_dir = _run_dir(harness)
+    assert observed == [S5_LIMIT_ZERO]
+    rows = _s5_rows(run_dir)
+    assert [row["variant"] for row in rows] == ["V-LIMIT-ZERO"]
+    assert rows[0]["executed_query_count"] == 0
+    # Same run directory as the O2 manifest, and the scope is gone afterwards.
+    assert (run_dir / "manifest.json").is_file()
+    assert news._o5_evidence_sink.get() is None
+
+
+def test_s5_t02_scope_opens_after_reservation_and_before_graph(monkeypatch, tmp_path):
+    harness, save, html = _s5_harness(monkeypatch, tmp_path)
+    order = []
+    real_reserve = run_mod._reserve_run_directory
+    real_ctx = run_mod.o5_evidence_run
+    graph_class = run_mod.TradingAgentsGraph
+
+    def reserve(*args, **kwargs):
+        order.append("reserve")
+        return real_reserve(*args, **kwargs)
+
+    class _Spy:
+        def __init__(self, inner):
+            self._inner = inner
+
+        def __enter__(self):
+            order.append("scope_enter")
+            return self._inner.__enter__()
+
+        def __exit__(self, *exc):
+            order.append("scope_exit")
+            return self._inner.__exit__(*exc)
+
+    def scope(run_dir):
+        order.append("scope_arg")
+        return _Spy(real_ctx(run_dir))
+
+    class _SpyGraph(graph_class):
+        def __init__(self, *args, **kwargs):
+            order.append("graph_init")
+            super().__init__(*args, **kwargs)
+
+        def stream_run(self, state, **kwargs):
+            order.append("stream")
+            yield from super().stream_run(state, **kwargs)
+
+    monkeypatch.setattr(run_mod, "_reserve_run_directory", reserve)
+    monkeypatch.setattr(run_mod, "o5_evidence_run", scope)
+    monkeypatch.setattr(run_mod, "TradingAgentsGraph", _SpyGraph)
+    _invoke(harness, save, html)
+
+    # Reservation first, then the scope, then the graph -- and the manifest is
+    # written while the scope is still open, because the exit is the last event.
+    assert order[:3] == ["reserve", "scope_arg", "scope_enter"]
+    assert order.index("graph_init") > order.index("scope_enter")
+    assert order.index("graph_init") > 1
+    assert order[-1] == "scope_exit"
+    assert order.index("stream") > order.index("graph_init")
+
+
+def test_s5_t03_exception_in_stream_propagates_and_restores_binding(
+    monkeypatch, tmp_path
+):
+    parent = SimpleNamespace(emit=lambda event: None)
+    token = news._o5_evidence_sink.set(parent)
+    try:
+        harness, save, html = _s5_harness(monkeypatch, tmp_path)
+        _s5_patch_stream(monkeypatch, run_mod.TradingAgentsGraph, failure=RuntimeError)
+        with pytest.raises(RuntimeError, match="injected stream failure"):
+            _invoke(harness, save, html)
+        # Restored to the binding that existed before entry, not to None.
+        assert news._o5_evidence_sink.get() is parent
+        assert not (_run_dir(harness) / "manifest.json").exists()
+    finally:
+        news._o5_evidence_sink.reset(token)
+    assert news._o5_evidence_sink.get() is None
+
+
+def test_s5_t04_keyboard_interrupt_propagates_and_restores_binding(
+    monkeypatch, tmp_path
+):
+    parent = SimpleNamespace(emit=lambda event: None)
+    token = news._o5_evidence_sink.set(parent)
+    try:
+        harness, save, html = _s5_harness(monkeypatch, tmp_path)
+        _s5_patch_stream(monkeypatch, run_mod.TradingAgentsGraph, failure=KeyboardInterrupt)
+        with pytest.raises(KeyboardInterrupt):
+            _invoke(harness, save, html)
+        assert news._o5_evidence_sink.get() is parent
+        assert not (_run_dir(harness) / "manifest.json").exists()
+    finally:
+        news._o5_evidence_sink.reset(token)
+    assert news._o5_evidence_sink.get() is None
+
+
+def test_s5_t05_consecutive_runs_are_isolated(monkeypatch, tmp_path):
+    harness, save, html = _s5_harness(monkeypatch, tmp_path)
+    _s5_patch_stream(
+        monkeypatch, run_mod.TradingAgentsGraph, before=_s5_tool_chain_call
+    )
+    _invoke(harness, save, html)
+    first = _run_dir(harness)
+    first_rows = first / "o5_evidence.jsonl"
+    assert [row["variant"] for row in _s5_rows(first)] == ["V-LIMIT-ZERO"]
+    first_bytes = first_rows.read_bytes()
+
+    _invoke(harness, save, html)
+    run_dirs = sorted(path for path in harness["run_base"].iterdir() if path.is_dir())
+    assert len(run_dirs) == 2
+    second = next(path for path in run_dirs if path != first)
+    assert [row["variant"] for row in _s5_rows(second)] == ["V-LIMIT-ZERO"]
+    # The first run's evidence was not touched by the second run.
+    assert first_rows.read_bytes() == first_bytes
+    assert first != second
+
+
+def test_s5_t06_outside_scope_call_writes_no_evidence(monkeypatch, tmp_path):
+    harness, save, html = _s5_harness(monkeypatch, tmp_path)
+    _s5_patch_stream(monkeypatch, run_mod.TradingAgentsGraph, before=_s5_tool_chain_call)
+    _invoke(harness, save, html)
+    run_dir = _run_dir(harness)
+    before = (run_dir / "o5_evidence.jsonl").read_bytes()
+
+    assert news._o5_evidence_sink.get() is None
+    # An unbound real tool call neither creates nor appends to a run's evidence.
+    assert _s5_tool_chain_call() == S5_LIMIT_ZERO
+    assert news._o5_evidence_sink.get() is None
+    assert (run_dir / "o5_evidence.jsonl").read_bytes() == before
+
+
+def test_s5_t07_i5b_open_failure_keeps_result_and_restores_binding(
+    monkeypatch, tmp_path, caplog
+):
+    parent = SimpleNamespace(emit=lambda event: None)
+    token = news._o5_evidence_sink.set(parent)
+    try:
+        harness, save, html = _s5_harness(monkeypatch, tmp_path)
+        # Force the real sink's open to fail: the run directory is removed after
+        # reservation and before the scope opens.
+        real_reserve = run_mod._reserve_run_directory
+        removed = []
+
+        def reserve_then_delete(*args, **kwargs):
+            context = real_reserve(*args, **kwargs)
+            import shutil
+
+            shutil.rmtree(context.run_dir)
+            removed.append(context.run_dir)
+            return context
+
+        monkeypatch.setattr(run_mod, "_reserve_run_directory", reserve_then_delete)
+        with caplog.at_level(logging.ERROR, logger="tradingagents.o5.evidence"):
+            _invoke(harness, save, html)
+
+        # The analysis still completes and the manifest still lands.
+        assert removed
+        assert harness["record_decision_calls"] == 1
+        assert (_run_dir(harness) / "manifest.json").is_file()
+        assert any(
+            record.name == "tradingagents.o5.evidence"
+            and "SINK_FAILED" in record.getMessage()
+            for record in caplog.records
+        )
+        assert news._o5_evidence_sink.get() is parent
+    finally:
+        news._o5_evidence_sink.reset(token)
+    assert news._o5_evidence_sink.get() is None
