@@ -1,0 +1,6296 @@
+# O1 OpenCode session — Plan and Build (annotated copy)
+
+**Member:** A · **Session ID:** `ses_e34f21c97ffevLFn0o9TxQa9zG`  
+**Created:** 11/11/2026, 10:40:47 PM · **Last export update:** 11/17/2026, 9:15:55 AM
+
+This file joins the two chronological exports from the same OpenCode session. Member A's brief annotations remain next to the relevant messages. Original messages, failed tests and corrections are preserved in order. Local project and temporary paths were replaced for privacy. The two source exports remain on the local machine.
+
+---
+
+# Part 1 — Plan export
+
+## User
+
+where are your current working directory? show me 
+
+---
+
+## Assistant
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+<PROJECT_ROOT>
+
+---
+
+## User
+
+ok good, let's start our project
+
+---
+
+## Assistant
+
+I'd be glad to help get started. What would you like to work on first?
+
+In the meantime, let me look at the project structure.
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+This is TradingAgents-CS5351 on branch `feature/o1-sma-guard`. What would you like to build or work on?
+
+Some context I can see:
+- Baseline imported, clean tree
+- Current branch suggests an **O1 SMA guard** feature
+- `.agent/`, `.opencode/`, `docs/`, `prompts/`, `src/`, `transcripts/` folders added
+
+Tell me the goal and I'll dig in. A few options:
+
+**Tool: question**
+
+---
+
+> **Human annotation — Member A:** I asked for a read-only check first. We had not agreed on the O1 scope or tests, so I did not want code changes yet.
+
+## User
+
+Let's start with the SMA issue I'm responsible for.
+
+I'm working on a CS5351 team project based on TradingAgents, and my task is to fix the problem where the system may calculate a 50-day or 200-day moving average even when there isn't enough historical price data.
+
+I found this issue in the official repository:
+https://github.com/TauricResearch/TradingAgents/issues/1679
+
+Before we make any changes, can you help me look through the existing code and understand how it currently works?
+
+I'd like to know:
+
+1. Which files and functions are responsible for calculating the SMA values?
+2. Why does the system still return an SMA value when the available data is insufficient?
+3. What's the simplest way to fix this without affecting other indicators?
+4. Which files would we need to modify?
+5. How should we test it? For example, with 40, 60, 199, 200 and 220 trading days of data.
+6. Are there any risks or dependencies we need to consider?
+
+For now, please just review the code and explain your findings and suggested approach. Don't modify any files or run tests yet.
+
+We need to review the requirements, design and test plan with the team before starting implementation. So let's discuss the approach first. 
+
+---
+
+## Assistant
+
+I'll explore the codebase to understand how SMAs are calculated.
+
+**Tool: bash**
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+Let me examine the SMA-related files.
+
+**Tool: bash**
+
+**Tool: read**
+
+---
+
+## Assistant
+
+**Tool: read**
+
+**Tool: read**
+
+---
+
+## Assistant
+
+Now let me look at how `load_ohlcv` works — this is key to understanding the data availability issue.
+
+**Tool: read**
+
+**Tool: read**
+
+---
+
+## Assistant
+
+Now let me check the router (to understand vendor fallback), the tools layer, and existing tests for SMA.
+
+**Tool: bash**
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+**Tool: read**
+
+**Tool: read**
+
+**Tool: read**
+
+---
+
+## Assistant
+
+Let me verify exactly how stockstats behaves with insufficient data — this is central to Q2.
+
+**Tool: bash**
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+**Tool: bash**
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+No venv/deps installed locally. Let me check the stockstats SMA semantics another way and scan the issue context.
+
+**Tool: webfetch**
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+Now let me check the project's own docs/brief to align the fix with course requirements, and look at the `.agent` and `prompts` folders.
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+**Tool: read**
+
+---
+
+## Assistant
+
+I have enough to explain the current behavior. Let me confirm the stockstats `min_periods=1` claim by checking if it's vendored or referenced anywhere, and check the error classes.
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+I've reviewed the code end to end. Here are the findings — no files modified.
+
+## 1. Where SMA values are calculated
+
+There are **two independent paths**, both feeding the market analyst:
+
+**A. Yahoo/stockstats path** (default vendor)
+- `get_stock_stats_indicators_window()` — `tradingagents/dataflows/vendors/yahoo/market.py:66` — renders the look-back window, calls the bulk helper, formats each day. Falls back to per-day `get_stockstats_indicator()` at `market.py:236`.
+- `_get_stock_stats_bulk()` — `market.py:205` — `load_ohlcv()` → `stockstats.wrap(df)` → `df["close_50_sma"]` / `df["close_200_sma"]` → dict of date→value. **This is where the actual SMA number is produced** (by stockstats).
+- `get_stock_stats()` — `market.py:273` — the per-day fallback, same `wrap()`+`df[indicator]`.
+- `build_verified_market_snapshot()` — `tradingagents/dataflows/vendors/yahoo/snapshot.py:67` — computes `close_50_sma` / `close_200_sma` from the **same** `wrap()` + `stock_df[name]` at `snapshot.py:78-85`, and takes `iloc[-1]` as "the latest row".
+
+**B. Alpha Vantage path**
+- `get_indicator()` — `tradingagents/dataflows/vendors/alpha_vantage/indicator.py:9` — asks the AV `SMA` endpoint with `time_period=50/200` (`indicator.py:86-101`). AV server-side handles warm-up itself (returns no value until it has the window).
+
+**Dispatch/fallback:** `agents/tools.py:42` (`get_indicators`) → `router.route_to_vendor` (`router.py:200`), vendor order from config, yfinance is the default.
+
+So the bug lives on the **stockstats/Yahoo path** in `market.py` and `snapshot.py`. Alpha Vantage is not affected.
+
+## 2. Why a value is returned with insufficient data
+
+The chain is:
+
+1. `load_ohlcv()` (`ohlcv.py:161`) downloads **5 years up to *today*** and then filters `data["Date"] <= as_of_dt` (`ohlcv.py:230`). For a backtest date ~4–5 years back, the *in-range* frame is tiny — the issue's 2021-12-25 AAPL run leaves only ~45 sessions.
+2. `stockstats.wrap()` computes `close_50_sma`/`close_200_sma` with **`min_periods=1`** (`smma` with `min_periods=0`). With fewer rows than the window it returns the **mean of whatever rows exist** instead of NaN.
+3. Therefore with N < 50 or N < 200 sessions you get a number anyway — and with only 45 rows, **50-SMA == 200-SMA** (both the 45-bar mean), exactly what the issue shows.
+4. Neither `_get_stock_stats_bulk` nor `snapshot.py` checks the row count against the indicator's window. `snapshot.py:85` takes `iloc[-1]` unconditionally, and `_fmt()` only turns NaN into `"N/A"` — but stockstats never gave NaN.
+
+The "fewer sessions than the window" condition is never detected, so a falsely-complete value reaches the model, which is told the snapshot is "the source of truth".
+
+## 3. Simplest fix that doesn't touch other indicators
+
+Add a **per-indicator minimum-history guard** at the point where the value is finalized, comparing available rows to the indicator's window requirement **for the specific row being reported** (not just the whole frame — a mid-series date may be fine):
+
+- A small mapping of indicator → required periods, e.g. `close_50_sma → 50`, `close_200_sma → 200`. Unknown indicators keep current behavior (no guard), so RSI/MACD/Boll/ATR/VWMA/EMA are untouched.
+- For each reported date, count rows up to and including that date (or use the cumulative bar count) and if `count < required` emit a clear sentinel like `"N/A: insufficient history (needs 200 sessions, have 45)"` instead of a number.
+- Apply the same guard in `snapshot.py` for the latest row.
+
+This is minimal, is scoped to just the two SMA series, and mirrors the AV semantics (no value before warm-up is complete). It does **not** change the data download window — that's a separate root-cause fix (PR #1686 anchors the window and records span), which is a bigger change than "simplest fix".
+
+## 4. Files to modify
+
+Core:
+- `tradingagents/dataflows/vendors/yahoo/market.py` — guard in `_get_stock_stats_bulk` and the per-day fallback `get_stock_stats`.
+- `tradingagents/dataflows/vendors/yahoo/snapshot.py` — guard before `iloc[-1]` value is emitted.
+
+Likely optional/helper:
+- A shared helper (e.g. in `market.py` or a small new module) holding the indicator→window map so both files use one source of truth.
+- `tests/` — new test file (see below).
+
+Probably **not** needed: `ohlcv.py` (unless the team chooses the deeper window-anchoring fix), `router.py`, `alpha_vantage/indicator.py` (already correct).
+
+## 5. How to test (40 / 60 / 199 / 200 / 220 sessions)
+
+Unit tests that **monkeypatch `load_ohlcv`** (no network — matches `test_yahoo_snapshot.py:33` style), feeding synthetic frames with exactly N business-day rows:
+
+| Sessions | Expected `close_50_sma` | Expected `close_200_sma` |
+|---|---|---|
+| 40 | number (≥50? no) → **N/A insufficient** | N/A insufficient |
+| 60 | valid number | N/A insufficient |
+| 199 | valid | **N/A insufficient** |
+| 200 | valid | valid |
+| 220 | valid | valid |
+
+Specific assertions:
+- **40:** both SMAs are `N/A: insufficient history`, and crucially **`50` and `200` are not equal** (regression guard against the reported bug).
+- **60:** 50-SMA is a real mean; 200-SMA still insufficient.
+- **199 vs 200:** the boundary — 199 insufficient, exactly 200 valid (off-by-one check; use `>=` window, not `>`).
+- **220:** both valid and equal to independently computed pandas rolling means (`assert abs(actual - expected) < 1e-6`) so we verify numbers, not just presence.
+- **snapshot path:** `build_verified_market_snapshot` with 40 rows must show `close_200_sma | N/A` in the table.
+- **other indicators unchanged:** with 40 rows, `rsi`, `macd`, `boll`, `atr` still return values (no regression).
+- **per-day fallback:** `get_stock_stats` at an early warm-up date returns the sentinel.
+- **mid-series:** a 260-row frame queried at row 60 → 50-SMA valid, 200-SMA insufficient at that date.
+
+Run with the project's convention (pytest, `@pytest.mark.unit`) — check `pyproject.toml`/CI for the exact invocation; per workspace docs, offline tests belong in `test/offline/`.
+
+## 6. Risks & dependencies
+
+- **Where to put the guard matters:** a *frame-level* check (len < 200) would wrongly blank a mid-series date that actually has 200 prior bars. Must be **per-row cumulative count**.
+- **Boundary semantics:** window W needs exactly W sessions (>=, not >). 199 vs 200 is the off-by-one to nail in tests.
+- **Empty/NaN frames & `fill_gaps`:** `load_ohlcv` forward/back-fills (`ohlcv.py:82`); `snapshot.py` uses `fill_gaps=False`. Decide whether filled rows count toward the window (they should — they're sessions). Document it.
+- **Alpha Vantage divergence:** AV already withholds pre-warm-up values, so post-fix both vendors agree — good, but a multi-vendor chain could later behave differently; keep the sentinel string consistent.
+- **Sentinel format:** reuse the existing `N/A: ...` convention (`market.py:172`, `snapshot.py:55`) so the analyst's prompt handling and the "N/A" table logic (`_get_stock_stats_bulk:228`) stay consistent. Avoid a bare `N/A` that reads as "holiday".
+- **stockstats version:** relies on `min_periods=1` behavior (pinned `stockstats>=0.6.5`). The guard is independent of that internal, but a future stockstats that returns NaN is now harmless — good.
+- **Don't touch AV / window anchoring:** keep this PR scoped to SMA warm-up so it's reviewable; the download-window fix (#1686) is a separate, higher-risk change.
+- **Determinism:** tests must monkeypatch `load_ohlcv`; never hit Yahoo.
+
+## Suggested write-up for the team review
+
+- **Requirement:** an SMA of window W is reported only when ≥ W trading sessions are available up to the reported date; otherwise a labeled N/A (insufficient history).
+- **Scope:** `close_50_sma`, `close_200_sma` only; all other indicators unchanged.
+- **Acceptance:** the 40/60/199/200/220 table above, the "50 ≠ 200 when insufficient" regression, and no change to RSI/MACD/Boll/ATR outputs on 40-row data.
+- **Out of scope:** re-anchoring the download window (track as follow-up).
+
+Want me to draft this into `docs/req/` (requirement + acceptance criteria) and an ADR stub in `docs/architecture/adr/` for the team to review before any code changes?
+
+---
+
+## User
+
+Thanks for the analysis. Before we implement O1, could you turn your findings into a more specific change plan and test plan for me to review?
+
+Please tell me:
+
+1. Which files and functions would need to change for the 50-day and 200-day SMA guard? For each place, explain the behavior you would change and why it is needed. Include the normal indicator path, its fallback, and the verified snapshot.
+2. For 49, 50, 60, 199, 200, and 220 usable closing-price sessions, what should each SMA return? Please give the test input, the function called, and the expected result. Also include an early reported date within a longer series and a missing closing price.
+3. Which existing tests already cover related behavior, and where should new offline tests go so this project's pytest and CI will run them?
+4. If we implement only the SMA guard, what part of Issue #1679 would be fixed, and what would still require a change to historical data loading?
+
+Please keep the proposed changes focused on O1 and point out any shared file that could affect other features. This is a review request only: don't modify files, run tests or probes, install anything, or make Git changes. 
+
+---
+
+## Assistant
+
+I'll check the test layout and CI config to ground the test plan, then write the plan. No modifications.
+
+**Tool: bash**
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+**Tool: read**
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+**Tool: read**
+
+---
+
+## Assistant
+
+I have everything needed. Here is the O1 change plan and test plan for review — no files changed, nothing run.
+
+---
+
+# O1 — SMA Insufficient-History Guard: Change Plan & Test Plan
+
+## 0. Scope
+
+Guard **only** `close_50_sma` (window 50) and `close_200_sma` (window 200) on the **Yahoo/stockstats path**. Alpha Vantage already withholds pre-warm-up values (`indicator.py:86-101`), so it is out of scope. All other indicators keep current behavior.
+
+The guard is a **shared helper** (one indicator→window map) applied at the points where an SMA value is finalized for a **specific reported date**.
+
+Key principle: the guard is **per-row cumulative history**, not "does the whole frame have ≥200 rows". A 260-row frame queried at its 60th bar must give a valid 50-SMA and an insufficient 200-SMA for that date.
+
+---
+
+## 1. Files / functions to change
+
+### 1a. Normal indicator path — `_get_stock_stats_bulk()` 
+`tradingagents/dataflows/vendors/yahoo/market.py:205`
+
+**Current:** builds `df`, triggers `df[indicator]`, then for every row writes `"N/A"` only when stockstats gave NaN (`market.py:228`). With `min_periods=1` stockstats never gives NaN early, so warm-up rows get a real number.
+
+**Change:** while iterating rows (`for _, row in df.iterrows()`, `market.py:224`), track the cumulative count of usable closing-price sessions up to and including that row. For `close_50_sma`/`close_200_sma`, if `cumulative_count < required_window`, write the sentinel `N/A: insufficient history (needs 200 sessions, have <n>)` instead of the number. Non-SMA indicators bypass the check entirely.
+
+**Why:** this is where the reported numbers originate and where the date→value dict that feeds the rendered window is built. A per-row count (not `len(df)`) correctly blanks only warm-up dates while preserving valid mid-series dates.
+
+**Note on "usable closing-price sessions":** `load_ohlcv` forward/back-fills gaps (`ohlcv.py:82`) before this path runs, so every row is a session with a close. The count is therefore `row index + 1` over the loaded frame. We must document that filled rows count as sessions (see Risks).
+
+### 1b. Per-day fallback — `get_stock_stats()`
+`tradingagents/dataflows/vendors/yahoo/market.py:273`
+
+**Current:** wraps data, triggers the indicator, returns the value for the matching date row with no history check.
+
+**Change:** apply the **same helper** to the matched row: compute how many sessions exist up to and including `as_of_date`; if below the indicator's window, return the sentinel string instead of `indicator_value`.
+
+**Why:** `get_stock_stats_indicators_window` falls back to this per-day path on any bulk exception (`market.py:184-193`). If only the bulk path is guarded, a bulk failure would silently reintroduce the bug through the fallback. Both paths must share one predicate so behavior is identical.
+
+### 1c. Verified snapshot — `build_verified_market_snapshot()`
+`tradingagents/dataflows/vendors/yahoo/snapshot.py:67`
+
+**Current:** `stock_df[name]` then `indicator_values[name] = _fmt(stock_df.iloc[-1][name])` (`snapshot.py:84-85`). Latest-row value is taken unconditionally; `_fmt` only converts NaN→"N/A".
+
+**Change:** when computing the latest-row value for an SMA name, check total available sessions in `stock_df` (this path uses the whole filtered frame, so `len(df)` **is** the count for the latest row) against the indicator's window; if insufficient, set the value to the sentinel rather than the fabricated number.
+
+**Why:** the issue explicitly names the snapshot as a wrong source ("the source of truth"). Even if `get_indicators` is fixed, the snapshot would still hand the analyst `close_200_sma | <fabricated>` and, per the prompt (`market_analyst.py:48`), it would be believed. Both must agree.
+
+**Shared helper:** one function (e.g. `_insufficient_history(indicator, sessions_available) -> str | None`) and one `SMA_WINDOWS` dict, placed in `market.py` and imported by `snapshot.py` (snapshot already imports from the yahoo package). This single source avoids drift between the two numbers.
+
+**Files changed:** `market.py`, `snapshot.py`. **No** change to `ohlcv.py`, `router.py`, `tools.py`, or `alpha_vantage/indicator.py`.
+
+---
+
+## 2. Expected results by usable closing sessions
+
+Test input = synthetic frame of N business-day rows with monotonic closes, `load_ohlcv` **monkeypatched** to return it (offline; matches `tests/test_yahoo_snapshot.py:33` style). "Called" = the public function; assert on that function's output string.
+
+Sentinel format (proposed, matches existing `N/A: ...` convention): `N/A: insufficient history (needs 200 sessions, have 199)`.
+
+| Case | Sessions | Function called | `close_50_sma` | `close_200_sma` |
+|---|---|---|---|---|
+| Below 50 window | **49** | `_get_stock_stats_bulk` / window | insuff. (needs 50, have 49) | insuff. (needs 200, have 49) |
+| Exact 50 boundary | **50** | " | **valid** (= 50-bar mean) | insuff. (have 50) |
+| 50 valid, 200 short | **60** | " | **valid** | insuff. (have 60) |
+| One short of 200 | **199** | " | valid | insuff. (needs 200, have 199) |
+| Exact 200 boundary | **200** | " | valid | **valid** (= 200-bar mean) |
+| Comfortably long | **220** | " | valid | **valid** |
+
+Additional required cases:
+
+- **Early reported date in a longer series.** 260-row frame, query the date at row **60**. Via `get_stock_stats(symbol, "close_200_sma", date(row60))` and the window function: `close_50_sma` **valid** at that date, `close_200_sma` **insufficient (have 60)**. This is the per-row (not frame-level) proof.
+- **Missing closing price.** Frame of 60 rows where one bar (e.g. the latest, or a mid-series one) has no close. Two sub-cases:
+  - Via `_get_stock_stats_bulk` (path uses `fill_gaps=True`, default): the gap is filled (`ohlcv.py:82`), so the filled row **counts** as a session — assert it still yields the same session count and a valid 50-SMA. Document this as intended.
+  - Via `build_verified_market_snapshot` (`fill_gaps=False`, `snapshot.py:40`): a row with no reported close is dropped in `_verified_rows`/`load_ohlcv` (monkeypatch should emulate the drop), so the available-session count reflects only rows with a close — assert the 200-SMA is insufficient if the drop takes it below 200, and that no filled-substitute close is printed as a real price.
+- **Regression on other indicators.** With **49** rows, `rsi`, `macd`, `macds`, `macdh`, `boll`, `boll_ub`, `boll_lb`, `atr`, `vwma`, `close_10_ema` must **still return values** (unchanged). Only the two SMAs are guarded.
+
+Numeric checks: for valid cases assert the value equals an independently computed `pandas.Series.rolling(window).mean()` at the same date within `1e-6`, so the test verifies numbers not just presence.
+
+---
+
+## 3. Existing tests and where new tests go
+
+**Existing related tests (do not duplicate, do extend coverage around them):**
+- `tests/test_ohlcv_cache_freshness.py`, `tests/test_ohlcv_latest_bar.py`, `tests/test_ohlcv_date_column.py`, `tests/test_yfinance_stale_ohlcv_guard.py` — `load_ohlcv` window/staleness/latest-bar behavior (the data-loading side we are *not* changing).
+- `tests/test_yahoo_snapshot.py` — **the closest analogue**: monkeypatches `snapshot.load_ohlcv` and asserts on `build_verified_market_snapshot` output (incl. `iloc[-1]` latest row, indicator presence). New snapshot SMAs tests should live beside these, reusing the `_sample_ohlcv` pattern.
+- `tests/test_undated_tools_as_of.py:98-107` — the per-day fallback "empty value" case (`get_stockstats_indicator`); our fallback test is adjacent but asserts a **labeled** insufficient-history sentinel, not a blank.
+- `tests/test_alpha_vantage_hardening.py` — AV indicator path; use it as the reference for the "AV already correct" claim, no change there.
+
+**Where new tests go / how CI runs them:** `pyproject.toml:59` sets `testpaths = ["tests"]` and CI runs `pytest -q` (`ci.yml:36`) with addopts `-m "not integration"`. So:
+- **The tests CI runs must live in `tests/`** as `tests/test_sma_warmup_guard.py`, marked `@pytest.mark.unit` (registered marker, `pyproject.toml:61-65`). That is the only location CI executes.
+- The workspace doc says team offline tests belong in `test/offline/` (`docs/PROJECT_WORKSPACE.md:13`), but that directory is **outside `testpaths`** and current CI does **not** run it. To satisfy both: put the authoritative test in `tests/test_sma_warmup_guard.py` (runs in CI), and if the team wants the `test/offline/` convention, either add `test/offline` to `testpaths`/CI **or** make `test/offline` the home and update CI accordingly. **Flag this discrepancy for the team decision** — it is a shared config file (`pyproject.toml`) and touching it affects all features, so it should be an explicit, reviewed change, not bundled into O1.
+
+---
+
+## 4. What O1 fixes vs. what still needs data-loading work
+
+**Fixed by O1 (the observable correctness bug in the issue):**
+- The fabricated numbers: `close_50_sma == close_200_sma == <N-session mean>` is replaced by a labeled `N/A: insufficient history` whenever the reported date has fewer sessions than the window.
+- Both surfaces named in the issue — `get_indicators` (via bulk + fallback) and `get_verified_market_snapshot` — now agree and no longer hand the model a false "source of truth".
+- Correct boundaries (49/50, 199/200) and correct mid-series behavior.
+
+**Still wrong after O1 — needs historical data-loading change (out of scope):**
+- **Root cause remains:** `load_ohlcv` downloads *5 years up to today* and filters to `as_of_date` (`ohlcv.py:182-230`). For a run dated ~4–5 years back (e.g. the issue's 2021-12-25 AAPL), the in-range frame has ~45 rows — so O1 will now correctly report **both SMAs as insufficient**, but it does **not restore the correct values** (155.11 / 138.95). To show real values there, the download window must be **anchored at `as_of_date`** (fetch W years *ending at* the run date) and the cache must record the downloaded span — that is PR #1686's territory and a much larger, higher-risk change.
+- **Consequence to state in the review:** after O1, a ~5-years-back run will show insufficient SMAs instead of correct ones. That is *honest* (no fabrication) but not *complete*. The requirement/acceptance criteria should make this explicit so the team can schedule O2 (window anchoring) as the follow-up.
+- **Other indicators in the issue** ("and other indicators… RSI 50 then 100"): not addressed by O1 — only the two SMAs are guarded, by design.
+
+---
+
+## Shared-file / cross-feature warnings
+
+- **`market.py` is shared** by every Yahoo-path indicator (RSI/MACD/Boll/ATR/VWMA/EMA). The guard must be additive and keyed only on the two SMA names; unknown indicators must fall through unchanged. Misplaced/misapplied guard silently blanks other indicators — covered by the 49-row regression case.
+- **`snapshot.py`** feeds the analyst's "source of truth"; changing its SMA cells changes report text for any short-history ticker (recent IPOs, spin-offs, new tokens) — expected and intended, but reviewers should expect report diffs.
+- **`pyproject.toml`** — only if the team decides to route `test/offline` into CI; otherwise leave untouched.
+- **Sentinel string** must use the existing `N/A: ...` family (`market.py:172`, `snapshot.py:55`) so the analyst's table handling and the `min_periods` "N/A" logic (`market.py:228`) stay consistent; a bare `N/A` would read as "holiday".
+- **stockstats internal** (`min_periods=1`) is relied on today; the guard makes us independent of it (if a future stockstats returns NaN, we already handle it) — low risk, but pin/observe `stockstats>=0.6.5` (`pyproject.toml:28`).
+
+---
+
+Would you like me to next draft this into `docs/req/` (requirement + acceptance criteria, including the explicit O1-vs-O2 scope) and an ADR stub in `docs/architecture/adr/` for the team review, still without touching code?
+
+---
+
+> **Human annotation — Member A:** I challenged the earlier assumptions here. I wanted the agent to separate checked code facts from guesses before we fixed the scope.
+
+## User
+
+Thanks for the plan. Before I decide the O1 scope or approve a test plan, I want to check the assumptions carefully. Please re-check the current code, and tell me if any of your earlier points or my feedback were wrong. For factual claims, give the relevant file and function; mark anything you have not verified as an assumption.
+
+Please cover these points:
+
+1. Compare two possible scopes: **A. guard the 50-day and 200-day SMA outputs**, and **B. add that guard and fix the historical data download window**. What would each scope fix in Issue #1679, and what would remain wrong? Give your recommendation with the extra files, risks, and tests it would require. I’ll make the scope decision after reviewing it.
+
+2. For each scope, list the exact files and functions you would change, what behavior would change there, and whether the file or interface might be shared with another feature. This is a proposed change list, not a request to edit files.
+
+3. Revise the test plan so each case has a draft requirement or fit-criterion ID, controlled input, function or tool called, exact expected result, and the mistake it would detect. Cover 40, 49, 50, 60, 199, 200, and 220 usable closing-price sessions. Include at least one negative case and relevant regression checks.
+
+4. Please check the missing-close case against `load_ohlcv` itself. Separate tests of raw data cleaning from tests that mock its already-cleaned output. For the early date in a longer series, explain whether your test is checking per-row logic in isolation or the public path with its analysis-date cutoff. Check whether an existing test already covers future-date exclusion before proposing another one.
+
+5. Confirm where the new offline tests would be picked up by the current pytest and CI setup. For other indicators, test that O1 preserves their existing behavior; don't assume they all have numeric results with short history. Also revisit your Alpha Vantage claim and say what the current code actually proves.
+
+Please finish with a short list of decisions I need to make and the test information I should pass to the member handling CI. Don't call a follow-up “O2,” since that ID is already assigned. Nothing is approved yet.
+
+This is still read-only review. Don't create or edit files, run tests or probes, install dependencies, or make Git changes. 
+
+---
+
+## Assistant
+
+I'll re-verify the key claims against the current code before answering. Read-only.
+
+**Tool: bash**
+
+**Tool: read**
+
+---
+
+## Assistant
+
+Let me verify a few remaining specifics: the snapshot import surface, the window function's per-day N/A rendering, the alpha_vantage hardening test, and the AV SMA response semantics.
+
+**Tool: bash**
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+Now let me verify the `get_stock_stats_indicators_window` per-day rendering and how it maps the bulk dict, plus check that no existing test asserts future-date exclusion in the snapshot (only the one case I saw).
+
+**Tool: bash**
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+**Tool: read**
+
+---
+
+## Assistant
+
+I've now verified the specific claims. Here is the corrected review. I flag each factual claim with file/function and mark unverified items as **ASSUMPTION**.
+
+---
+
+## Corrections to my earlier answers
+
+Several earlier statements were imprecise or wrong. Correcting them:
+
+1. **"Alpha Vantage already withholds pre-warm-up values" — overstated.**
+   - What the code actually does: `get_indicator` (`alpha_vantage/indicator.py:86-101`) requests `time_period=50/200` from the AV `SMA` endpoint, then formats **only the rows AV returns** (`indicator.py:177-201`). If AV returns fewer/warm-up rows or none in range, the code emits `"No data available for the specified date range."` (`indicator.py:200-201`).
+   - What this proves: the code **trusts AV to not return an SMA before the window is full**; it does **not** verify it. The only local guard is `len(lines) < 2` (`indicator.py:149`). So "AV is correct" is an **ASSUMPTION about AV server behavior**, not something this repo enforces. This matters because the issue's fix should not rely on an unverified upstream contract.
+
+2. **"Snapshot `_fmt` only converts NaN→N/A, and stockstats never gives NaN early" — accurate, but I should add the real implication.** `_get_stock_stats_bulk` (`market.py:228-231`) writes `"N/A"` on NaN, else the number. `snapshot.py` (`snapshot.py:78-87`) uses `_fmt` (`snapshot.py:53-64`) where only `None`/`pd.isna` → `"N/A"`. So both depend on stockstats returning NaN during warm-up; the issue says stockstats uses `min_periods=1` so it does not. **That `min_periods=1` behavior is still an ASSUMPTION** — I could not run stockstats (no deps installed here) and it's not vendored. The plan must not hinge on it; the guard should count sessions itself rather than rely on NaN.
+
+3. **"Per-day fallback and bulk need the same guard" — correct, and the fallback's N/A text differs.** The bulk path emits `"N/A"`; the window function's holiday placeholder is `"N/A: Not a trading day (weekend or holiday)"` (`market.py:172`); the per-day `get_stock_stats` returns that same holiday string when the date isn't a row (`market.py:294`). So a new insufficient-history sentinel must be distinct from the holiday string, or the analyst can't tell "holiday" from "not enough history".
+
+4. **"Missing close is filled so it counts as a session" — half wrong, and I must split paths.**
+   - `load_ohlcv(..., fill_gaps=True)` (default) runs `_fill_price_gaps` (`ohlcv.py:82-89`): it **drops rows with NaN close first**, then ffill/bfill. So a NaN-close row is **dropped, not counted** — the opposite of what I said. The *surviving* gaps (missing whole rows) get filled, but a present row with a NaN close is removed.
+   - `snapshot._verified_rows` calls `load_ohlcv(..., fill_gaps=False)` (`snapshot.py:40`), and `fill_gaps=False` path does `dropna(subset=["Close"])` (`ohlcv.py:251`). So NaN-close rows are dropped there too.
+   - **Correction:** a missing close does **not** count as a usable session on either path; it is dropped. Session counting must happen **after** `load_ohlcv` cleaning (see §4).
+
+5. **"Future-date exclusion is not tested" — wrong; it is already tested.** `tests/test_yahoo_snapshot.py:27` `test_excludes_future_rows` asserts `"999.00" not in snap` for a future row. So I should **not** propose another future-exclusion test for the snapshot. (Source cutoff itself is `ohlcv.py:230`.)
+
+6. **Window-function lookup can mask an insufficient value.** `get_stock_stats_indicators_window` builds `date_values` by iterating calendar days and looking each up in the bulk dict; a missing date becomes the **holiday** string (`market.py:168-172`). This means any guard must live where the dict is built (`_get_stock_stats_bulk` / `get_stock_stats`), not in the rendering loop, or a blanked value could be re-read as "holiday".
+
+7. **CI runs only `tests/`.** `pyproject.toml:59` `testpaths = ["tests"]`, `addopts = -m "not integration"`; CI `pytest -q` (`ci.yml:36`). `test/offline/` is **not** collected — confirmed (it's empty and outside testpaths). So "put it in `test/offline/`" would **not** run in CI. My earlier note was directionally right but must be stated as a hard fact: **new tests must go in `tests/`** unless `pyproject.toml`/CI is changed.
+
+8. **Scope wording:** the "mid-series date" claim is correct only because the bulk path filters rows to `<= as_of_date` inside `load_ohlcv` and then iterates **all** rows. A per-row cumulative count is therefore genuinely per-row. Verified at `market.py:224-231` + `ohlcv.py:230`.
+
+---
+
+## 1. Scope A vs B
+
+### Scope A — guard 50/200 SMA outputs
+
+**Fixes (in #1679):** the fabricated equality `close_50_sma == close_200_sma == <N-session mean>` on both the `get_indicators` path and the verified snapshot. After A, an insufficient-history date returns a labeled sentinel instead of a number, on both surfaces.
+
+**Remains wrong:** the *values* for a genuinely back-dated run. `load_ohlcv` downloads **5 years up to today** then filters to `as_of_date` (`ohlcv.py:182-185, 230`). A run dated ~4–5 years back still has only a few in-range rows, so A reports **"insufficient" where the correct number exists** (issue's 155.11 / 138.95). A is honest but not complete. Root cause untouched. Also the issue's "other indicators (RSI 50 then 100)" is **not** addressed by A.
+
+### Scope B — A + anchor the historical download window at `as_of_date`
+
+**Fixes:** the same fabrication **plus** the missing data — by fetching the window *ending at* the run date (and recording the downloaded span in the cache, per PR #1686), the in-range frame has enough sessions, so the real SMAs can be computed and the guard only trips for genuinely short histories (new listings).
+
+**Extra files/functions (beyond A):**
+- `tradingagents/dataflows/vendors/yahoo/ohlcv.py` — `load_ohlcv` (`ohlcv.py:161`): change `start_str`/`end_str` anchoring (`ohlcv.py:182-188`) from "today" to around `as_of_dt`; **and the cache design** (`_cache_is_fresh` `ohlcv.py:146`, one file per symbol `ohlcv.py:191-194`): today's cache is keyed on wall-clock date, so an as-of-anchored download needs span metadata or it will collide across run dates. **This is the high-risk part.**
+- Possibly `tradingagents/dataflows/symbols.py` / cache filename, if span must be encoded — **ASSUMPTION, not yet inspected** for scope B.
+- `snapshot.py` and `market.py` consume `load_ohlcv` unchanged at the call site, but their **behavior changes** because the frame is now larger — many more rows valid. Tests in `tests/test_ohlcv_*` (`test_ohlcv_cache_freshness.py`, `test_ohlcv_latest_bar.py`, `test_yfinance_stale_ohlcv_guard.py`, `test_ohlcv_date_column.py`) encode the current today-anchored caching contract and **would need review/updates** — they are shared infra tests affecting all data flows.
+
+**B risks:** cache invalidation/coherence across dates; look-ahead still must be preserved (`ohlcv.py:230` filter must stay); staleness check `_assert_ohlcv_not_stale` (`ohlcv.py:109`) semantics vs. as-of anchoring; every vendor consumer of `load_ohlcv` (snapshot, market, and **ASSUMPTION: backtest.py / others — not enumerated**). B is a data-layer change with broad blast radius.
+
+**Recommendation:** **Do A now; schedule B as a separate, well-scoped change.** A removes the *fabrication* (the safety defect #1679 highlights) with tiny blast radius and is CI-testable offline. B is the root-cause fix but touches shared caching used by all vendors/flows and needs its own requirement, ADR, and a review of the existing `test_ohlcv_*` contract. Doing B under the O1 ticket conflates a correctness guard with an infrastructure rewrite.
+
+---
+
+## 2. Proposed change list per scope (no edits)
+
+**Scope A — changed files/functions**
+- `tradingagents/dataflows/vendors/yahoo/market.py` → `_get_stock_stats_bulk` (`market.py:205`): compute per-row cumulative session count; for `close_50_sma`/`close_200_sma` below window, emit insufficient-history sentinel instead of number. *Shared?* Yes — this function serves **every** indicator on the Yahoo path, so the guard must key only on the two names.
+- `tradingagents/dataflows/vendors/yahoo/market.py` → `get_stock_stats` (`market.py:273`): same guard on the matched row (fallback path). *Shared?* Yes, all indicators.
+- `tradingagents/dataflows/vendors/yahoo/snapshot.py` → `build_verified_market_snapshot` (`snapshot.py:67`): guard the latest-row SMA values. Import one shared helper/window-map from `market.py`. *Shared?* Snapshot is a distinct feature but is quoted as "source of truth" by the analyst prompt (`market_analyst.py:48`).
+- New shared helper + `SMA_WINDOWS` constant (in `market.py`, imported by `snapshot.py`).
+- **No change:** `ohlcv.py`, `router.py`, `tools.py`, `alpha_vantage/indicator.py`.
+
+**Scope B — everything in A, plus**
+- `tradingagents/dataflows/vendors/yahoo/ohlcv.py` → `load_ohlcv` (`ohlcv.py:161`) and `_cache_is_fresh` (`ohlcv.py:146`) / cache file naming (`ohlcv.py:191-194`): anchor download span at `as_of_dt`, carry span metadata, preserve `<= as_of_dt` look-ahead filter (`ohlcv.py:230`).
+- `tradingagents/dataflows/vendors/yahoo/snapshot.py` and `market.py`: no code change at call sites, but **shared behavior changes** (larger frames). Flag as shared consumers.
+- Existing `tests/test_ohlcv_*` and `tests/test_yfinance_stale_ohlcv_guard.py`: shared-infra contract tests likely need updates.
+- Possibly `tradingagents/dataflows/symbols.py`/cache filename — **ASSUMPTION, unverified**.
+
+---
+
+## 3. Revised test plan (requirement/fit IDs)
+
+Draft requirement: **REQ-O1**: "An SMA of window W is reported for a date only when that date has ≥ W usable closing-price sessions available on/before it; otherwise a labeled `insufficient history` sentinel (distinct from the holiday text) is returned, on both the Yahoo indicator path and the verified snapshot."
+
+FIT criteria: **FIT-O1-{SMA50,SMA200,BOUNDARY,MIDSERIES,MISSING,RETRO,REGRESSION}**.
+
+All tests: offline, `@pytest.mark.unit`, in `tests/`, monkeypatch `load_ohlcv` to return a **cleaned** frame (see §4). Sentinel text asserted by prefix `N/A: insufficient history`.
+
+| ID | Input (usable closes) | Function called | Expected | Mistake detected |
+|---|---|---|---|---|
+| FIT-O1-SMA50-040 | 40 bdays, monotonic closes | `_get_stock_stats_bulk` via `get_stock_stats_indicators_window` | date's `close_50_sma` = insuff. (needs 50); `close_200_sma` = insuff. (needs 200) | Reported a number with <50 history |
+| **FIT-O1-SMA50-049 (negative)** | 49 | same | `close_50_sma` = insuff. (needs 50, have 49); `close_200_sma` = insuff. | Off-by-one: would pass at 49 |
+| FIT-O1-BOUNDARY-050 | 50 | same | `close_50_sma` = **valid** = rolling(50).mean (≈ `abs<1e-6`); `close_200_sma` = insuff. | `>` vs `>=` boundary |
+| FIT-O1-SMA50-060 (negative) | 60 | same | `close_50_sma` valid; `close_200_sma` insuff. (have 60); **assert 50 ≠ 200** | The issue's equality bug |
+| FIT-O1-BOUNDARY-199 | 199 | same | `close_200_sma` = insuff. (needs 200, have 199) | Off-by-one near 200 |
+| FIT-O1-BOUNDARY-200 | 200 | same | both valid = rolling means | `>` vs `>=` |
+| FIT-O1-SMA200-220 | 220 | same | both valid = rolling means | Truncation/rounding |
+| FIT-O1-MIDSERIES | 260-row frame; call `get_stock_stats` for the date at row **60** (and/or window fn with `as_of`=row60) | `get_stock_stats` | At that date: `close_50_sma` **valid**, `close_200_sma` **insuff. (have 60)** | Frame-level check instead of per-row |
+| FIT-O1-MISSING | 60 rows with one NaN close (dropped by `load_ohlcv` cleaning; monkeypatch returns the *cleaned* frame with 59 rows) | `_get_stock_stats_bulk` | Valid 50-SMA over 59 sessions; NaN row not counted; no filled-substitute price | Counting a dropped row / treating fill as a session |
+| FIT-O1-RETRO | ≥200-row frame + one future row beyond `as_of` | `get_stock_stats`/window | Future row excluded from count (relies on existing `test_excludes_future_rows`, `test_yahoo_snapshot.py:27` — **do not duplicate**, only extend to SMA boundary if desired) | Look-ahead leak into count |
+| FIT-O1-REGRESSION | 49-row frame | `_get_stock_stats_bulk` with `rsi,macd,macds,macdh,boll,boll_ub,boll_lb,atr,vwma,close_10_ema` | **Each returns whatever it returns today — assert *unchanged vs a baseline recorded from current code*, not "a number"** | Missing/blank other indicators |
+| FIT-O1-SNAPSHOT | 40-row frame; mock `snapshot.load_ohlcv` | `build_verified_market_snapshot` | Table shows `close_50_sma | N/A…` and `close_200_sma | N/A…` (not numbers) | Snapshot still fabricates |
+| FIT-O1-SNAPSHOT-50 | 50-row frame | snapshot | `close_50_sma` numeric; `close_200_sma` N/A | Boundary in snapshot |
+
+**Regression note (your point):** I must **not** assume RSI/MACD/etc. produce numbers with 49 sessions. The correct regression test captures each indicator's current output under 49 sessions as a **baseline (golden) value** and asserts O1 does not change it — rather than asserting "valid number." Whether each has a value depends on stockstats warm-up, which is **ASSUMPTION/unverified**; the golden approach sidesteps that.
+
+---
+
+## 4. Missing-close and early-date tests — separation
+
+- **Raw data-cleaning tests (no mock of cleaned output):** drive `ohlcv.load_ohlcv` with a **seeded cache CSV** exactly like `tests/test_ohlcv_latest_bar.py:98` (`_run_load`), including a NaN-close row, and assert:
+  - `fill_gaps=True`: NaN-close row **dropped** by `_fill_price_gaps` (`ohlcv.py:82-89`), then surviving gaps filled.
+  - `fill_gaps=False`: NaN-close row dropped by `dropna` (`ohlcv.py:251`).
+  These belong beside `test_ohlcv_latest_bar.py`/`test_ohlcv_date_column.py`, not in the SMA guard file. **They test `load_ohlcv`, not the guard.**
+- **Guard tests (mock already-cleaned output):** monkeypatch `market.load_ohlcv` (and `snapshot.load_ohlcv`) to return a **already-cleaned DataFrame** (as `tests/test_yahoo_snapshot.py:33` does). Here the NaN-close case is represented by returning the frame **after** cleaning (59 rows), asserting the count reflects post-clean sessions. This keeps guard logic in isolation from vendor cleaning.
+- **Early-date-in-longer-series:** There are two distinct tests and I should label which is which:
+  - **Unit (per-row logic):** call `_get_stock_stats_bulk` / `get_stock_stats` directly on a 260-row cleaned frame at row 60 — tests per-row counting **in isolation**.
+  - **Public path with the `as_of_date` cutoff:** call `get_stock_stats_indicators_window(symbol, "close_200_sma", as_of_date=<date of row60>, look_back_days=…)` — this exercises `load_ohlcv`'s `<= as_of_dt` filter (`ohlcv.py:230`) *if not mocked*. To stay offline, monkeypatch `load_ohlcv` to **emulate the cutoff** (return only rows ≤ as_of). I should be explicit that this mocked cutoff is **not** a real test of `ohlcv.py:230`; the real cutoff is covered by `test_excludes_future_rows` (`tests/test_yahoo_snapshot.py:27`) and `test_ohlcv_latest_bar.py`.
+  - **Do not add a new future-exclusion test** — it exists (`test_yahoo_snapshot.py:27`).
+
+---
+
+## 5. CI pickup, other indicators, Alpha Vantage
+
+- **CI pickup:** Only `tests/` is collected (`pyproject.toml:59`, `addopts=-m "not integration"`), CI runs `pytest -q` (`ci.yml:36`). New tests → `tests/test_sma_warmup_guard.py` with `@pytest.mark.unit`. `test/offline/` is **empty and uncollected** — placing tests there will **not** run in CI unless `pyproject.toml`/`ci.yml` changes (a shared config change — route through the team/CI owner, not O1).
+- **Other indicators:** O1 must preserve their **current** outputs; assert against recorded baselines (golden), not "numeric," because their short-history behavior is **ASSUMPTION/unverified**.
+- **Alpha Vantage revised claim:** the repo's `get_indicator` (`alpha_vantage/indicator.py:9`) reformats whatever rows AV's `SMA`/`EMA`/etc. return and only guards `len(lines) < 2` (`indicator.py:149`); it emits `"No data available for the specified date range."` (`indicator.py:200-201`). Therefore: **this code neither computes nor enforces SMA warm-up** — it depends on AV's server behavior, which is **not verifiable from this repo**. So "AV already correct" is an **assumption**, and O1 should not claim cross-vendor consistency is guaranteed. The `tests/test_alpha_vantage_hardening.py` suite tests request hardening (#990/#991/#1115/#1442), **not** SMA warm-up.
+
+---
+
+## Decisions you need to make
+
+1. **Scope: A only (guard) vs A+B (guard + anchored download).** My recommendation: **A now, B as a separate ticket** with its own requirement + ADR and a review of the `test_ohlcv_*` contract.
+2. **Sentinel wording/format** — e.g. `N/A: insufficient history (needs 200 sessions, have N)`, distinct from the holiday text (`market.py:172`, `market.py:294`). Needs sign-off because report text changes.
+3. **Regression strategy for other indicators:** golden-baseline capture (recommended) vs. status-quo assertions.
+4. **Where tests live:** `tests/` for CI now; whether to also wire `test/offline/` into `pyproject.toml`/CI (shared config) — decide and assign, don't bundle into O1.
+5. **Whether O1 accepts "less complete but honest" outputs** for far-back runs until the download-window work lands.
+6. **Name for the download-window follow-up** — not "O2" (already taken); confirm the ID.
+
+## Info to pass to the CI-owning member
+
+- New file: `tests/test_sma_warmup_guard.py`, all `@pytest.mark.unit`, **no network** (monkeypatch `market.load_ohlcv` / `snapshot.load_ohlcv`).
+- Tests must pass under `pytest -q` with `-m "not integration"` (`pyproject.toml:59-60`, `ci.yml:36`) on Python 3.11–3.14 incl. the non-UTC TZ matrix run (`ci.yml:19-22`) — use `pd.bdate_range` and naive dates to avoid TZ flakiness.
+- Raw-cleaning tests use the seeded-cache pattern from `tests/test_ohlcv_latest_bar.py:98` and belong near the `test_ohlcv_*` files.
+- Do **not** place tests in `test/offline/` — it is not collected; if that convention is required, `pyproject.toml`/`ci.yml` must change first (shared config, separate decision).
+- Golden-baseline regression values for other indicators must be generated against the **pinned** `stockstats` (`pyproject.toml:28`) in the CI environment, not on a developer machine with a different version.
+
+---
+
+## User
+
+Thanks, this is clearer. I checked the revised test matrix and found a few assertions that could pass even if the guard is wrong. Please correct just these points:
+
+1. For a missing close, use a boundary that changes the result: 50 dated rows with one missing close should leave 49 usable closes, or 200 rows with one missing close should leave 199. Keep raw-data cleaning tests separate from tests that mock cleaned data.
+2. Remove “50 SMA ≠ 200 SMA” from the 60-session case. Assert the correct 50-session mean and the specific insufficient-history result for the 200 SMA. Show the separate indicator calls.
+3. If you keep a future-row test for SMA counting, use 199 valid rows on or before the analysis date plus one later row. Explain what this adds beyond the existing snapshot test.
+4. `pyproject.toml` says `stockstats>=0.6.5`, not a pinned version. Revise the other-indicator regression plan without claiming that baseline values have already been recorded.
+
+Please return a compact corrected test matrix and any resulting change to the CI handoff. Don't mark the plan approved. Keep this read-only: no file changes, tests, probes, installs, or Git changes. 
+
+---
+
+## Assistant
+
+Corrected only the four flagged points. Read-only; not approved.
+
+## Corrections
+
+1. **Missing-close boundary:** use 50 dated rows with one NaN close → **49 usable closes each side of the boundary**, or 200 dated rows → **199 usable**. Keep two separate layers: raw-cleaning tests drive `ohlcv.load_ohlcv` via a seeded cache (pattern `tests/test_ohlcv_latest_bar.py:98`) and assert the NaN-close row is dropped (`_fill_price_gaps` `ohlcv.py:82-89`; `fill_gaps=False` → `dropna` `ohlcv.py:251`). Guard tests monkeypatch `market.load_ohlcv`/`snapshot.load_ohlcv` to return the **already-cleaned** frame (e.g. 49 rows) and assert counting uses post-clean sessions.
+2. **60-session case:** drop the `50 ≠ 200` assertion. Call each indicator separately and assert the correct 50-session rolling mean and the specific `close_200_sma` insufficient result.
+3. **Future-row test:** 199 valid rows on/before the analysis date + 1 later row. Value: the existing `test_excludes_future_rows` (`tests/test_yahoo_snapshot.py:27`) only checks a future row is not shown; it does **not** prove the **SMA session count** ignores future rows. Without exclusion, 199+1 would wrongly satisfy the 200 window. This is a new, distinct assertion — not a duplicate.
+4. **Version:** `pyproject.toml:28` is `stockstats>=0.6.5` (floor, not pinned). No baseline values exist yet. Regression plan: capture baselines **during test authoring in the CI environment** and compare on the same run; treat cross-version drift as a separate concern, not a claim already established.
+
+## Corrected test matrix (FIT-O1)
+
+Sentinel prefix: `N/A: insufficient history`. "Cleaned frame" = mocked `load_ohlcv` output. `rolling(W)` = pandas mean over the same closes/date.
+
+| ID | Input | Function called | Expected | Mistake detected |
+|---|---|---|---|---|
+| FIT-O1-SMA50-040 | 40 usable closes | `_get_stock_stats_bulk` (via `get_stock_stats_indicators_window`) | date's `close_50_sma` = insuff (needs 50); `close_200_sma` = insuff (needs 200) | Number with <50 history |
+| FIT-O1-SMA50-049 (negative) | 49 | same | `close_50_sma` = insuff (needs 50, have 49); `close_200_sma` = insuff | Off-by-one passing at 49 |
+| FIT-O1-BOUNDARY-050 | 50 | same | `close_50_sma` = `rolling(50)` (±1e-6); `close_200_sma` = insuff | `>` vs `>=` |
+| FIT-O1-SMA50-060 | 60 | `get_stock_stats(sym,"close_50_sma",date)` **and** `get_stock_stats(sym,"close_200_sma",date)` separately | `close_50_sma` = `rolling(50)` (±1e-6); `close_200_sma` = insuff (have 60) | Equality/fabrication bug |
+| FIT-O1-BOUNDARY-199 | 199 | `_get_stock_stats_bulk` | `close_200_sma` = insuff (needs 200, have 199) | Off-by-one near 200 |
+| FIT-O1-BOUNDARY-200 | 200 | same | `close_50_sma`,`close_200_sma` = `rolling(50/200)` (±1e-6) | `>` vs `>=` |
+| FIT-O1-SMA200-220 | 220 | same | both = `rolling` (±1e-6) | Truncation/rounding |
+| FIT-O1-MIDSERIES | 260 cleaned rows; query date at row 60 via `get_stock_stats` | `get_stock_stats` | at that date `close_50_sma` = `rolling(50)`; `close_200_sma` = insuff (have 60) | Frame-level instead of per-row |
+| FIT-O1-MISSING-50 | cleaned frame of **49** rows (represents 50 dated rows with 1 NaN close) | `_get_stock_stats_bulk` | `close_50_sma` = insuff (needs 50, have 49) | Counting a dropped row |
+| FIT-O1-MISSING-200 | cleaned frame of **199** rows (200 dated, 1 NaN) | `_get_stock_stats_bulk` | `close_200_sma` = insuff (needs 200, have 199); `close_50_sma` valid = `rolling(50)` | Fill treated as a session |
+| FIT-O1-RAW-50 | seeded cache, 50 dated rows, one NaN close; `load_ohlcv` | `ohlcv.load_ohlcv` (`fill_gaps=True`) | returns **49** rows; NaN-close row dropped (`ohlcv.py:82-89`) | Cleaning drops a row uncounted |
+| FIT-O1-RAW-200 | seeded cache, 200 dated rows, one NaN close; `load_ohlcv` | `ohlcv.load_ohlcv` (`fill_gaps=False`) | returns **199** rows (`ohlcv.py:251`) | Fill=False keeps a NaN row |
+| FIT-O1-FUTURE-199+1 | 199 rows ≤ analysis date + 1 later row | `_get_stock_stats_bulk` (mock `load_ohlcv` returns rows already cutoff-filtered) | `close_200_sma` = insuff (have 199) — future row must **not** count | Future row inflating the count (distinct from `test_excludes_future_rows`) |
+| FIT-O1-REGRESSION | 49 rows | `_get_stock_stats_bulk` for `rsi,macd,macds,macdh,boll,boll_ub,boll_lb,atr,vwma,close_10_ema` | equals value captured from **current code in the same CI run** (golden captured during authoring; assert unchanged) — do **not** assert "a number" | O1 altering other indicators |
+| FIT-O1-SNAPSHOT-40 | mocked `snapshot.load_ohlcv` → 40 rows | `build_verified_market_snapshot` | table `close_50_sma`/`close_200_sma` = `N/A…` (not numbers) | Snapshot still fabricates |
+| FIT-O1-SNAPSHOT-50 | mocked `snapshot.load_ohlcv` → 50 rows | `build_verified_market_snapshot` | `close_50_sma` numeric (`rolling(50)`); `close_200_sma` = `N/A…` | Boundary in snapshot |
+
+Notes: FIT-O1-MIDSERIES unit-isolates per-row logic; the public path's `<= as_of_dt` cutoff (`ohlcv.py:230`) is emulated by the mock and is **not** re-tested here — real cutoff coverage is `tests/test_yahoo_snapshot.py:27` and `tests/test_ohlcv_latest_bar.py`. No new plain future-exclusion test is proposed; FIT-O1-FUTURE-199+1 adds only the count assertion.
+
+## CI handoff changes
+
+- Add to `tests/test_sma_warmup_guard.py` (all `@pytest.mark.unit`, no network):
+  - Missing-close guard cases **FIT-O1-MISSING-50 / -200** use pre-cleaned 49/199-row frames via monkeypatched `load_ohlcv`.
+  - Raw-cleaning cases **FIT-O1-RAW-50 / -200** use the seeded-cache `_run_load` pattern and live beside `tests/test_ohlcv_*`.
+  - **FIT-O1-FUTURE-199+1** asserts the future row is not counted toward the window.
+- **FIT-O1-REGRESSION:** capture baselines from **current code in the same CI job before applying O1** (or commit golden values that CI regenerates/verifies on the same `stockstats` install). Do not treat `stockstats>=0.6.5` as pinned; note that a resolver picking a different version could shift indicator baselines — flag for CI owner as a known limitation, not resolved here.
+- Still only `tests/` is collected (`pyproject.toml:59-60`; CI `pytest -q`, `ci.yml:36`); `test/offline/` remains uncollected unless `pyproject.toml`/`ci.yml` change. Keep TZ-matrix safety (`ci.yml:19-22`): naive dates via `pd.bdate_range`.
+
+Nothing approved.
+
+---
+
+> **Human annotation — Member A:** I found test gaps that could give a false pass. I sent the agent back to make the expected results more precise.
+
+## User
+
+Thanks. The boundary cases are clearer now. I found four remaining gaps before I can approve the test plan:
+
+1. Your future-row test removes the future row in the mocked loader before the function under test sees it. That cannot detect a faulty date cutoff. Either design a test that exercises the real cutoff with controlled offline data, or remove this new O1 test if the cutoff is already covered outside O1.
+2. “Capture the old output and compare it in the same CI job” needs an actual mechanism. Please replace it with a regression check that can run on the changed code, without assuming unrecorded baseline values exist.
+3. Add the 199/200 boundary for the verified snapshot.
+4. Add one test that deliberately makes the bulk indicator calculation fail, then checks the output of `get_stock_stats_indicators_window` through its real fallback path.
+
+Please give me only the updated test cases, their exact assertions, and which fit criterion each verifies. Keep the plan small. Don't edit files or run tests; nothing is approved yet. 
+
+---
+
+## Assistant
+
+Only the updated/added cases below. Read-only; nothing approved.
+
+## Fixes applied
+
+- **Future-row test removed.** The mock strips the future row before the function runs, so it cannot detect a faulty cutoff. The real cutoff (`ohlcv.py:230`) is covered outside O1: `tests/test_yahoo_snapshot.py:27` (`test_excludes_future_rows`) and `tests/test_ohlcv_latest_bar.py`. No new O1 cutoff test.
+- **Regression check made self-contained.** Instead of "record old output," compute the expected values **from the same input frame with pandas/stockstats directly in the test**, and compare to the tool. No stored baselines, runs on changed code.
+
+## Updated / added cases
+
+| ID | Input | Call | Assertions | Fit criterion |
+|---|---|---|---|---|
+| FIT-O1-REGRESSION | 49-row cleaned frame | `_get_stock_stats_bulk(sym, ind, date)` vs direct `stockstats.wrap(frame)[ind]` computed in-test | For each `ind` in `rsi,macd,macds,macdh,boll,boll_ub,boll_lb,atr,vwma,close_10_ema`: `out[ind][date]` equals the in-test computed value (string-equal to `str(value)`, or both `"N/A"`), **using whatever that indicator yields now** | O1 does not alter other indicators' outputs |
+| FIT-O1-SNAPSHOT-199 | mocked `snapshot.load_ohlcv` → 199-row cleaned frame | `build_verified_market_snapshot` | table row `close_200_sma` value starts with `N/A`; `close_50_sma` equals the 50-row rolling mean (formatted via `_fmt`) | Snapshot boundary: 199 is insufficient for 200, valid for 50 |
+| FIT-O1-SNAPSHOT-200 | mocked `snapshot.load_ohlcv` → 200-row cleaned frame | `build_verified_market_snapshot` | `close_200_sma` (and `close_50_sma`) are numeric and equal the respective rolling means (`±1e-6` via `_fmt`) | Snapshot boundary: exactly 200 is valid |
+| FIT-O1-FALLBACK | `monkeypatch.setattr(market, "_get_stock_stats_bulk", side_effect=RuntimeError("boom"))`; `load_ohlcv` mocked to a 49-row cleaned frame | `get_stock_stats_indicators_window(sym, "close_50_sma", as_of, look_back_days)`; real fallback loop at `market.py:183-193` calls `get_stockstats_indicator`→`get_stock_stats` | Output header present; the `as_of` date line equals `"<as_of>: N/A: insufficient history (needs 50, have 49)"`; no fabricated numeric line for that date; a bulk-only fix would fail this | Fallback path is guarded too (not just bulk) |
+
+FIT-O1-REGRESSION mechanism detail: the test derives expected values inside the run, so no pre-recorded golden values are assumed. If an indicator yields `NaN` now, the in-test value is `"N/A"` and the tool must match that — the assertion is "tool == same-run reference," not "tool is numeric." This holds under `stockstats>=0.6.5` because both sides use the installed version.
+
+CI handoff delta: add these four to `tests/test_sma_warmup_guard.py` (`@pytest.mark.unit`, offline). FIT-O1-FALLBACK needs `market._get_stock_stats_bulk` patched to raise and `market.load_ohlcv` mocked; FIT-O1-REGRESSION needs no extra patching beyond the mocked `load_ohlcv`.
+
+---
+
+## User
+
+I want to make one final check of three test assertions before I review the O1 test plan for approval. Please check my concerns against the code rather than assuming I’m right.
+
+1. `_get_stock_stats_bulk()` appears to return a dictionary keyed by date. Your regression case uses `out[ind][date]`. Is that correct? Show the correct call and assertion for one non-SMA indicator, including how its `N/A` result would be handled.
+2. In the fallback case, is `monkeypatch.setattr(market, "_get_stock_stats_bulk", side_effect=RuntimeError("boom"))` valid pytest syntax? If not, show a correct minimal way to trigger the fallback. Keep the test focused on one trading date so the expected output is clear.
+3. The snapshot passes values through `_fmt()`. Does comparing the displayed result to a rolling mean with `±1e-6` work as written? Show a precise assertion using an independently calculated mean and the actual output format.
+
+Please correct me if any concern is misplaced. Return only the corrected assertions and say whether they change the agreed test cases or just their implementation details. Don’t add new cases, edit files, run tests or probes, install anything, or make Git changes. 
+
+---
+
+## Assistant
+
+All three concerns are correct. Verified against the code:
+
+1. `_get_stock_stats_bulk` returns `dict[date_str, value]` (`market.py:223-233`), not keyed by indicator — my `out[ind][date]` was wrong.
+2. `monkeypatch.setattr` does not accept `side_effect`; it sets attributes. I need a function that raises.
+3. Snapshot formats via `_fmt` (`snapshot.py:53-64`) → `price_text` (2 dp, significant-digit aware), so string output cannot be compared to a float at `±1e-6`; compare floats before formatting or parse the displayed string.
+
+## Corrected assertions
+
+**FIT-O1-REGRESSION** (call corrected: one indicator per call, dict keyed by date):
+```python
+out = market._get_stock_stats_bulk("AAPL", "rsi", date)   # dict: date_str -> str
+ref = wrap(frame.copy()); ref["Date"] = ref["Date"].dt.strftime("%Y-%m-%d")
+expected = ref.loc[ref["Date"] == date, "rsi"].iloc[0]
+expected_str = "N/A" if pd.isna(expected) else str(expected)
+assert out[date] == expected_str
+```
+Non-SMA indicators (`rsi` etc.) bypass the guard, so a real `N/A` still surfaces as `"N/A"` (`market.py:228-229`) and equality holds.
+
+**FIT-O1-FALLBACK** (valid fallback trigger; one date):
+```python
+def _boom(*a, **k):
+    raise RuntimeError("boom")
+monkeypatch.setattr(market, "_get_stock_stats_bulk", _boom)
+monkeypatch.setattr(market, "load_ohlcv", lambda s, d, fill_gaps=True: frame49)
+
+out = market.get_stock_stats_indicators_window("AAPL", "close_50_sma", date, 0)  # look_back_days=0 -> only `date`
+assert f"{date}: N/A: insufficient history (needs 50, have 49)" in out
+```
+`look_back_days=0` makes the loop (`market.py:165`) emit exactly the one date, so the expected line is unambiguous. The fallback loop (`market.py:188-193`) calls `get_stockstats_indicator`→`get_stock_stats`, which must carry the guard.
+
+**FIT-O1-SNAPSHOT-200** (compare floats before formatting, then check the display):
+```python
+frame = frame200(cleaned=True)
+monkeypatch.setattr(snapshot, "load_ohlcv", lambda s, d, fill_gaps=True: frame)
+snap = snapshot.build_verified_market_snapshot("AAPL", date)
+expected = frame["Close"].rolling(200).mean().iloc[-1]
+from tradingagents.dataflows.vendors.yahoo.common import price_text
+assert f"| close_200_sma | {price_text(expected)} |" in snap
+```
+Use the same shape for FIT-O1-SNAPSHOT-199 (`rolling(50)` for `close_50_sma`; `close_200_sma` row begins `| close_200_sma | N/A`).
+
+## Change classification
+
+- **FIT-O1-REGRESSION:** implementation detail only — call/assertion fixed (`out[ind]` → per-indicator `out`); the case and fit criterion are unchanged.
+- **FIT-O1-FALLBACK:** implementation detail only — corrected fallback trigger and single-date scoping; case/expected sentinel unchanged.
+- **FIT-O1-SNAPSHOT-199/200:** implementation detail only — assertion now compares the `price_text`-formatted value to the rolling mean instead of `±1e-6` on the displayed string; cases unchanged.
+
+No new cases were added and the agreed matrix is unchanged.
+
+---
+
+## User
+
+We’ve reviewed the O1 code paths and test plan. Please help me turn them into an O1 requirements draft for review.
+
+For this draft, use the **50-day and 200-day SMA validity guard on the Yahoo/stockstats path** as the proposed scope. Mark it as **Draft, pending my scope decision and test-plan approval**. Explain clearly that this prevents a misleading SMA number when history is insufficient, but does not fix the historical download window or recover older prices for the AAPL case in Issue #1679.
+
+Please write the Markdown draft here in the chat, with these sections:
+
+- Existing problem and source-code references
+- Proposed functional requirements and invariant
+- Quality requirements
+- Measurable fit criteria, each with a provisional requirement ID, type, and priority so they can later be transferred into the course’s YAML requirements registry
+- A compact mapping from each fit criterion to the approved-for-review test cases, including negative and regression tests
+- Inputs, outputs, and the proposed “insufficient history” text
+- Expected files and functions to change, shared-file risks, and the historical-data limitation
+- Open decisions and review status
+
+Please keep facts from the current code separate from proposed behavior. Do not say that tests passed, code was changed, or approval happened. End with a short handoff: what Member C needs to check for file/interface conflicts, and what Member F needs for CI.
+
+Output the draft in chat only. Don’t create or edit files, run tests or probes, install anything, or make Git changes. 
+
+---
+
+## Assistant
+
+# O1 Requirements Draft — 50/200-Day SMA Validity Guard (Yahoo/stockstats)
+
+> **Status: DRAFT — pending scope decision and test-plan approval.** No code changed, no tests run, no approval given.
+> **Proposed scope:** guard `close_50_sma` and `close_200_sma` output on the Yahoo/stockstats path only.
+
+---
+
+## 1. Existing problem and source-code references
+
+**Observed behavior (current code):**
+- `_get_stock_stats_bulk` (`tradingagents/dataflows/vendors/yahoo/market.py:205`) triggers stockstats, then writes a value per date; it only emits `"N/A"` when the value is `pd.isna` (`market.py:228-229`).
+- `get_stock_stats` (`market.py:273`) returns the matched row's value with no history check; the not-a-row case returns `"N/A: Not a trading day (weekend or holiday)"` (`market.py:294`).
+- `build_verified_market_snapshot` (`tradingagents/dataflows/vendors/yahoo/snapshot.py:67`) takes `iloc[-1]` of the indicator column and formats via `_fmt` (`snapshot.py:84-85`, `snapshot.py:53-64`).
+- The analyst prompt treats the snapshot as "the source of truth for any exact … indicator-value claim" (`tradingagents/agents/analysts/market_analyst.py:48`).
+
+**Reported symptom (Issue #1679):** with fewer sessions than the window, `close_50_sma` and `close_200_sma` are reported as equal (the N-session mean) instead of being unavailable. The issue attributes this to stockstats rolling windows using `min_periods=1`.
+
+**Unverified in this repo (state as assumption):** the exact stockstats `min_periods` internal. `stockstats>=0.6.5` is declared at `pyproject.toml:28` but is not vendored and was not executed here. The guard is therefore designed to count sessions itself rather than depend on stockstats returning `NaN`.
+
+---
+
+## 2. Proposed functional requirements and invariant
+
+**Invariant (proposed):** *An SMA of window W is reported for a date only when that date has at least W usable closing-price sessions on or before it; otherwise a labeled "insufficient history" value is returned instead of a number.*
+
+| ID | Proposed functional requirement |
+|---|---|
+| FR-O1-1 | `close_50_sma` is reported for a date only if ≥50 usable closes exist on/before that date; else "insufficient history". |
+| FR-O1-2 | `close_200_sma` is reported for a date only if ≥200 usable closes exist on/before that date; else "insufficient history". |
+| FR-O1-3 | The check is **per-row** (per reported date), not frame-level: a mid-series date with ≥W prior sessions reports a value even if the frame has fewer total rows after it. |
+| FR-O1-4 | The same guard applies on the normal bulk path, the per-day fallback path, and the verified snapshot. |
+| FR-O1-5 | Only `close_50_sma` and `close_200_sma` are guarded; all other indicators are unchanged. |
+| FR-O1-6 | The "insufficient history" text is distinct from the existing holiday text (`market.py:172`, `market.py:294`). |
+
+**Explicit non-goal:** this does **not** change historical data loading, does **not** re-anchor the download window, and does **not** recover older prices (e.g. the AAPL 155.11 / 138.95 values in Issue #1679).
+
+---
+
+## 3. Quality requirements
+
+- **Deterministic/offline:** all guard tests run without network (mocked `load_ohlcv`).
+- **Boundary correctness:** exact W is valid; W−1 is insufficient (no off-by-one).
+- **Consistency:** bulk path, fallback path, and snapshot agree for the same date.
+- **Non-regression:** non-SMA indicators produce the same outputs as before the change.
+- **Backward-compatible interface:** no signature changes to public functions; sentinel is a string in the existing `N/A: …` family.
+- **CI portability:** tests pass under `pytest -q -m "not integration"` on Python 3.11–3.14 and in the non-UTC TZ CI run (`ci.yml:19-22`); use naive dates via `pd.bdate_range`.
+
+---
+
+## 4. Measurable fit criteria (provisional IDs for YAML registry)
+
+Type = `unit` / `functional`; Priority = `must` / `should`.
+
+| Provisional ID | Type | Priority | Criterion |
+|---|---|---|---|
+| FIT-O1-SMA50-040 | unit | must | 40 usable closes → `close_50_sma` insufficient, `close_200_sma` insufficient |
+| FIT-O1-SMA50-049 | unit (negative) | must | 49 usable closes → `close_50_sma` insufficient (needs 50, have 49) |
+| FIT-O1-BOUNDARY-050 | unit | must | 50 closes → `close_50_sma` = rolling(50); `close_200_sma` insufficient |
+| FIT-O1-SMA50-060 | unit | must | 60 closes → `close_50_sma` = rolling(50); `close_200_sma` insufficient (have 60) |
+| FIT-O1-BOUNDARY-199 | unit | must | 199 closes → `close_200_sma` insufficient (needs 200, have 199) |
+| FIT-O1-BOUNDARY-200 | unit | must | 200 closes → both SMAs = rolling means |
+| FIT-O1-SMA200-220 | unit | must | 220 closes → both SMAs = rolling means |
+| FIT-O1-MIDSERIES | unit | must | 260-row frame, query row 60 → `close_50_sma` valid; `close_200_sma` insufficient (have 60) |
+| FIT-O1-MISSING-50 | unit (negative) | must | 50 dated rows, 1 missing close → cleaned 49 rows → `close_50_sma` insufficient |
+| FIT-O1-MISSING-200 | unit (negative) | must | 200 dated rows, 1 missing close → cleaned 199 rows → `close_200_sma` insufficient; `close_50_sma` valid |
+| FIT-O1-RAW-50 | unit | must | `load_ohlcv(fill_gaps=True)` drops NaN-close row → 49 rows |
+| FIT-O1-RAW-200 | unit | must | `load_ohlcv(fill_gaps=False)` drops NaN-close row → 199 rows |
+| FIT-O1-REGRESSION | unit (regression) | must | Non-SMA indicators equal same-run reference computed in-test (no stored baseline) |
+| FIT-O1-SNAPSHOT-40 | unit | must | snapshot 40 rows → both SMA cells show N/A |
+| FIT-O1-SNAPSHOT-50 | unit | must | snapshot 50 rows → `close_50_sma` numeric; `close_200_sma` N/A |
+| FIT-O1-SNAPSHOT-199 | unit | must | snapshot 199 rows → `close_200_sma` N/A; `close_50_sma` numeric |
+| FIT-O1-SNAPSHOT-200 | unit | must | snapshot 200 rows → both SMA cells numeric and correct |
+| FIT-O1-FALLBACK | unit | must | bulk raises → real fallback path returns insufficient sentinel for the one date |
+| FIT-O1-CONSISTENCY | unit | should | bulk, fallback, snapshot agree for the same date and input |
+
+---
+
+## 5. Fit criterion → test-case mapping
+
+| Fit criterion | Test case(s) | Notes |
+|---|---|---|
+| FIT-O1-SMA50-040 | 40-row bulk test | positive below-window |
+| FIT-O1-SMA50-049 | 49-row bulk test | **negative** off-by-one |
+| FIT-O1-BOUNDARY-050 | 50-row bulk test | boundary `>=` |
+| FIT-O1-SMA50-060 | separate `get_stock_stats` calls for 50 and 200 | no "50≠200" assertion |
+| FIT-O1-BOUNDARY-199 | 199-row bulk test | boundary near 200 |
+| FIT-O1-BOUNDARY-200 | 200-row bulk test | boundary `>=` |
+| FIT-O1-SMA200-220 | 220-row bulk test | long series |
+| FIT-O1-MIDSERIES | 260-row `get_stock_stats` at row 60 | per-row isolation |
+| FIT-O1-MISSING-50 / -200 | mocked cleaned 49/199-row frames | **negative** counting |
+| FIT-O1-RAW-50 / -200 | seeded-cache `load_ohlcv` (`test_ohlcv_latest_bar.py:98` pattern) | raw cleaning, separate from guard |
+| FIT-O1-REGRESSION | non-SMA indicators vs in-test `stockstats.wrap` reference | **regression** |
+| FIT-O1-SNAPSHOT-40/50/199/200 | snapshot with mocked `load_ohlcv` | compare `price_text(rolling_mean)` |
+| FIT-O1-FALLBACK | `_get_stock_stats_bulk` patched to raise; `load_back_days=0` | **fallback** path |
+| FIT-O1-CONSISTENCY | cross-path same-date comparison | `should` |
+
+No future-row cutoff test is added in O1; the real cutoff (`ohlcv.py:230`) is covered by `tests/test_yahoo_snapshot.py:27` and `tests/test_ohlcv_latest_bar.py`.
+
+---
+
+## 6. Inputs, outputs, and proposed text
+
+**Inputs:** a cleaned OHLCV frame (Date + Close, etc.) for a symbol and an analysis date; the indicator name.
+
+**Outputs (proposed behavior):**
+- Valid: the SMA value as today (string via `str(value)`, or `price_text` in the snapshot).
+- Insufficient: proposed text `N/A: insufficient history (needs 50 sessions, have N)` / `… (needs 200 sessions, have N)`, distinct from `N/A: Not a trading day (weekend or holiday)`.
+
+> The exact wording is a proposed choice, not current behavior; it is an open decision (see §8).
+
+---
+
+## 7. Expected files/functions, shared risks, historical limitation
+
+**Expected changes (proposed, none made):**
+- `market.py` → `_get_stock_stats_bulk` (`market.py:205`) and `get_stock_stats` (`market.py:273`): per-row session count + guard for the two SMAs.
+- `snapshot.py` → `build_verified_market_snapshot` (`snapshot.py:67`): guard latest-row SMA values; import one shared helper/window map.
+- Shared helper + `SMA_WINDOWS` constant (in `market.py`, imported by `snapshot.py`).
+
+**Not changed:** `ohlcv.py`, `router.py`, `tools.py`, `alpha_vantage/indicator.py`.
+
+**Shared-file risks:**
+- `market.py` serves all Yahoo-path indicators → guard must key only on the two SMA names (covered by FIT-O1-REGRESSION).
+- `snapshot.py` feeds the analyst's "source of truth" → SMA cells change for short-history tickers (expected, reviewable report diffs).
+- Sentinel must remain in the `N/A: …` family to avoid being read as holiday or blank.
+
+**Historical-data limitation (explicit):** `load_ohlcv` downloads 5 years up to today and filters to `as_of_date` (`ohlcv.py:182-190`, `ohlcv.py:230`). A run dated ~4–5 years back still has few in-range rows; O1 will report "insufficient history" where the correct value exists (AAPL 155.11 / 138.95). Root cause and older-price recovery require a separate data-loading change (not in this O1 scope).
+
+---
+
+## 8. Open decisions and review status
+
+1. **Scope:** O1 guard only (recommended) vs. also changing the download window (separate ticket).
+2. **Sentinel wording/format** (affects report text) — approve exact string.
+3. **Regression strategy** — confirm in-test reference comparison is acceptable (no stored baselines).
+4. **Test location** — `tests/` for CI now; whether to wire `test/offline/` (shared `pyproject.toml`/CI change) is separate.
+5. **Accept "honest but incomplete"** outputs for far-back runs until the download-window fix lands.
+6. **ID for the download-window follow-up** — not "O2" (already assigned).
+
+**Review status:** Draft only. Not approved; scope decision and test-plan approval pending.
+
+---
+
+## Handoff
+
+**Member C (file/interface conflict check):**
+- Confirm no other in-flight work edits `market.py` (`_get_stock_stats_bulk`, `get_stock_stats`), `snapshot.py` (`build_verified_market_snapshot`), or adds a same-named helper/constant.
+- Confirm new `SMA_WINDOWS`/helper name doesn't collide and check callers of `get_indicators`/`get_verified_market_snapshot` (`agents/tools.py`) are unaffected.
+- Confirm existing `tests/test_ohlcv_*` and `tests/test_yahoo_snapshot.py` are not being modified by another branch (shared test surface).
+
+**Member F (CI):**
+- New test file `tests/test_sma_warmup_guard.py`, all `@pytest.mark.unit`, offline (mock `market.load_ohlcv` / `snapshot.load_ohlcv`).
+- Must pass `pytest -q -m "not integration"` (`pyproject.toml:59-60`; `ci.yml:36`) on Python 3.11–3.14 incl. non-UTC TZ run; use `pd.bdate_range` naive dates.
+- FIT-O1-FALLBACK needs `_get_stock_stats_bulk` patched to raise and `look_back_days=0`.
+- FIT-O1-REGRESSION computes references in-test via `stockstats.wrap` under the CI-installed version (declared `>=0.6.5`, not pinned) — note cross-version drift as a known limitation.
+- Do not place tests in `test/offline/`; it is uncollected unless `pyproject.toml`/`ci.yml` change (separate decision).
+
+---
+
+## User
+
+Please revise the O1 Markdown draft for the course requirements. Keep this as a draft in the chat; nothing is approved yet.
+
+I found four points to fix:
+
+1. Separate **requirement IDs** from **test-case IDs**. For each requirement, give the statement, the course-appropriate type (such as functional behavior, invariant, or quality attribute), MoSCoW priority with a short tradeoff, and a measurable fit criterion. For quality requirements, include a metric, threshold, and verification method. Then map the existing test IDs to those requirements. You do not need to invent more test cases.
+2. The project brief lists `test/offline/` for deterministic tests, but current pytest and CI collect `tests/`. Describe this as a decision for the CI owner to resolve. Do not simply rule out the course’s directory.
+3. Correct the issue description: the reported equality of the 50- and 200-day SMA is the specific very-short-history case, not every case below 200 sessions. Rewrite the per-date requirement plainly: count usable closes up to each reported date.
+4. Make the fallback coverage and priority consistent with the requirement that both SMAs are guarded on every output path. Do not claim that an existing test covers future-row exclusion unless its assertions actually show that.
+
+Keep the guard-only scope as a **proposal**, and state its historical-data limitation. Return the revised Markdown in chat only. Don’t edit files, run tests or probes, install anything, or make Git changes. 
+
+---
+
+## Assistant
+
+# O1 Requirements Draft — 50/200-Day SMA Validity Guard (Yahoo/stockstats)
+
+> **Status: DRAFT — proposal only.** No code changed, no tests run, no approval given. Scope decision and test-plan approval pending.
+> **Proposed scope:** guard `close_50_sma` and `close_200_sma` output on the Yahoo/stockstats path.
+
+---
+
+## 1. Existing problem and source-code references
+
+**Observed behavior (current code):**
+- `_get_stock_stats_bulk` (`tradingagents/dataflows/vendors/yahoo/market.py:205`) triggers stockstats, then writes a value per date; it emits `"N/A"` only when the value is `pd.isna` (`market.py:228-229`).
+- `get_stock_stats` (`market.py:273`) returns the matched row's value with no history check; a date with no row returns `"N/A: Not a trading day (weekend or holiday)"` (`market.py:294`).
+- `build_verified_market_snapshot` (`tradingagents/dataflows/vendors/yahoo/snapshot.py:67`) takes `iloc[-1]` of the indicator column and formats via `_fmt` (`snapshot.py:84-85`, `snapshot.py:53-64`).
+- The analyst prompt treats the snapshot as "the source of truth for any exact … indicator-value claim" (`tradingagents/agents/analysts/market_analyst.py:48`).
+
+**Reported symptom (Issue #1679):** in a very-short-history case (fewer sessions than the window), `close_50_sma` and `close_200_sma` are reported as **equal** (the N-session mean) instead of being unavailable. The issue attributes this to stockstats rolling windows using `min_periods=1`. This equality is a specific symptom of the very-short-history case; it is **not** claimed to occur for every date with fewer than 200 sessions (e.g. with 60 sessions the 50- and 200-SMA need not be equal).
+
+**Unverified in this repo (assumption):** the exact stockstats `min_periods` internal. `stockstats>=0.6.5` is declared (`pyproject.toml:28`) but not vendored and not executed here. The guard is designed to count sessions itself rather than depend on stockstats returning `NaN`.
+
+---
+
+## 2. Requirements (separate from test IDs)
+
+Type = course category; Priority = MoSCoW with tradeoff.
+
+| Requirement ID | Statement | Type | Priority (tradeoff) | Measurable fit criterion |
+|---|---|---|---|---|
+| REQ-O1-1 | For each reported date, `close_50_sma` is a value only if ≥50 usable closes exist on/before that date; else the "insufficient history" value is returned. | Functional behavior | **Must** — omitting it keeps the misleading number | 49 closes → insufficient; 50 closes → rolling(50) within 1e-6 |
+| REQ-O1-2 | For each reported date, `close_200_sma` is a value only if ≥200 usable closes exist on/before that date; else insufficient. | Functional behavior | **Must** — same defect as REQ-O1-1 | 199 → insufficient; 200 → rolling(200) within 1e-6 |
+| REQ-O1-3 | History is counted **per reported date** (usable closes up to and including that date), not once for the whole frame. | Invariant | **Must** — a frame-level check would blank valid mid-series dates | 260-row frame at row 60 → 50-SMA valid, 200-SMA insufficient (have 60) |
+| REQ-O1-4 | Both SMAs are guarded on **every** output path: bulk (`_get_stock_stats_bulk`), per-day fallback (`get_stock_stats`), and verified snapshot. | Invariant | **Must** — an unguarded path reintroduces the defect | Bulk raises → fallback returns the sentinel for the same date; snapshot shows N/A at 199 |
+| REQ-O1-5 | Only `close_50_sma` and `close_200_sma` are affected; other indicators keep their current output. | Invariant (non-regression) | **Must** — guard must not corrupt other series | Non-SMA indicator output equals same-run in-test reference |
+| REQ-O1-6 | The "insufficient history" text is distinct from the holiday text (`market.py:172`, `market.py:294`). | Quality attribute (usability) | **Should** — a merged label is readable but ambiguous; slight cost to keep separate strings | Sentinel string != holiday string for the same date |
+| REQ-O1-7 | Tests are deterministic and offline (no network). | Quality attribute (testability/determinism) | **Must** — network dependencies would make CI flaky | 100% of O1 unit tests run with `load_ohlcv` mocked; metric: 0 outbound calls; verification: run `pytest -m "not integration"` in CI |
+| REQ-O1-8 | Change introduces no public API/signature change. | Quality attribute (compatibility) | **Should** — a signature change would ripple to callers; cost is constraining the implementation | No public function signatures changed (review diff); verification: code review + import smoke (`ci.yml`) |
+| REQ-O1-9 | Tests pass on Python 3.11–3.14 and the non-UTC TZ job. | Quality attribute (portability) | **Should** — TZ-portable tests cost slightly more care (naive dates) | Metric: pass rate 100%; threshold: all matrix cells green; verification: CI matrix (`ci.yml:19-22`) |
+
+**Non-goal:** no historical window change; no recovery of older prices (e.g. AAPL 155.11 / 138.95).
+
+---
+
+## 3. Fit-criterion → test mapping (existing test IDs only)
+
+| Requirement | Test case IDs | Kind |
+|---|---|---|
+| REQ-O1-1 | FIT-O1-SMA50-040, FIT-O1-SMA50-049, FIT-O1-BOUNDARY-050, FIT-O1-SMA50-060 | positive + **negative** + boundary |
+| REQ-O1-2 | FIT-O1-BOUNDARY-199, FIT-O1-BOUNDARY-200, FIT-O1-SMA200-220, FIT-O1-SMA50-060 | boundary + long series |
+| REQ-O1-3 | FIT-O1-MIDSERIES | per-row invariant |
+| REQ-O1-4 | FIT-O1-FALLBACK, FIT-O1-SNAPSHOT-40/50/199/200, FIT-O1-CONSISTENCY | every-path coverage |
+| REQ-O1-5 | FIT-O1-REGRESSION | **regression** |
+| REQ-O1-6 | FIT-O1-CONSISTENCY (sentinel vs holiday text) | usability check |
+| REQ-O1-7 | all O1 tests (mock `load_ohlcv`), FIT-O1-RAW-50/RAW-200 run offline via seeded cache | determinism |
+| REQ-O1-8 | code review / import smoke (no new test ID) | compatibility |
+| REQ-O1-9 | CI matrix run (no new test ID) | portability |
+
+Missing-close cases: FIT-O1-MISSING-50 / MISSING-200 support REQ-O1-1/-2 counting after cleaning; FIT-O1-RAW-50 / RAW-200 verify `load_ohlcv` cleaning separately.
+
+---
+
+## 4. Inputs, outputs, proposed text
+
+**Inputs:** cleaned OHLCV frame (Date + Close, etc.), symbol, analysis date, indicator name.
+
+**Outputs (proposed behavior):**
+- Valid: SMA value as today (`str(value)`; `price_text` in snapshot).
+- Insufficient: proposed `N/A: insufficient history (needs 50 sessions, have N)` / `… (needs 200 sessions, have N)`, distinct from `N/A: Not a trading day (weekend or holiday)`.
+
+> Text wording is a proposed choice, not current behavior — open decision (§7).
+
+---
+
+## 5. Expected files/functions, shared risks, historical limitation
+
+**Proposed changes (none made):**
+- `market.py` → `_get_stock_stats_bulk` (`market.py:205`), `get_stock_stats` (`market.py:273`): per-date usable-close count + guard for the two SMAs.
+- `snapshot.py` → `build_verified_market_snapshot` (`snapshot.py:67`): guard latest-row SMA values; import one shared helper/window map.
+- Shared helper + `SMA_WINDOWS` constant (in `market.py`, imported by `snapshot.py`).
+
+**Not changed:** `ohlcv.py`, `router.py`, `tools.py`, `alpha_vantage/indicator.py`.
+
+**Shared-file risks:**
+- `market.py` serves all Yahoo-path indicators → key the guard only on the two SMA names (REQ-O1-5).
+- `snapshot.py` feeds the analyst's "source of truth" → SMA cells change for short-history tickers (expected report diffs).
+- Sentinel must stay in the `N/A: …` family to avoid reading as holiday or blank (REQ-O1-6).
+
+**Historical-data limitation:** `load_ohlcv` downloads 5 years up to today and filters to `as_of_date` (`ohlcv.py:182-190`, `ohlcv.py:230`). A run dated ~4–5 years back still has few in-range rows; O1 will report "insufficient history" where the correct value exists. Root cause and older-price recovery require a separate data-loading change (out of O1 scope).
+
+---
+
+## 6. Future-row coverage
+
+The existing snapshot test `tests/test_yahoo_snapshot.py:27` (`test_excludes_future_rows`) asserts a future row's **price** (`"999.00"`) is absent from the snapshot text. That is a display-level check; it does **not** assert that an SMA's **session count** excludes future rows. No O1 test currently proves the counting cutoff. O1 therefore does **not** claim future-row exclusion is covered for SMA counting; if such coverage is required, it is a separate test decision (not added here).
+
+---
+
+## 7. Open decisions and review status
+
+1. **Scope:** guard-only (proposal) vs. also changing the download window (separate ticket).
+2. **Sentinel wording/format** (report-text impact) — approve exact string.
+3. **Regression strategy:** in-test reference comparison (no stored baselines) — confirm acceptable.
+4. **Test location / CI collection:** the project brief (`docs/PROJECT_WORKSPACE.md:13`) designates `test/offline/` for deterministic tests, but current pytest collects only `tests/` (`pyproject.toml:59`) and CI runs `pytest -q` (`ci.yml:36`). **This is a decision for the CI owner to resolve** — options include adding `test/offline` to `testpaths`/CI, or placing O1 tests in `tests/`. Not decided here; it is a shared-config change.
+5. **Accept "honest but incomplete"** outputs for far-back runs until the download-window fix lands.
+6. **ID for the download-window follow-up** — not "O2" (already assigned).
+
+**Review status:** Draft only. Not approved; scope decision and test-plan approval pending.
+
+---
+
+## Handoff
+
+**Member C (file/interface conflict check):**
+- Confirm no in-flight work edits `market.py` (`_get_stock_stats_bulk`, `get_stock_stats`), `snapshot.py` (`build_verified_market_snapshot`), or adds a same-named helper/constant.
+- Confirm `SMA_WINDOWS`/helper name does not collide; check callers `get_indicators`/`get_verified_market_snapshot` (`agents/tools.py`) unaffected.
+- Confirm `tests/test_ohlcv_*` and `tests/test_yahoo_snapshot.py` are not modified by another branch (shared test surface).
+
+**Member F (CI):**
+- Resolve the `test/offline/` vs `tests/` collection decision (item 4): if `test/offline/` is used, add it to `pyproject.toml` `testpaths` and CI; shared-config change to coordinate.
+- New O1 tests are `@pytest.mark.unit`, offline (mock `market.load_ohlcv` / `snapshot.load_ohlcv`); raw-cleaning cases use the seeded-cache pattern (`tests/test_ohlcv_latest_bar.py:98`).
+- Must pass `pytest -q -m "not integration"` (`pyproject.toml:59-60`; `ci.yml:36`) on Python 3.11–3.14 incl. non-UTC TZ run; use `pd.bdate_range` naive dates.
+- FIT-O1-FALLBACK needs `_get_stock_stats_bulk` patched to raise and `look_back_days=0`.
+- FIT-O1-REGRESSION computes references in-test via `stockstats.wrap` under the CI-installed version (declared `>=0.6.5`, not pinned); flag cross-version drift as a known limitation.
+
+---
+
+## User
+
+ls -lh O1-OpenCode-Session-01.md
+
+---
+
+## Assistant
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+That file doesn't exist in the current directory. The O1 draft was only produced in chat — no file was created.
+
+---
+
+## User
+
+ls  O1-OpenCode-Session-01.md
+
+---
+
+## Assistant
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+No such file — it was never created (draft was chat-only).
+
+---
+
+## User
+
+I've updated my O1 requirements and test plan after discussing them with my team.
+
+Please read these two revised documents first:
+- O1-SMA-Guard-Requirements-Draft.md
+- O1-SMA-Guard-Test-Plan-Draft.md
+
+We already looked at the original SMA issue earlier in this session, so please use your previous code analysis as a reference.
+
+The main changes are more detailed boundary tests, checking valid closing prices for each trading date, and making sure the bulk calculation, fallback path and verified snapshot all handle insufficient history correctly.
+
+Can you help me check:
+
+1. Are these updated requirements consistent with the actual code?
+2. Can we implement them without changing unrelated indicators?
+3. Are all the proposed test cases practical and executable?
+4. Is there anything important we missed or need to change before implementation?
+
+For now, please only review the updated documents and the existing code. Don't modify files or implement anything yet.
+
+We still need to approve the final requirements and test plan before starting development. 
+
+---
+
+## Assistant
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+**Tool: read**
+
+**Tool: read**
+
+---
+
+## Assistant
+
+Let me re-verify a few specifics the docs now assert: `stockstats` behavior on 40 rows, the missing-close drop path, date-absent rendering, and the snapshot `_fmt`.
+
+**Tool: bash**
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+Let me check `test_older_nan_close_row_is_still_dropped` — it may already cover T-O1-09's cleaning half.
+
+**Tool: read**
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+I've reviewed both revised documents against the current code (reusing my earlier analysis). Summary below — read-only, nothing changed.
+
+## Overall verdict
+
+The documents are **largely consistent** with the code and implementable as a guard-only change. A few assertions need tightening before approval, and two are presently written so they could pass for the wrong reason.
+
+---
+
+## 1. Consistency with the actual code
+
+**Correct and verified:**
+- Problem statement matches `_get_stock_stats_bulk` (`market.py:205`, `"N/A"` only on `pd.isna` at `228-229`), `get_stock_stats` (`market.py:273`, value at `290-292`), and `build_verified_market_snapshot` (`snapshot.py:67`, `iloc[-1]` at `84-85`, `_fmt` at `53-64`). ✔
+- "Current loader removes rows without a closing price and excludes rows after the analysis date" — accurate: `_fill_price_gaps` does `dropna(subset=["Close"])` (`ohlcv.py:87`), `fill_gaps=False` path does too (`ohlcv.py:251`), and the cutoff is `ohlcv.py:230`. ✔
+- "A missing close is not counted" (§2 input contract) — correct for both fill modes: the NaN-close **row is dropped**, not filled (only surviving whole-row gaps are ffill/bfill, `ohlcv.py:88`). ✔
+- "A returned insufficient-history string is a successful router result and does not trigger the next configured vendor" (§3) — correct: `route_to_vendor` returns any non-exception result immediately (`router.py:235-236`); only typed errors fall through. This is a real and important consequence. ✔
+
+**Needs correction / clarification:**
+- **REQ-O1-04 vs. Alpha Vantage.** §1 correctly says AV is out of scope, and §3 flags "the configured indicator vendor may differ from the Yahoo-only verified snapshot." Be explicit: `get_indicators` routes to `alpha_vantage` first in the default chain (`router.py:104-106`; AV is listed before yfinance). If AV succeeds it returns first and **O1's Yahoo guard never runs**. So "every output path" is only true for the Yahoo path. The requirement text "on the bulk indicator path, the per-day fallback, and the verified snapshot" is fine, but add: *when the Yahoo vendor is the one serving the indicator.* Otherwise a reviewer could read REQ-O1-04 as a cross-vendor guarantee it cannot make. (Note: AV's pre-warm-up behavior is server-side and unverified here — the docs already say so correctly.)
+- **"Zero usable closes retain the existing no-market-data behavior" (REQ-O1-01/02), and T-O1-10.** This is accurate but only via `load_ohlcv`: with no closes it raises `NoMarketDataError` (`ohlcv.py:238-241`), which the router turns into `NO_DATA_AVAILABLE` (`router.py:185-197`). The guard test must therefore expect the **loader to raise**, not the guard to emit text. T-O1-10 should exercise the real `load_ohlcv` (seeded cache with no valid close) or assert the raised error — if it only mocks a cleaned frame it can't trigger that path.
+- **Date-absent wording (input contract).** Correct: an absent date yields `"N/A: Not a trading day (weekend or holiday)"` (`market.py:172`) and the doc honestly notes this text doesn't prove holiday vs. missing-data. Good as written.
+
+---
+
+## 2. Can it be implemented without changing unrelated indicators?
+
+**Yes, with one caveat.** `market.py` is shared by every Yahoo indicator (RSI/MACD/Boll/ATR/VWMA/EMA all flow through the same `_get_stock_stats_bulk` / `get_stock_stats`). A guard keyed strictly on `close_50_sma` / `close_200_sma` names leaves others untouched — REQ-O1-05's "equals same-run stockstats reference" is the right check and avoids assuming any numeric result for short history. Two caveats:
+- The counting logic must not alter the returned value type/format for other indicators (keep the existing `str(value)` / `"N/A"` branch).
+- T-O1-07 says "forced per-day fallback, and the verified snapshot" for non-SMA — the snapshot only computes a fixed indicator set (`snapshot.py:24-28`), so testing *arbitrary* non-SMA names there isn't possible; restrict that sub-check to indicators in `DEFAULT_SNAPSHOT_INDICATORS`, or drop the snapshot clause for non-SMA.
+
+---
+
+## 3. Are the test cases practical and executable?
+
+Mostly yes. Issues that could make a test pass for the wrong reason or fail wrongly:
+
+- **T-O1-04 (260-row, inspect `iloc[59]`).** Checking the *60th row* by position is reasonable because `_get_stock_stats_bulk` iterates rows in frame order (`market.py:224`). But it depends on the frame being date-sorted and unique — the doc already flags this as an owner/C confirmation (input contract). Also note the returned map is keyed by **date string**, so index `iloc[59]` must be the frame's 60th date, and the assertion should look up that **date key**, not assume insertion order beyond the same frame. Acceptable if the test derives the date from the frame rather than hard-coding a calendar date.
+- **T-O1-06 (fallback).** Correct trigger: patch `market._get_stock_stats_bulk` to raise a plain `RuntimeError` — but it must **not** be a `VendorError`, or `market.py:181-182` re-raises and skips the fallback. The plan says `RuntimeError`, which is right. Keep `look_back_days=0` (single date) as stated. Note the fallback loop (`market.py:188-193`) renders every date in the window, so a non-zero look-back would add "not a trading day" lines — the `=0` scoping is necessary, good.
+- **T-O1-09 (missing close via real loader).** Good in principle, but the cleaning half is **already covered** by `tests/test_ohlcv_latest_bar.py:154` (`test_older_nan_close_row_is_still_dropped`) and `:88` (`test_fill_price_gaps_drops_nan_close_rows`). The plan already allows "existing loader-cleaning tests may be referenced instead of duplicated" — prefer that; the O1-unique value is only the **connection** from a cleaned 49/199-row frame to the guard, which the mocked-loader cases (T-O1-01/-03) already prove. So T-O1-09 is largely redundant; keep only if you want an end-to-end anchor.
+- **T-O1-05 (snapshot).** Comparing displayed text to `price_text(mean)` is correct because `_fmt` → `price_text` (2 dp, significant-digit aware; `snapshot.py:56-63`, `common.price_text`). Ensure the assertion targets the specific `| close_50_sma | … |` row, not a substring elsewhere.
+- **T-O1-08 (distinct messages).** Practical: build one window with a real short-history date and a genuine non-row date. Note the holiday string is `market.py:172` and per-day `market.py:294`; both must differ from the sentinel. Fine.
+- **Missing tolerance approval.** §1 says "a tolerance approved with the fit criteria" but no number is fixed. The fit criteria say "within an approved tolerance." **Pin it (e.g. 1e-6 on parsed floats before formatting)** or the test is underspecified. Rows like T-O1-02/-03 cannot be objectively judged without it.
+- **A 199/200 snapshot boundary exists in T-O1-05** — good; earlier drafts lacked it.
+
+---
+
+## 4. Anything missed / to change before implementation
+
+1. **Fix the tolerance** to a concrete number in both docs (recommend parse-then-compare floats at 1e-6, and for display compare to `price_text(mean)`).
+2. **Add "when Yahoo serves the indicator"** to REQ-O1-04 (AV-first routing, above) so the "all paths" claim is scoped.
+3. **T-O1-10** must exercise the real loader-raise path, not a mocked cleaned frame.
+4. **Confirm sort/uniqueness** of the cleaned frame is guaranteed (the doc defers to owner/C — that's the right call; just make it a blocking pre-implementation decision, because T-O1-03/-04 depend on it).
+5. **Decide T-O1-09** (reference existing cleaning tests vs. keep). Low risk either way.
+6. **Restrict T-O1-07's snapshot clause** to indicators in `DEFAULT_SNAPSHOT_INDICATORS`.
+7. **Future-row**: the docs handle this correctly (they do **not** claim coverage; `test_excludes_future_rows` checks a price, not SMA counting). No change needed — just keep that wording.
+8. **The "sole sentinel = router success" consequence** (§3) is important: it means a short-history SMA will **not** fall back to another vendor. That's acceptable for guard-only, but state it as intended behavior so nobody assumes cross-vendor completion.
+
+**Historical-data limitation** is stated correctly and prominently (§1 scope limit); the AAPL old-date recovery is explicitly out of scope. Good.
+
+Nothing above requires code changes to assess — all checks are consistency/design review. Awaiting your approval decision; no files changed, no tests run.
+
+---
+
+## User
+
+Thanks for the read-only review. Please recheck two claims before we finalize the documents:
+
+1. `default_config.py` currently sets the technical-indicators vendor to `yfinance`. Correct your statement that the normal default chain uses Alpha Vantage first. Explain separately what happens if the user explicitly selects another vendor or `default`.
+2. For T-O1-10, distinguish a non-empty input whose `Close` values are all missing from an input that becomes empty after the analysis-date cutoff. Specify one exact offline fixture and the existing behavior it should verify; do not assume every zero-row route raises the same error.
+
+Then give me a short table of exact proposed wording changes for the O1 requirements draft and test plan. Include a justified numeric comparison tolerance, the date-key assertion in T-O1-04, and non-SMA snapshot indicators supported by `DEFAULT_SNAPSHOT_INDICATORS`. Separate changes needed before approval from optional test improvements.
+
+Keep this read-only. Do not modify files, implement code, run tests, or mark anything approved. 
+
+---
+
+## Assistant
+
+**Tool: bash**
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+Confirmed. Let me verify `get_vendor` and the `default` sentinel behavior.
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+Verified. Here are the two rechecks and the wording table.
+
+## 1. Default technical-indicators vendor — my earlier statement was wrong
+
+- `default_config.py:160` sets `"technical_indicators": "yfinance"`. So the **normal default chain is yfinance only**, not Alpha Vantage first. My "AV listed before yfinance → AV serves first" claim was incorrect for the default config. Correct statement: default serves the Yahoo/stockstats path, so the O1 guard is active in the default configuration.
+- **Explicit `alpha_vantage`:** `get_vendor` returns it (`router.py:160-174`), `vendor_chain = ["alpha_vantage"]` (`router.py:216-225`), only AV runs (`router.py:104-106`); O1's Yahoo guard does **not** apply. AV's warm-up behavior is server-side and unverified here.
+- **Explicit `yfinance,alpha_vantage`:** chain is `[yfinance, alpha_vantage]`; yfinance runs first and, if it returns a value (including the new sentinel string), the chain stops (`router.py:235-237`). The sentinel is a successful result, not a `NoMarketDataError`, so it does **not** fall through to AV.
+- **`default` sentinel (no explicit config set):** `get_vendor` falls back to the string `"default"` (`router.py:174`); `route_to_vendor` treats `"default"` as "use all available vendors" (`router.py:216,225`), with `get_indicators` order `alpha_vantage, yfinance` (`router.py:104-106`). **Only in this "default" case** does AV run before yfinance — not in the shipped config, which sets `yfinance` explicitly.
+
+So the doc's REQ-O1-04 should be scoped to "when the yfinance vendor serves the indicator," and the default config does serve it.
+
+## 2. T-O1-10 — two distinct zero-row routes
+
+They are **not** the same error path:
+- **Non-empty input, all `Close` missing:** `load_ohlcv` reaches the all-NaN check (`ohlcv.py:236-241`) and raises `NoMarketDataError(symbol, canonical, "no bar in range has a closing price")`.
+- **Input becomes empty after the analysis-date cutoff:** rows exist but all are `> as_of_dt`; after `data = data[data["Date"] <= as_of_dt]` (`ohlcv.py:230`) the frame is empty, the `.iloc[-1]` check is skipped (`ohlcv.py:236` guards `not data.empty`), and the empty frame flows on. It is **not** guaranteed to raise the same `NoMarketDataError`; behavior depends on downstream (`_fill_price_gaps`/stockstats on empty). Do not assume equivalence.
+
+**Proposed exact offline fixture (non-empty, all-missing-close):** seeded cache CSV with 50 dated rows where **every** `Close` is `""`, using the `tests/test_ohlcv_latest_bar.py:98` `_run_load` pattern (mocked `get_config` → tmp cache, frozen `Timestamp.today`, `Ticker.history` raising "should read seeded cache"). Expected: `pytest.raises(NoMarketDataError)` with detail `"no bar in range has a closing price"`. This verifies **existing** `ohlcv.py:238-241` behavior and that O1 introduces no `have 0` sentinel.
+- For the cutoff-empty route, either **omit** it from T-O1-10 (out of O1 scope) or add a **separate** explicit case asserting whatever current behavior is (verify before writing the assertion — do not assume it raises).
+
+---
+
+## Wording changes table
+
+### Required before approval
+
+| Doc | Location | Change | Justification |
+|---|---|---|---|
+| Requirements | REQ-O1-04 statement | Add: "…when the **yfinance** vendor serves the indicator (the shipped default, `default_config.py:160`); if another vendor such as Alpha Vantage is configured, that vendor's own warm-up behavior applies and is outside O1." | Corrects vendor-routing; default is yfinance, not AV-first. |
+| Requirements | §2 input/output contract, tolerance | Fix numeric tolerance to **1e-6** on parsed floats compared **before** formatting; for snapshot display compare to `price_text(mean)` exactly. | "approved tolerance" is currently unfixed; 1e-6 gives exact-equality margin for float64 rolling means while tolerating last-bit rounding. |
+| Test plan | T-O1-04 | Assert by **date key**, not positional index of the returned dict: derive `target_date = frame["Date"].iloc[59]` (as `"%Y-%m-%d"`), then `assert bulk50[target_date]` is the valid mean and `bulk200[target_date]` is the insufficient text with `have 60`. | The bulk map is keyed by date string (`market.py:224-231`); positional lookup is incidental and depends on insertion order. Date-key is the contract. |
+| Test plan | T-O1-10 | Split into (a) non-empty, **all `Close` missing** → `pytest.raises(NoMarketDataError)` with `"no bar in range has a closing price"` (`ohlcv.py:238-241`), via seeded cache; (b) cutoff-empty **only if** current behavior is first observed and asserted. Do not claim "(a) and (b) raise the same error." | The two routes differ (`ohlcv.py:230` vs `:236-241`); assuming identical errors is unsupported. |
+| Requirements | §3 vendor fallback note | Keep, but rewrite to match §1: default is `yfinance`; the sentinel is a successful router result (`router.py:235-237`) and does not fall through; only the explicit `default` **sentinel** selects all vendors in `alpha_vantage,yfinance` order (`router.py:216,225`). | Removes the incorrect "AV first" implication. |
+
+### Optional test improvements
+
+| Doc | Location | Change | Justification |
+|---|---|---|---|
+| Test plan | T-O1-07 | Restrict the snapshot sub-check to indicators in `DEFAULT_SNAPSHOT_INDICATORS` (`snapshot.py:24-28`): `close_10_ema, rsi, boll, boll_ub, boll_lb, macd, macds, macdh, atr`. Exclude `close_50_sma`/`close_200_sma` (the guarded ones). | The snapshot only computes its fixed set; arbitrary non-SMA names can't be tested there. |
+| Test plan | T-O1-09 | Reference existing cleaning tests (`test_ohlcv_latest_bar.py:88` `test_fill_price_gaps_drops_nan_close_rows`, `:154` `test_older_nan_close_row_is_still_dropped`) instead of duplicating; keep only the "cleaned 49/199-row → guard" link. | Cleaning is already covered; avoid redundancy. |
+| Test plan | T-O1-05 | Assert on the specific `| close_50_sma | … |` row by label, not substring-in-text. | Prevents a passing match from an unrelated line. |
+| Test plan | §1 | State the 1e-6 tolerance explicitly (mirrors Requirements). | Keeps both docs aligned. |
+
+Nothing above is approved; no files modified, nothing run.
+
+---
+
+## User
+
+Please make one final documentation-only revision of:
+
+- `O1-SMA-Guard-Requirements-Draft.md`
+- `O1-SMA-Guard-Test-Plan-Draft.md`
+
+Use your latest source review and make these specific corrections:
+
+1. Scope REQ-O1-04 to the Yahoo/yfinance indicator path. The shipped technical-indicators default is `yfinance`; Alpha Vantage remains outside O1.
+2. In T-O1-04, derive the 60th session's date from the frame and assert both bulk result maps using that date key.
+3. For T-O1-07, use a non-SMA indicator in the default snapshot list. Note that the underlying snapshot function can also accept a custom indicator list.
+4. Rewrite T-O1-10 with one precise offline fixture: a non-empty seeded price frame whose `Close` values are all missing. Exercise an O1 report or snapshot entry point through the real loader, and state whether the direct entry point raises `NoMarketDataError` or a routed tool returns `NO_DATA_AVAILABLE`. Assert that it never produces a numeric SMA or `have 0` insufficient-history text. Do not combine this with the separate empty-after-date-cutoff case.
+5. Propose `abs(actual - expected) <= 1e-6` for numeric SMA comparisons before display formatting; compare snapshot display text to the existing `price_text(mean)` rule. Keep the exact insufficient-history text and tolerance marked as proposed until I approve them.
+
+Keep the chronological, unique-date input assumption visibly pending confirmation with C. Preserve the guard-only historical-data limitation. Do not expand O1 to other indicators or data retrieval.
+
+Edit only these two Markdown files. Do not change source code, create tests, run tests, commit, or push. Keep both documents marked Draft and do not record approval. When finished, briefly list what you changed and what decisions remain for me, C, and F. 
+
+---
+
+## Assistant
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+Let me check how the snapshot entry point propagates the loader's `NoMarketDataError`, so T-O1-10 can state the direct-entry behavior precisely.
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+All verified. Applying the documentation-only edits.
+
+**Tool: edit**
+
+---
+
+## Assistant
+
+**Tool: edit**
+
+---
+
+## Assistant
+
+**Tool: edit**
+
+---
+
+## Assistant
+
+**Tool: edit**
+
+---
+
+## Assistant
+
+**Tool: edit**
+
+---
+
+## Assistant
+
+Now the test plan edits.
+
+**Tool: edit**
+
+---
+
+## Assistant
+
+**Tool: edit**
+
+---
+
+## Assistant
+
+**Tool: edit**
+
+---
+
+## Assistant
+
+**Tool: edit**
+
+---
+
+## Assistant
+
+**Tool: edit**
+
+---
+
+## Assistant
+
+**Tool: edit**
+
+---
+
+## Assistant
+
+**Tool: edit**
+
+---
+
+## Assistant
+
+Let me verify the final state reads cleanly around the edited sections.
+
+**Tool: bash**
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+One typo in my requirements edit ("which. for"). Fixing it.
+
+**Tool: edit**
+
+---
+
+## Assistant
+
+Both documents updated (documentation only; nothing run, nothing approved).
+
+## What I changed
+
+**`O1-SMA-Guard-Requirements-Draft.md`**
+- **REQ-O1-04** scoped to the yfinance/stockstats path when that vendor serves the indicator (shipped default `default_config.py:160`); Alpha Vantage/other vendors explicitly outside O1.
+- Added **proposed** numeric tolerance `abs(actual - expected) <= 1e-6` (pre-format) and snapshot display compared to `price_text(mean)`; both marked pending approval. Named text also marked proposed-pending-approval.
+- Input contract: chronological/unique-date guarantee now **pending confirmation with C**, tied to per-date counting and by-date map lookup.
+- §3 vendor note corrected: default is `yfinance`; only the explicit `"default"` sentinel selects all vendors (AV before yfinance); sentinel is a successful result and does not fall through (`router.py:235-237`).
+- Review-decisions table gained rows for the tolerance and the C confirmation.
+
+**`O1-SMA-Guard-Test-Plan-Draft.md`**
+- §1: added the `<= 1e-6` pre-format tolerance, `price_text(mean)` for snapshot, and the pending-C note on input ordering.
+- **T-O1-04**: derives `target_date = frame["Date"].iloc[59]` and asserts both bulk maps by that **date key**.
+- **T-O1-07**: uses a `DEFAULT_SNAPSHOT_INDICATORS` member (e.g. `rsi`), notes the builder also accepts a custom `indicators` argument, defaults-only for O1.
+- **T-O1-10**: rewritten as one non-empty, all-`Close`-missing seeded frame through the real loader; direct entry raises `NoMarketDataError` (`ohlcv.py:238-241`), routed tool returns `NO_DATA_AVAILABLE` (`router.py:185-197`, `tools.py:94-96`); asserts no numeric SMA and no `have 0` text. Explicitly separated from the empty-after-cutoff case.
+- Noted text/tolerance remain proposed; guard-only scope limit restated; nothing marked approved.
+</br>
+
+## Decisions remaining
+
+- **Member A (you):** approve O1 guard-only scope; exact insufficient-history text; the `<= 1e-6` tolerance.
+- **Member C:** confirm the cleaned input is chronologically ordered with unique dates (blocking approve); file/interface conflict check on `market.py`/`snapshot.py` and helper home; record the vendor authority/fallback contract.
+- **Member F:** resolve `test/offline/` vs `tests/` pytest/CI collection; confirm offline-only execution and the CI matrix run.
+
+---
+
+## User
+
+Please review O1-SMA-Guard-Test-Plan-v1.0-DRAFT.md against the current local source code and the O1 requirements in docs/req/requirements.yaml.
+
+For each T-O1-01 through T-O1-12, tell me whether the stated entry point, fixture, and expected assertion are executable. Focus especially on the shuffled and duplicate-date cases (T-O1-11/12), the fallback path, and the real loader cases. For any problem, cite the relevant function and suggest the smallest correction to the test plan.
+
+Please only inspect files. Do not edit files, write tests, run tests, or implement the guard. We will submit the corrected plan to F for pre-implementation review. 
+
+---
+
+## Assistant
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+**Tool: read**
+
+---
+
+## Assistant
+
+Let me check the requirements.yaml for REQ-O1 entries and re-verify the specific code seams the cases depend on.
+
+**Tool: bash**
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+**Tool: read**
+
+---
+
+## Assistant
+
+Now let me verify the specific code seams the flagged cases depend on: how `_get_stock_stats_bulk`/`get_stock_stats` handle order and duplicates, the snapshot indicator-set acceptance, and the mock surfaces.
+
+**Tool: bash**
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+Let me confirm the loader's date-order handling (does `load_ohlcv` sort?) and duplicate-date behavior, plus the stale rule for seeded caches.
+
+**Tool: bash**
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+Confirmed key facts: `load_ohlcv` does **not** sort or dedupe; `get_stock_stats` uses `.values[0]` (order-dependent); snapshot sorts but does not dedupe. These directly affect T-O1-11/12. Here is the case-by-case executability review.
+
+## Verified code facts the cases depend on
+
+- `_get_stock_stats_bulk` iterates `df` in **frame order** and keys results by date (`market.py:224-231`); it does **not** sort or dedupe.
+- `get_stock_stats` selects `matching_rows[indicator].values[0]` — first match in **frame order** (`market.py:288-291`).
+- `load_ohlcv` does **not** sort or drop duplicate dates (no `sort_values`/`drop_duplicates` in `ohlcv.py`).
+- `_verified_rows` **sorts** (`snapshot.py:47`) but does **not** dedupe.
+- `build_verified_market_snapshot` accepts a custom `indicators` argument (`snapshot.py:71`), defaulting to `DEFAULT_SNAPSHOT_INDICATORS`.
+- Duplicate-date text `N/A: invalid price history (duplicate trading date)` is a **new production behavior** required by requirements.yaml REQ-O1-03/06 (`requirements.yaml:108-109,143`) — it does not exist in current code.
+
+## Per-case executability
+
+| Case | Executable? | Note |
+|---|---|---|
+| T-O1-01 | Yes | Bulk-only, mocked cleaned frame; `have 40`/`have 49` exact. Sound. |
+| T-O1-02 | **Minor ambiguity** | "`have 50` or `have 60`" is under-specified — one fixture per call, so state each separately (50-row→`have 50`, 60-row→`have 60`). Otherwise fine. |
+| T-O1-03 | Yes | Bulk boundary; fine. |
+| T-O1-04 | Yes | Date-key lookup matches the dict contract (`market.py:223-231`); 260-row frame at date 60 → `have 60`. Correct. |
+| T-O1-05 | Yes | Snapshot sorted internally; `price_text` compare valid (`snapshot.py:47,85`). Fine. |
+| T-O1-06 | Yes, with care | `RuntimeError` (not a `VendorError`) is required so the `except VendorError: raise` at `market.py:181-182` doesn't skip the fallback — the plan says `RuntimeError`, correct. "Confirm the fallback really ran" needs a concrete signal: assert the log warning (`market.py:184`) or patch `get_stockstats_indicator`/`get_stock_stats` with a spy. Suggest naming the spy explicitly. |
+| T-O1-07 | Yes | Default indicator set is real (`snapshot.py:24-28`); `rsi` present. Fine. |
+| T-O1-08 | Yes | Holiday string is `market.py:172` (and per-day `market.py:294`); distinct from sentinel. Fine. |
+| T-O1-09 | Mostly yes | Seeded-cache fixture must satisfy the **stale rule** (`ohlcv.py:109-143`, ≤10 days) or `load_ohlcv` raises at `ohlcv.py:255`. The `_run_load` pattern (`tests/test_ohlcv_latest_bar.py:98-110`) already freezes `Timestamp.today` — cite it so the fixture cannot go stale. Behavior fine otherwise. |
+| T-O1-10 | Yes | Direct `load_ohlcv` raises `NoMarketDataError "no bar in range has a closing price"` (`ohlcv.py:238-241`); routed snapshot/`get_indicators` → `NO_DATA_AVAILABLE` (`router.py:185-197`, `tools.py:94-96`). Correct. |
+| **T-O1-11** | **Problem — assertion is wrong for current code** | "Shuffled and sorted inputs give the same value **for each date**" is **not** true of the current unguarded code: `get_stock_stats` takes `.values[0]` in frame order (`market.py:288-291`), and bulk keys by date so a shuffled frame's per-date map differs if stockstats' rolling depends on order. The plan even acknowledges the source does not sort (line 44). **Smallest correction:** change the assertion to "the guard sorts dated closes before computing the SMA, so shuffled and sorted frames yield the same per-date SMA values" and make it depend on the **guard's new sorting** (REQ-O1-03), not current behavior; assert via `_get_stock_stats_bulk` only (not `get_stock_stats` unless the guard also sorts there). Also the "extreme later price after an earlier analysis date" sub-assertion only holds if `load_ohlcv`'s cutoff is what's under test — with a mocked loader that returns future rows, the guard itself must exclude them or the assertion tests nothing; currently the plan says the mock can return future rows "to test the SMA boundary," which conflates guard-sorts with loader-cutoff. |
+| **T-O1-12** | **Problem — not executable as written without a production design decision** | There is **no** duplicate-date message in current code; both bulk and per-day will just compute a number from the duplicated rows (`market.py:224-231`, `288-291`), and `_verified_rows` sorts but never dedupes (`snapshot.py:47`). So "expected duplicate-date message" requires the guard to add a dedupe/detect step on **all three** entry points. The plan's own line 33/45 flags this ("confirm whether a public routed tool can expose duplicate input… do not invent a routed status"). **Smallest correction:** make T-O1-12 a guard-behavior test that supplies a duplicated frame directly to `_get_stock_stats_bulk` and `get_stock_stats` (and `build_verified_market_snapshot` via mocked `load_ohlcv`), and requires the guard to return the exact duplicate text; drop any assertion on a routed tool exposing duplicates unless the loader is changed — route text cannot produce it today. Add explicit production requirement: dedupe/detect must be implemented in each of the three functions for the case to pass. |
+
+## Cross-cutting issues in the plan
+
+1. **§3 CI claim is false for the current repo.** Line 37 says "The current main configuration collects both `tests/` and `test/offline/` by default." `pyproject.toml:59` is `testpaths = ["tests"]` only; CI runs bare `pytest -q` (`ci.yml:36`). `test/offline/` is **not** collected. This must be stated as **pending F** (as earlier drafts did), not as current fact. Smallest fix: reword to "requires F to add `test/offline` to `testpaths`/CI; not yet collected."
+2. **T-O1-02** ambiguity (above).
+3. **T-O1-06** needs a concrete "fallback ran" signal (spy/log assert).
+4. **T-O1-09** should cite the frozen-`today` `_run_load` fixture so the stale rule (`ohlcv.py:109-143`) can't trip.
+5. **REQ mapping**: requirements.yaml already maps T-O1-11/12 under REQ-O1-03 (`requirements.yaml:115`) and T-O1-12 also REQ-O1-06 (`:149`). Consistent with the plan's rows — good. But REQ-O1-03's fit criterion ("shuffled … same dated SMA values; duplicate-date input returns …") is stated as an **invariant on the guard**, so T-O1-11 must test the guard's sorting, not current behavior (see above).
+
+## Smallest corrections to hand to F
+
+- **T-O1-02:** split into 50→`have 50` and 60→`have 60` explicit fixtures.
+- **T-O1-06:** name the fallback-ran check (log `market.py:184` or spy on `get_stockstats_indicator`).
+- **T-O1-09:** reference `_run_load` (`tests/test_ohlcv_latest_bar.py:98`) to freeze `today`; keeps clear of `ohlcv.py:109-143`.
+- **T-O1-11:** assert the **guard sorts** (REQ-O1-03), via `_get_stock_stats_bulk` only; remove/reframe the future-row sub-assertion so it tests the loader cutoff or the guard exclusion, not an ambiguous mocked mix.
+- **T-O1-12:** require the guard to dedupe/detect on bulk, per-day, and snapshot; test via those three functions with a duplicated frame; **do not** assert a routed-tool duplicate message (not producible today). Add the production dedupe requirement explicitly.
+- **§3:** correct the collection claim to "not collected today; F must decide the `test/offline` change" (`pyproject.toml:59`, `ci.yml:36`).
+
+Everything else (T-O1-01/03/04/05/07/08/10) is executable as written. No files changed; nothing run.
+
+---
+
+## User
+
+Please reconcile your earlier O1 requirements draft and analysis with REQ-O1-01 through REQ-O1-06 in docs/req/requirements.yaml and O1-SMA-Guard-Test-Plan-v1.0-DRAFT.md.
+
+The older O1-SMA-Guard-Requirements-Draft.md is a discussion record. Use the newer YAML as the selected requirement baseline for planning, while keeping its approval status accurate.
+
+List the changes in required behavior, especially chronological sorting, the analysis-date cutoff, duplicate-date rejection, exact output messages, and test cases T-O1-11/12. For each case you previously called “not executable,” distinguish between (a) behavior missing from current code that O1 must implement and (b) a genuinely impractical test design.
+
+Then give me a revised read-only implementation and test execution plan with the specific functions likely to change. Do not edit files, write code, or run tests. Stop for approval. 
+
+---
+
+## Assistant
+
+I'll reconcile the YAML baseline (source of truth) with my earlier draft and analysis, then lay out the delta and a read-only plan. Let me re-confirm the exact YAML fit criteria and status field so I state approval accurately.
+
+**Tool: bash**
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+I have the authoritative baseline. Drawing the reconciliation from it.
+
+## Reconciliation status
+
+**Authority:** `docs/req/requirements.yaml` is the selected development baseline (`registry_version: 1.0.0-a-baseline`, header lines 1-7). My older `O1-SMA-Guard-Requirements-Draft.md` and the reviewed `O1-SMA-Guard-Test-Plan-Draft.md` are **discussion evidence**, superseded where they differ.
+
+**Approval status (accurate):** YAML `status: "selected_for_development; test and agent-plan approvals still required"` (line 3). It explicitly "does not claim retroactive approval by B-F" (line 6) and requires a versioned test-plan approval and coding-agent execution-plan approval before code generation (line 7). Every REQ-O1-0x is `status: selected_for_development`. **So: requirements are selected, not approved; test plan and agent plan are unapproved.** I keep that wording throughout.
+
+## Required-behavior changes vs my earlier draft
+
+The YAML adds behavior my earlier draft did **not** require. These are genuine additions to O1 scope:
+
+1. **Chronological sorting (REQ-O1-03).** Previous draft: guard only counted per-row; no sorting requirement. YAML: "Sort dated closes chronologically for the SMA-only calculation." Current code does **not** sort in `_get_stock_stats_bulk`/`get_stock_stats` (iterates frame order, `market.py:224-231`, `288-291`). → New O1 work.
+2. **Analysis-date cutoff inside the SMA calculation (REQ-O1-03).** Previous draft: relied on `load_ohlcv`'s cutoff; explicitly did not test it in O1. YAML: "exclude rows after the analysis date" as part of the SMA invariant. → New O1 responsibility (or explicitly delegate to `load_ohlcv` and prove it).
+3. **Duplicate-date rejection (REQ-O1-03, -06).** Previous draft: not present at all. YAML: a duplicate trading date "must never produce a numeric SMA" and returns exact text `N/A: invalid price history (duplicate trading date)`. Current code: neither bulk nor per-day nor snapshot dedupes (`snapshot.py:47` sorts but keeps duplicates). → New O1 work across three paths.
+4. **Exact output messages (REQ-O1-06).** Now fixed, not "proposed pending approval" as my draft had it:
+   - Insufficient: `N/A: insufficient history (needs W sessions, have N)`.
+   - Duplicate: `N/A: invalid price history (duplicate trading date)`.
+   - Non-trading-day: existing `N/A: Not a trading day (weekend or holiday)`.
+   - No-data: existing `NO_DATA_AVAILABLE` routed sentinel.
+   My draft left the insufficient text "proposed pending owner approval"; the YAML states it as the fit criterion. → Treat as selected (still subject to the overall test-plan approval gate, but text is now fixed, not open).
+5. **Tolerance fixed at `<= 1e-6` before display formatting (REQ-O1-01/02).** Matches my draft's proposed tolerance — now baseline.
+
+**Unchanged from my draft:** guard-only scope, Yahoo/yfinance path only, AV out of scope, historical download window out of scope.
+
+## T-O1-11 and T-O1-12: (a) missing behavior vs (b) impractical design
+
+| Case | What I called "not executable" | Classification |
+|---|---|---|
+| **T-O1-11** (shuffled unique dates) | Current code gives order-dependent results: `get_stock_stats` uses `.values[0]` (`market.py:288-291`); bulk keys by date in frame order. So "same value for each date under shuffle" fails today. | **(a) behavior missing from current code.** O1 must sort before computing. The **test design is practical**: feed shuffled vs sorted frames to `_get_stock_stats_bulk` and compare per-date values. Not impractical — it's a spec O1 doesn't yet meet. The only design caveat: the "extreme later price after earlier analysis date" sub-assertion must exercise either the guard's own cutoff or the real `load_ohlcv` cutoff, not a mocked loader that silently strips future rows (otherwise it tests nothing). That caveat is a **design fix**, not (b)-impossible. |
+| **T-O1-12** (duplicate dates) | No duplicate-date text exists; bulk/per-day compute a number, snapshot sorts but keeps duplicates. So "expected duplicate message" fails today. | **(a) behavior missing from current code.** O1 must add dedupe/detect to all three entry points and emit the exact text. The **test design is practical** at the function level (`_get_stock_stats_bulk`, `get_stock_stats`, `build_verified_market_snapshot` with mocked loader). The clause "confirm whether a public routed tool can expose duplicate input" is the only (b)-flavored concern — a routed tool cannot surface duplicates today because `load_ohlcv` passes them through unmarked; asserting routed duplicate text would be **impractical until the loader/guard marks them**, so drop that clause or scope it to the three functions. |
+
+**Net:** neither case is genuinely impractical at the function seam. Both are **(a) missing implementation** plus **(minor (b)) design wording** that must not assert a routed-tool duplicate status the current interface cannot produce.
+
+## Revised read-only implementation & test-execution plan
+
+### Functions likely to change
+
+| Function (file) | Change | Reqs |
+|---|---|---|
+| `_get_stock_stats_bulk` (`market.py:205`) | Sort frame by `Date`; detect duplicate dates → write duplicate text for affected SMA; per-date cumulative count of non-missing closes; enforce analysis-date cutoff (or assert pre-filtered); emit insufficient text / numeric for the two SMAs only. | -01, -02, -03, -06 |
+| `get_stock_stats` (`market.py:273`) | Same sort/duplicate/count/cutoff rules for the single reported date; change `.values[0]` selection to be order-independent after sorting and to reject duplicates. | -01, -02, -03, -06 |
+| `build_verified_market_snapshot` / `_verified_rows` (`snapshot.py:67`, `31`) | Already sorts (`:47`); add duplicate detection → duplicate text for SMA cells; guard latest-row SMA count via shared rule. | -01, -02, -03, -04, -06 |
+| Shared helper + `SMA_WINDOWS` (home in `market.py`, imported by `snapshot.py`) | One source: window sizes, count function, sentinel strings, duplicate check. | all |
+| **Not changed** | `ohlcv.py`, `router.py`, `tools.py`, `alpha_vantage/*` — plus record whether cutoff stays in `load_ohlcv` or is re-asserted in the guard. | — |
+
+**Open design question for approval:** REQ-O1-03 says "exclude rows after the analysis date" as an SMA invariant. Two options: (i) rely on `load_ohlcv`'s existing cutoff (`ohlcv.py:230`) and make the guard **assert** the frame is already cutoff (defensive), or (ii) the guard re-filters by `as_of_date`. Option (i) is smallest and avoids double logic; option (ii) makes the invariant locally enforceable. **Recommend (i) + a defensive assert**, so T-O1-11's future-row sub-assertion can test the guard's exclusion without owning loader policy. This needs your decision.
+
+### Test execution plan (read-only, offline)
+
+- **Location/CI:** unresolved by YAML; `pyproject.toml:59` collects only `tests/` and CI runs `pytest -q` (`ci.yml:36`). `test/offline/` is **not** collected today → pending **Member F** decision. Do not state it as current fact.
+- **Units, no network:** bulk/snapshot cases mock `market.load_ohlcv`/`snapshot.load_ohlcv`; loader cases (T-O1-09/10) seed cache with frozen `today` using the `_run_load` pattern (`tests/test_ohlcv_latest_bar.py:98-110`) so the stale rule (`ohlcv.py:109-143`) can't trip.
+- **Per-case readiness after O1 implements sort/dup/cutoff:**
+
+| Case | After O1 change executable? | Fix needed in plan |
+|---|---|---|
+| T-O1-01/03/04/05/07/08/10 | Yes | none (T-O1-02 split the `have 50`/`have 60` fixtures explicitly) |
+| T-O1-06 | Yes | name the fallback-ran signal (log `market.py:184` / spy on `get_stockstats_indicator`) |
+| T-O1-09 | Yes | cite `_run_load` frozen-date fixture |
+| T-O1-11 | Yes, **once guard sorts** | assert via `_get_stock_stats_bulk`; frame the future-row sub-check as the guard's cutoff/exclusion, not a loader-stripped mock |
+| T-O1-12 | Yes, **once guard dedupes on all three paths** | test the three functions directly with a duplicated frame; remove the routed-tool duplicate assertion (not producible today) |
+| §3 collection claim | — | reword to "pending F; not collected today" |
+
+- **Evidence/approval:** record YAML version `1.0.0-a-baseline`, plan version, reviewer, decision; do not record approval until given.
+
+## Corrections I'm making to my own earlier statements
+
+- Earlier I treated the insufficient text and `1e-6` as "proposed pending approval." **YAML fixes both** — I now treat them as selected baseline (text fixed; still under the test-plan approval gate).
+- Earlier I said "no future-row test in O1" and "duplicate not in scope." **YAML adds both** (REQ-O1-03). Updating scope accordingly.
+- Earlier I flagged T-O1-11/12 as "not executable." Correct classification: **(a) missing implementation**, not (b) impractical design, except the routed-tool duplicate assertion which is impractical today and should be dropped.
+
+**Stopping for your approval.** Decisions needed before coding: (1) cutoff ownership — Option (i) defensive assert (recommended) vs (ii) re-filter in guard; (2) Member F's `test/offline` collection decision; (3) confirm text strings are final as written in YAML. No files edited, no code written, no tests run.
+
+---
+
+> **Human annotation — Member A:** I redirected the plan to our agreed YAML and test plan. The older draft was only discussion history, so it should not drive the build.
+
+## User
+
+Please revise your O1 execution plan strictly against `docs/req/requirements.yaml` (REQ-O1-01 through REQ-O1-06) and `O1-SMA-Guard-Test-Plan-v1.0-DRAFT.md`. The older O1 requirements draft is discussion history.
+
+For T-O1-11, follow the YAML requirement to exclude rows after `as_of_date` and sort dated closes for the O1 SMA calculation. For T-O1-12, reject duplicate trading dates with the exact invalid-history message; do not silently deduplicate and return a numeric SMA. Preserve the YAML's existing insufficient-history and no-market-data outcomes, and leave non-SMA indicators unchanged.
+
+Map the existing T-O1-01 through T-O1-12 cases to the functions you plan to change. Include a short trigger → action → output table using only behavior already specified in the YAML. Do not add required behavior or new test cases. If you find a genuine conflict or an unexecutable assertion, cite the exact file and line and list it separately for our review.
+
+My local O1 branch is older than main's CI PR #1. Note the branch update as a later prerequisite, but do not update it now.
+
+Only inspect files. Do not edit files, run tests, change Git branches, or write code. Stop for approval. 
+
+---
+
+## Assistant
+
+I'll ground this strictly in the two baseline files. Let me re-confirm the exact YAML wording and the test-plan case text I must map against.
+
+**Tool: bash**
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+**Tool: bash**
+
+---
+
+## Assistant
+
+Confirmed both baselines. Here is the execution plan mapped strictly to the YAML requirements and the v1.0 test plan. Read-only; stopping for approval.
+
+## Plan basis
+
+- Requirements baseline: `docs/req/requirements.yaml` REQ-O1-01…-06 (`status: selected_for_development`; header line 3 states test and agent-plan approvals still required — not approved).
+- Test cases: `O1-SMA-Guard-Test-Plan-v1.0-DRAFT.md` T-O1-01…-12 (rows 20-31).
+- Older requirements draft: discussion history only.
+
+## Functions to change, and the cases each serves
+
+| Function (file:line) | Planned change (YAML-specified only) | Cases |
+|---|---|---|
+| `_get_stock_stats_bulk` (`market.py:205`) | Sort dated closes chronologically; exclude rows after `as_of_date`; count cleaned non-missing closes per reported date; duplicate trading date → `N/A: invalid price history (duplicate trading date)` (never numeric); insufficient/numeric per W for the two SMAs only. | T-O1-01, -02, -03, -04, -11, -12 |
+| `get_stock_stats` (`market.py:273`) | Same sort/cutoff/duplicate/count rules for the single reported date; order-independent selection (replace `.values[0]` behavior via sorted+duplicate-guarded frame); duplicate → invalid-history text. | T-O1-09 (entry), -12 |
+| `build_verified_market_snapshot` / `_verified_rows` (`snapshot.py:67`, `:31`) | `_verified_rows` already sorts (`:47`); add duplicate detection → invalid-history text for SMA cells; guard latest-row SMA outcome via shared rule. | T-O1-05, -07, -12 |
+| Shared helper + `SMA_WINDOWS` (proposed home `market.py`, imported by `snapshot.py`) | Single source for window sizes, per-date count, cutoff/sort, duplicate check, and the exact strings. | all |
+| `get_stockstats_indicator` (`market.py:236`) | No logic change planned; it delegates to `get_stock_stats`, so the guard flows through. Listed because T-O1-06 spies on it. | T-O1-06 |
+| `load_ohlcv` (`ohlcv.py:161`) | No change planned; it already drops non-close rows and applies the cutoff (`ohlcv.py:230,238-241`). Serves T-O1-09/-10. | T-O1-09, -10 |
+| **Not changed** | `router.py`, `tools.py`, `alpha_vantage/*`. | — |
+
+## Case → function map (existing cases only)
+
+| Case | Entry point to drive | Function under test |
+|---|---|---|
+| T-O1-01 | `_get_stock_stats_bulk` | `_get_stock_stats_bulk` |
+| T-O1-02 | `_get_stock_stats_bulk` | `_get_stock_stats_bulk` |
+| T-O1-03 | `_get_stock_stats_bulk` | `_get_stock_stats_bulk` |
+| T-O1-04 | `_get_stock_stats_bulk` | `_get_stock_stats_bulk` |
+| T-O1-05 | `build_verified_market_snapshot` | snapshot path |
+| T-O1-06 | `get_stock_stats_indicators_window` → `get_stockstats_indicator`→`get_stock_stats` | fallback (`market.py:188-193`) |
+| T-O1-07 | bulk, forced fallback, snapshot | all three (non-SMA control) |
+| T-O1-08 | `get_stock_stats_indicators_window` | window render (`market.py:161-172`) + per-day |
+| T-O1-09 | real `load_ohlcv` → O1 entry point | `load_ohlcv` cleaning + guard |
+| T-O1-10 | real `load_ohlcv` + routed tool | `load_ohlcv` no-close + router sentinel |
+| T-O1-11 | `_get_stock_stats_bulk` | `_get_stock_stats_bulk` (sort + cutoff) |
+| T-O1-12 | bulk, `get_stock_stats`, snapshot | all three (duplicate rejection) |
+
+## Trigger → action → output (YAML-specified behavior only)
+
+| Trigger | Action (REQ) | Output (exact) |
+|---|---|---|
+| Per-date usable closes 1–49 / 1–199 | Count per date; guard (REQ-O1-01/02) | `N/A: insufficient history (needs 50 sessions, have N)` / `…(needs 200 sessions, have N)` |
+| Per-date usable closes ≥ 50 / ≥ 200 | Compute latest-W dated-close mean (REQ-O1-01/02) | Numeric value; matches mean within `1e-6` pre-format |
+| Frame order shuffled, unique dates | Sort chronologically for SMA-only calc (REQ-O1-03) | Same dated SMA as sorted input |
+| Row after `as_of_date` present | Exclude it from the SMA calc (REQ-O1-03) | Earlier date unaffected |
+| Duplicate trading date present | Reject as invalid SMA input (REQ-O1-03) | `N/A: invalid price history (duplicate trading date)` — never numeric |
+| No usable close in frame | Existing no-market-data path (REQ-O1-01/02) | Direct: `NoMarketDataError`; routed: `NO_DATA_AVAILABLE` |
+| Date absent from cleaned frame | Existing non-trading-day path (REQ-O1-06) | `N/A: Not a trading day (weekend or holiday)` |
+| Non-SMA indicator requested | Unchanged (REQ-O1-05) | Prior numeric/display behavior |
+
+## Genuine conflicts / unexecutable items (for your review)
+
+1. **REQ-O1-03 cutoff vs. `load_ohlcv` ownership (not a conflict, a clarification needed).** The YAML makes "exclude rows after the analysis date" part of the SMA invariant (`requirements.yaml:108`), but today the cutoff lives in `load_ohlcv` (`ohlcv.py:230`), not in the SMA functions. T-O1-11 mocks the loader and "deliberately returns all 260 rows," so the **guard itself must apply the cutoff** for the assertion to hold. This is consistent with the YAML but means the guard duplicates a policy `load_ohlcv` already enforces. Flagged for decision: guard-applied cutoff (YAML-literal, T-O1-11 as written) vs. defensive assert that input is pre-cutoff. The plan as written follows the YAML literally (guard applies cutoff).
+2. **T-O1-06 spy target.** The case spies on `get_stockstats_indicator` (`test plan row 25`), which is the intermediary; the guard logic lives in `get_stock_stats`. Executable, but note the spy proves the *fallback wrapper* ran, not that `get_stock_stats` was entered. Minor: acceptable as written; no change required to satisfy YAML.
+3. **T-O1-12 routed-tool clause is intentionally excluded** by the current plan (`test plan row 31`, "No routed-tool duplicate-message assertion is made"), which matches my earlier finding that the routed interface cannot surface a duplicate status today. This is consistent, not a conflict — noting so it isn't re-added.
+4. **§3 collection claim.** The plan says main "collects both `tests/` and `test/offline/` by default," but local `pyproject.toml:59` is `testpaths = ["tests"]` and CI runs bare `pytest -q` (`ci.yml:36`). This is a **branch-age artifact**, not a plan defect — see prerequisite below. Listed separately rather than treated as a test-design flaw.
+
+No YAML requirement is contradicted by the plan; item 1 is a design decision, items 2-4 are notes, not conflicts.
+
+## Prerequisite (note only, do not action now)
+
+The local branch `feature/o1-sma-guard` is at baseline `970a9ea`, older than main's CI PR #1. The §3 collection statement (and possibly `test/offline` discovery) reflects main, not this branch. **Updating the branch to main is a later prerequisite** before implementation/CI work; not performed here.
+
+**Stopping for approval.** No files edited, no tests run, no branch change, no code written.
+
+---
+
+---
+
+# Part 2 — Build export
+
+## User
+
+I've updated my O1 requirements and test plan after discussing them with my team.
+
+Please read these two revised documents first:
+- O1-SMA-Guard-Requirements-Draft.md
+- O1-SMA-Guard-Test-Plan-Draft.md
+
+We already looked at the original SMA issue earlier in this session, so please use your previous code analysis as a reference.
+
+The main changes are more detailed boundary tests, checking valid closing prices for each trading date, and making sure the bulk calculation, fallback path and verified snapshot all handle insufficient history correctly.
+
+Can you help me check:
+
+1. Are these updated requirements consistent with the actual code?
+2. Can we implement them without changing unrelated indicators?
+3. Are all the proposed test cases practical and executable?
+4. Is there anything important we missed or need to change before implementation?
+
+For now, please only review the updated documents and the existing code. Don't modify files or implement anything yet.
+
+We still need to approve the final requirements and test plan before starting development. 
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 5.1s)
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "ls -la O1-SMA-Guard-Requirements-Draft.md O1-SMA-Guard-Test-Plan-Draft.md 2>&1"
+}
+```
+
+**Output:**
+```
+-rw-r--r--@ 1 caicys  staff  8137 11月 12 21:44 O1-SMA-Guard-Requirements-Draft.md
+-rw-r--r--@ 1 caicys  staff  7583 11月 12 21:49 O1-SMA-Guard-Test-Plan-Draft.md
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 6.2s)
+
+**Tool: read**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/O1-SMA-Guard-Requirements-Draft.md"
+}
+```
+
+**Output:**
+```
+<path><PROJECT_ROOT>/O1-SMA-Guard-Requirements-Draft.md</path>
+<type>file</type>
+<content>
+1: # O1 — SMA Validity Guard: Requirements Draft
+2: 
+3: **Owner:** Member A  
+4: **Status:** Revised discussion draft, 12 November 2026. Proposed by Member A for owner review; scope and tests are not approved. No O1 code has been changed or tested.  
+5: **Proposed scope:** Guard the 50-session and 200-session SMA outputs on the Yahoo/stockstats path.
+6: 
+7: ## 1. Problem and goal
+8: 
+9: A simple moving average (SMA) for a window of 50 or 200 sessions should only be presented as that window's average when enough usable closing prices exist up to the reported date. The current Yahoo indicator path asks stockstats for the SMA and reports its value without checking the history length. The verified market snapshot also reports the latest stockstats value without this check. The official [TradingAgents issue #1679](https://github.com/TauricResearch/TradingAgents/issues/1679) reports a very short-history case in which both SMAs were shown as the same partial-history average.
+10: 
+11: Relevant baseline code: [`market.py`](../TradingAgents-CS5351/tradingagents/dataflows/vendors/yahoo/market.py) (`_get_stock_stats_bulk`, `get_stock_stats`, and `get_stock_stats_indicators_window`); [`snapshot.py`](../TradingAgents-CS5351/tradingagents/dataflows/vendors/yahoo/snapshot.py) (`build_verified_market_snapshot`); and [`ohlcv.py`](../TradingAgents-CS5351/tradingagents/dataflows/vendors/yahoo/ohlcv.py) (`load_ohlcv`). The current loader removes rows without a closing price and excludes rows after the analysis date.
+12: 
+13: O1's goal is to prevent a partial-history SMA from being presented as a valid 50-session or 200-session value. It covers the normal indicator report, its per-day fallback, and the verified snapshot. An unavailable SMA must be distinguishable from a non-trading day.
+14: 
+15: **Scope limit:** This proposal does not change the historical download window or cache. For an old analysis date, the current loader may still have too little history even when earlier prices exist at the vendor. O1 would then honestly report insufficient history, but it would not recover the correct historical SMA values. O1 must not be described as a complete fix for every part of issue #1679. Alpha Vantage behavior is outside this proposed change and has not been verified by these tests.
+16: 
+17: ## 2. Requirements for discussion
+18: 
+19: The IDs below are provisional entries for the eventual D1 YAML requirements registry. A test ID is separate from a requirement ID. “Must” means O1 cannot be accepted without the criterion; the tradeoff column states what is lost if it is omitted.
+20: 
+21: | ID | Type | Statement | Priority and tradeoff | Machine-checkable fit criterion |
+22: |---|---|---|---|---|
+23: | REQ-O1-01 | Functional behavior | For each reported trading date with at least one usable close, show a numeric `close_50_sma` only when at least 50 usable dated closes exist through that date. For 1–49 closes, show the approved insufficient-history text. Zero usable closes retain the existing no-market-data behavior. | **Must.** Without it, a short-history value can be labelled a 50-session SMA. | At the target date with 49 closes, the exact insufficient-history value is returned; with 50, the parsed numeric value matches the latest-50 mean within an approved tolerance. |
+24: | REQ-O1-02 | Functional behavior | Apply the same rule to `close_200_sma` with a 200-session window; zero usable closes retain the existing no-market-data behavior. | **Must.** Without it, a short-history value can be labelled a 200-session SMA. | At the target date with 199 closes, the exact insufficient-history value is returned; with 200, the parsed numeric value matches the latest-200 mean within an approved tolerance. |
+25: | REQ-O1-03 | Invariant | Determine validity separately for each reported date, counting only usable closes up to and including that date. | **Must.** A whole-frame count could make an early date look valid because later rows exist. | In a 260-row series, at row 60 the 50-SMA is valid and the 200-SMA is unavailable, even though the full series has 260 rows. Zero early-date 200-SMA values are reported as valid. |
+26: | REQ-O1-04 | Functional behavior | Apply REQ-O1-01 and REQ-O1-02 on the bulk indicator path, the per-day fallback, and the verified snapshot. | **Must.** An unguarded path would still send a misleading value to the analyst. | Each path reports insufficient history for 49/199 sessions and a valid value at the corresponding 50/200 boundary. |
+27: | REQ-O1-05 | Invariant | Leave non-SMA indicators' behavior unchanged. | **Must.** A broad guard could suppress unrelated indicators. | For a controlled frame, each selected non-SMA output equals the same-run direct stockstats reference; the prior regression suite has zero new failures. |
+28: | REQ-O1-06 | Quality attribute: clear output | Use a labelled insufficient-history result that is distinct from the existing non-trading-day result. The exact text remains a review decision. | **Must.** A generic `N/A` would hide the reason from the analyst. | Metric: ambiguous statuses in the O1 output tests. Threshold: **0**. Verification: tests assert distinct exact text for insufficient history and a non-trading day. |
+29: 
+30: **Proposed text:** `N/A: insufficient history (needs W sessions, have N)`, where W is 50 or 200 and N is the number of usable closes through the reported date. This text is not current behavior and requires approval.
+31: 
+32: **Input and output contract:** The existing public tool inputs and function signatures remain unchanged. The Yahoo path receives a symbol, indicator name, analysis date, and (for the report) look-back period. Valid results retain the current numeric rendering; insufficient results use the approved text. The guard counts one cleaned, dated closing-price row per session through the date being reported. The owner and C must confirm that the input is chronologically ordered with unique dates, or assign that guarantee to a specific component before approval. A missing close is not counted. A date absent from the cleaned loader output retains the existing non-trading-day message; this wording does not prove whether the date was actually a holiday or a missing-data day. The snapshot uses its latest trading row on or before the requested analysis date.
+33: 
+34: ## 3. Proposed change boundary and integration risks
+35: 
+36: | Area | Proposed work | Shared-file concern |
+37: |---|---|---|
+38: | `market.py` | Guard `_get_stock_stats_bulk` per row and `get_stock_stats` for the fallback. A shared SMA-window rule may live here. | Other Yahoo indicators use this file. |
+39: | `snapshot.py` | Guard the latest reported SMA values with the same rule. | The market analyst treats this snapshot as a source for exact claims. |
+40: | `ohlcv.py`, router, tools, Alpha Vantage | No proposed O1 change. | Historical download behavior remains a documented limitation. The configured indicator vendor may differ from the Yahoo-only verified snapshot. A returned insufficient-history string is a successful router result and does not trigger the next configured vendor. C must record this authority and fallback contract. |
+41: 
+42: Member C should check whether another feature plans to edit `market.py` or `snapshot.py`, and whether the proposed helper has an appropriate home. Member F should resolve the offline-test location and CI collection issue described in the companion test plan. Member B can incorporate the approved requirements into the course's machine-readable YAML registry; this Markdown draft is not the final D1 deliverable.
+43: 
+44: ## 4. Review decisions and record
+45: 
+46: | Decision | Current state |
+47: |---|---|
+48: | O1 scope: guard only, or also historical data retrieval | Guard only is proposed; Member A decision pending. |
+49: | Exact insufficient-history text | Proposed above; decision pending. |
+50: | File/interface conflict check with Member C | Pending. |
+51: | Test location and CI collection with Member F | Pending. |
+52: | Requirements and test-plan approval before implementation | Pending; record approver, date, version, and evidence after the actual decision. |
+53: 
+54: The full OpenCode session and Member A's real corrections should be retained for D5. No approval, implementation, or test result is claimed in this draft.
+
+(End of file - total 54 lines)
+</content>
+```
+
+**Tool: read**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/O1-SMA-Guard-Test-Plan-Draft.md"
+}
+```
+
+**Output:**
+```
+<path><PROJECT_ROOT>/O1-SMA-Guard-Test-Plan-Draft.md</path>
+<type>file</type>
+<content>
+1: # O1 — SMA Validity Guard: Test Plan Draft
+2: 
+3: **Owner:** Member A  
+4: **Status:** Revised draft for pre-implementation review, 12 November 2026. No tests have been run or approved.  
+5: **Scope assumed for this plan:** 50/200-session SMA guard on the Yahoo/stockstats path. Historical download-window changes need a separate test plan if added to O1.
+6: 
+7: ## 1. Test method
+8: 
+9: Use deterministic, non-constant OHLCV prices on chronologically ordered, unique simulated session dates. For guard tests, replace `market.load_ohlcv` or `snapshot.load_ohlcv` with a frame that represents the **already-cleaned** loader output. The reported date must be a date in the frame unless a test explicitly checks an absent date. Compute expected valid SMAs independently as the mean of the latest W usable closes through that date. Compare parsed numeric values using a tolerance approved with the fit criteria; for the snapshot, compare the expected displayed text after applying the existing price-format rule. For a report, assert the entire value on the **target date line**, not the presence of a value elsewhere in the report.
+10: 
+11: Keep the bulk report, fallback, and snapshot checks separate. `get_stock_stats_indicators_window` takes one indicator name per call, so 50-SMA and 200-SMA assertions require separate calls. Unit cases should use no live network or paid API. The plan's expected outcomes are **not observed test results**.
+12: 
+13: ## 2. Cases and requirement trace
+14: 
+15: “Insufficient” below means the approved labelled text, with no numeric SMA for that indicator. W−1 and W are the essential boundaries; 40, 60, and 220 are additional representative cases.
+16: 
+17: | Test ID | Controlled input and entry point | Expected result | Detects | Requirements |
+18: |---|---|---|---|---|
+19: | T-O1-01 | 40 and 49 cleaned closes; call the bulk indicator report separately for each SMA. | Both SMAs insufficient at 40; 50-SMA insufficient at 49. | Partial-window value and 49/50 off-by-one. | REQ-O1-01, -02 |
+20: | T-O1-02 | 50 and 60 cleaned closes; separate bulk report calls. | 50-SMA equals the latest-50 mean; 200-SMA insufficient at both counts. | Incorrect 50 boundary or false 200-SMA. | REQ-O1-01, -02 |
+21: | T-O1-03 | 199, 200, and 220 cleaned closes; separate bulk report calls. | 200-SMA insufficient at 199; at 200 and 220 both SMAs equal their respective latest-window means. | 199/200 off-by-one or wrong normal value. | REQ-O1-01, -02 |
+22: | T-O1-04 | A 260-row cleaned frame; call `_get_stock_stats_bulk` separately for `close_50_sma` and `close_200_sma` at the last date, then inspect the date of the 60th chronological session (`iloc[59]`) in both returned maps. | At that exact date, 50-SMA is valid and 200-SMA is insufficient with N=60. | Using whole-frame length for an early reported date. | REQ-O1-03 |
+23: | T-O1-05 | Snapshot with 40, 50, 199, and 200 cleaned closes. | At 40 both SMA cells insufficient; at 50 only 50-SMA valid; at 199 only 50-SMA valid; at 200 both valid. Valid displayed values match independently computed means after display formatting. | Snapshot bypassing guard or boundary error. | REQ-O1-01, -02, -04 |
+24: | T-O1-06 | Make `_get_stock_stats_bulk` raise `RuntimeError`; give the fallback cleaned frames of 49/50 and 199/200 rows. Call `get_stock_stats_indicators_window` separately for each SMA with `look_back_days=0` and the frame's last trading date. | The 49-row 50-SMA and 199-row 200-SMA return the insufficient-history line; the 50-row 50-SMA and 200-row 200-SMA return their correct means. | A bulk-only fix or a wrong fallback boundary. | REQ-O1-01, -02, -04 |
+25: | T-O1-07 | For a controlled frame, request representative non-SMA indicators through bulk, forced per-day fallback, and the verified snapshot; compute references from the same frame with stockstats directly. Run all prior test suites after implementation. | Each tested non-SMA value matches its direct reference or existing display rule; all prior suites pass. | Guard accidentally applying to unrelated indicators in an edited path. | REQ-O1-05 |
+26: | T-O1-08 | In one window output, include a trading date with insufficient SMA history and a nearby weekend/holiday date. | The two dates have distinct, exact messages: insufficient history versus not a trading day. | Ambiguous unavailable status. | REQ-O1-06 |
+27: | T-O1-09 | Use a seeded local cache with 50 dated rows, one middle `Close` missing, and call an O1 entry point through the real `load_ohlcv`; repeat for 200 rows if the 50-case does not cover a separate branch. Keep vendor behavior controlled and offline. | The loader removes the missing-close row; the resulting 49/199 usable closes do not satisfy the 50/200 SMA window. Existing loader-cleaning tests may be referenced instead of duplicated. | Counting an invalid close as a valid session or failing to connect loader cleaning to the guard. | REQ-O1-01, -02 |
+28: | T-O1-10 | An empty or no-usable-close input reaches the existing no-data/error path under controlled offline conditions. | No numeric SMA and no misleading `have 0` insufficient-history result; the existing no-data behavior is preserved. | Confusing absent market data with an available but short SMA history. | REQ-O1-01, -02 |
+29: 
+30: The snapshot already has a test that removes a future price from its output (`tests/test_yahoo_snapshot.py::TestVerifiedSnapshot::test_excludes_future_rows`). That test does not by itself prove the SMA history count ignores future rows. This proposed O1 scope does not change `load_ohlcv`'s existing date cutoff; no new future-row test is claimed here. If the team makes future-row exclusion an O1 fit criterion, its test must exercise the real cutoff with controlled offline input rather than a mock that removes the future row before the code under test sees it.
+31: 
+32: ## 3. Offline execution and CI handoff
+33: 
+34: The course's required repository structure and the team's workspace document put deterministic tests in `test/offline/`. The current `pyproject.toml` uses `testpaths = ["tests"]`, while CI runs `pytest -q`; simply adding O1 tests under `test/offline/` would not make CI collect them. **Member F should decide and document the collection change before implementation.** A suitable approach is to include both the inherited `tests/` suite and the team-owned `test/offline/` directory in pytest discovery, so the old regression suite and O1 tests run together. This is a proposed CI decision, not a completed change.
+35: 
+36: All O1 cases must make **zero outbound network requests**. Mocked-loader cases use in-memory frames; the loader-cleaning case uses a seeded local cache and controlled vendor behavior. Mark offline tests as unit tests under the agreed configuration. The new tests and **all prior rounds' test suites** must pass in the approved CI matrix; results are pending. Before implementation code, record approval of the concrete test cases and their version; later preserve a negative test failing on the unguarded baseline, then passing with the guard.
+37: 
+38: ## 4. Approval record and implementation boundary
+39: 
+40: Before OpenCode writes implementation code, record the approved O1 scope, exact sentinel text, requirement/test-plan version, reviewer, approval date, and evidence location. The approved test cases should be fixed before implementation begins. If the scope changes to include historical download or cache behavior, revise the requirements and test plan, then obtain approval for that changed plan.
+41: 
+42: **Current record:** Draft only. No approval, code change, test execution, or CI result is claimed. Preserve this plan and the OpenCode discussion as part of the real D5 supervision history.
+
+(End of file - total 42 lines)
+</content>
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 6.4s)
+
+Let me re-verify a few specifics the docs now assert: `stockstats` behavior on 40 rows, the missing-close drop path, date-absent rendering, and the snapshot `_fmt`.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "sed -n '53,64p' tradingagents/dataflows/vendors/yahoo/snapshot.py; echo \"=== market 161-175 ===\"; sed -n '161,175p' tradingagents/dataflows/vendors/yahoo/market.py; echo \"=== ohlcv 82-90, 227-257 ===\"; sed -n '82,90p;227,257p' tradingagents/dataflows/vendors/yahoo/ohlcv.py"
+}
+```
+
+**Output:**
+```
+def _fmt(value) -> str:
+    if value is None or pd.isna(value):
+        return "N/A"
+    if isinstance(value, pd.Timestamp):
+        return value.strftime("%Y-%m-%d")
+    if isinstance(value, bool):
+        return str(value)
+    if isinstance(value, (int,)):
+        return str(value)
+    if isinstance(value, float):
+        return price_text(value)
+    return str(value)
+=== market 161-175 ===
+        # Generate the date range we need
+        current_dt = as_of_dt
+        date_values = []
+
+        while current_dt >= before:
+            date_str = current_dt.strftime('%Y-%m-%d')
+
+            # Look up the indicator value for this date
+            if date_str in indicator_data:
+                indicator_value = indicator_data[date_str]
+            else:
+                indicator_value = "N/A: Not a trading day (weekend or holiday)"
+
+            date_values.append((date_str, indicator_value))
+            current_dt = current_dt - relativedelta(days=1)
+=== ohlcv 82-90, 227-257 ===
+def _fill_price_gaps(data: pd.DataFrame) -> pd.DataFrame:
+    """Drop rows with no close and forward/back-fill remaining price gaps so
+    indicators compute on a continuous series."""
+    price_cols = [c for c in ["Open", "High", "Low", "Close", "Volume"] if c in data.columns]
+    # copy() so a filtered (sliced) input is written to safely, not via a view.
+    data = data.dropna(subset=["Close"]).copy()
+    data[price_cols] = data[price_cols].ffill().bfill()
+    return data
+
+    data = _clean_dataframe(data)
+
+    # Filter to as_of_date to prevent look-ahead bias in backtesting.
+    data = data[data["Date"] <= as_of_dt]
+
+    # A closeless newest bar is an unsettled session, not a symbol without data.
+    # _fill_price_gaps below drops it, here and mid-series alike, so the frame
+    # ends at the last settled bar; only a range with no close anywhere is no
+    # data (#1201, #1289).
+    if not data.empty and pd.isna(data["Close"].iloc[-1]):
+        settled = data["Close"].notna().to_numpy().nonzero()[0]
+        if settled.size == 0:
+            raise NoMarketDataError(
+                symbol, canonical, "no bar in range has a closing price"
+            )
+        logger.warning(
+            "%s: %d trailing bar(s) through %s have no closing price; using %s "
+            "as the latest close.", canonical, len(data) - settled[-1] - 1,
+            data["Date"].iloc[-1].date(), data["Date"].iloc[settled[-1]].date(),
+        )
+
+    # Indicators need a continuous series, so gaps are carried forward. A caller
+    # that reports the numbers themselves asks for the frame as it was reported:
+    # a filled cell is the previous session's price under this session's date.
+    data = _fill_price_gaps(data) if fill_gaps else data.dropna(subset=["Close"]).copy()
+
+    # Reject a stale frame (latest row far older than as_of_date) rather than
+    # feeding year-old prices into indicators (#1021).
+    _assert_ohlcv_not_stale(data, as_of_date, symbol, canonical)
+
+    return data
+
+```
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "grep -rn \"get_stock_stats_indicators_window\\|_get_stock_stats_bulk\\|build_verified_market_snapshot\\|close_50_sma\\|close_200_sma\" tests/ | head -30; echo \"=== existing loader-cleaning tests ===\"; grep -n \"def test_\" tests/test_ohlcv_latest_bar.py"
+}
+```
+
+**Output:**
+```
+tests/test_yahoo_snapshot.py:35:        snap = validator.build_verified_market_snapshot("COF", "2026-05-13")
+tests/test_yahoo_snapshot.py:45:        snap = validator.build_verified_market_snapshot("COF", "2026-05-16")
+tests/test_yahoo_snapshot.py:52:            validator.build_verified_market_snapshot("COF", "2020-01-01")
+tests/test_yahoo_snapshot.py:57:            validator.build_verified_market_snapshot("COF", "2026-05-13")
+tests/test_yahoo_snapshot.py:61:        snap = validator.build_verified_market_snapshot("COF", "2026-05-20", look_back_days=999)
+tests/test_yahoo_snapshot.py:100:        text = validator.build_verified_market_snapshot("SHIB-USD", "2026-05-20")
+tests/test_ohlcv_latest_bar.py:205:    out = snapshot.build_verified_market_snapshot("AAPL", "2026-05-08", 3)
+=== existing loader-cleaning tests ===
+36:def test_normalize_dates_strips_tz_and_normalizes_to_midnight():
+46:def test_normalize_dates_leaves_naive_dates_at_midnight():
+54:def test_normalize_dates_handles_mixed_dst_offsets():
+69:def test_normalize_dates_keeps_positive_offset_local_date():
+79:def test_clean_dataframe_keeps_nan_close_for_the_caller_to_inspect():
+88:def test_fill_price_gaps_drops_nan_close_rows():
+114:def test_unsettled_latest_bar_is_served_as_the_last_settled_bar(monkeypatch, tmp_path):
+128:def test_no_settled_bar_at_all_is_still_no_data(monkeypatch, tmp_path):
+139:def test_serving_the_last_settled_bar_does_not_bypass_the_staleness_check(
+154:def test_older_nan_close_row_is_still_dropped(monkeypatch, tmp_path):
+168:def test_tz_aware_latest_bar_is_kept_at_the_cutoff(monkeypatch, tmp_path):
+182:def test_the_snapshot_does_not_present_a_filled_price_as_reported(monkeypatch, tmp_path):
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 6.5s)
+
+Let me check `test_older_nan_close_row_is_still_dropped` — it may already cover T-O1-09's cleaning half.
+
+**Tool: read**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/tests/test_ohlcv_latest_bar.py",
+  "offset": 150,
+  "limit": 59
+}
+```
+
+**Output:**
+```
+<path><PROJECT_ROOT>/tests/test_ohlcv_latest_bar.py</path>
+<type>file</type>
+<content>
+150:         _run_load(monkeypatch, tmp_path, frame, "2026-05-08")
+151: 
+152: 
+153: @pytest.mark.unit
+154: def test_older_nan_close_row_is_still_dropped(monkeypatch, tmp_path):
+155:     # A stale gap mid-series is dropped; the valid latest bar is served.
+156:     frame = pd.DataFrame({
+157:         "Date": ["2026-05-06", "2026-05-07", "2026-05-08"],
+158:         "Open": [100.0, 101.0, 102.0], "High": [101.0, 102.0, 103.0],
+159:         "Low": [99.0, 100.0, 101.0],
+160:         "Close": [100.5, float("nan"), 102.5], "Volume": [1_000_000, 1_000_000, 1_000_000],
+161:     })
+162:     out = _run_load(monkeypatch, tmp_path, frame, "2026-05-08")
+163:     assert out["Close"].iloc[-1] == 102.5
+164:     assert (out["Date"] == pd.Timestamp("2026-05-07")).sum() == 0  # the NaN row is gone
+165: 
+166: 
+167: @pytest.mark.unit
+168: def test_tz_aware_latest_bar_is_kept_at_the_cutoff(monkeypatch, tmp_path):
+169:     # A tz-aware/intraday latest bar on the cutoff day must not be filtered out
+170:     # by a naive-vs-aware comparison.
+171:     frame = pd.DataFrame({
+172:         "Date": ["2026-05-07 09:30:00-04:00", "2026-05-08 09:30:00-04:00"],
+173:         "Open": [100.0, 101.0], "High": [101.0, 102.0], "Low": [99.0, 100.0],
+174:         "Close": [100.5, 101.5], "Volume": [1_000_000, 1_000_000],
+175:     })
+176:     out = _run_load(monkeypatch, tmp_path, frame, "2026-05-08")
+177:     assert out["Close"].iloc[-1] == 101.5
+178:     assert out["Date"].iloc[-1] == pd.Timestamp("2026-05-08")
+179: 
+180: 
+181: @pytest.mark.unit
+182: def test_the_snapshot_does_not_present_a_filled_price_as_reported(monkeypatch, tmp_path):
+183:     """Gap filling exists so indicators compute on a continuous series. The
+184:     verification snapshot is the one place a number must be what the vendor
+185:     reported, or the module built to stop invented prices supplies them."""
+186:     from tradingagents.dataflows.vendors.yahoo import ohlcv, snapshot
+187: 
+188:     frame = pd.DataFrame({
+189:         "Date": ["2026-05-06", "2026-05-07", "2026-05-08"],
+190:         "Open": [100.0, 104.5, ""],     # the latest bar has not settled
+191:         "High": [101.0, 105.5, ""],
+192:         "Low": [99.0, 103.5, ""],
+193:         "Close": [100.5, 105.0, 106.0],
+194:         "Volume": [1000000, 1000000, ""],
+195:     })
+196:     today = pd.Timestamp("2026-05-08 12:00")
+197:     monkeypatch.setattr(ohlcv, "get_config", lambda: {"data_cache_dir": str(tmp_path)})
+198:     monkeypatch.setattr(ohlcv.pd.Timestamp, "today", staticmethod(lambda: today))
+199:     cache = tmp_path / "AAPL-YFin-data.csv"
+200:     cache.write_text(frame.to_csv(index=False))
+201:     _stamp(cache, today)
+202:     monkeypatch.setattr(ohlcv.yf, "Ticker", lambda symbol: SimpleNamespace(
+203:         history=lambda *a, **k: (_ for _ in ()).throw(AssertionError("should read the seeded cache"))))
+204: 
+205:     out = snapshot.build_verified_market_snapshot("AAPL", "2026-05-08", 3)
+206: 
+207:     row = out.split("Latest verified OHLCV row")[1].split("###")[0]
+208:     assert "104.50" not in row and "105.50" not in row  # the previous session's numbers
+
+(Showing lines 150-208 of 209. Use offset=209 to continue.)
+</content>
+```
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "grep -n \"def get_indicators\\|route_to_vendor\\|get_indicators\" tradingagents/agents/tools.py | head; echo \"=== AV path returns on its own ===\"; sed -n '85,101p' tradingagents/dataflows/vendors/alpha_vantage/indicator.py"
+}
+```
+
+**Output:**
+```
+14:from tradingagents.dataflows.router import no_data_available, route_to_vendor, vendor_unavailable
+38:    return route_to_vendor("get_stock_data", symbol, start_date, end_date)
+42:def get_indicators(
+66:            results.append(route_to_vendor("get_indicators", symbol, ind, curr_date, look_back_days))
+111:    return route_to_vendor("get_fundamentals", ticker, as_of(curr_date, trade_date))
+130:    return route_to_vendor("get_balance_sheet", ticker, freq, as_of(curr_date, trade_date))
+149:    return route_to_vendor("get_cashflow", ticker, freq, as_of(curr_date, trade_date))
+168:    return route_to_vendor("get_income_statement", ticker, freq, as_of(curr_date, trade_date))
+191:    return route_to_vendor("get_news", ticker, start_date, end_date)
+215:    return route_to_vendor("get_global_news", as_of(curr_date, trade_date), look_back_days, limit)
+=== AV path returns on its own ===
+    try:
+        if indicator == "close_50_sma":
+            data = _make_api_request("SMA", {
+                "symbol": symbol,
+                "interval": interval,
+                "time_period": "50",
+                "series_type": series_type,
+                "datatype": "csv"
+            })
+        elif indicator == "close_200_sma":
+            data = _make_api_request("SMA", {
+                "symbol": symbol,
+                "interval": interval,
+                "time_period": "200",
+                "series_type": series_type,
+                "datatype": "csv"
+            })
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 17.3s)
+
+I've reviewed both revised documents against the current code (reusing my earlier analysis). Summary below — read-only, nothing changed.
+
+## Overall verdict
+
+The documents are **largely consistent** with the code and implementable as a guard-only change. A few assertions need tightening before approval, and two are presently written so they could pass for the wrong reason.
+
+---
+
+## 1. Consistency with the actual code
+
+**Correct and verified:**
+- Problem statement matches `_get_stock_stats_bulk` (`market.py:205`, `"N/A"` only on `pd.isna` at `228-229`), `get_stock_stats` (`market.py:273`, value at `290-292`), and `build_verified_market_snapshot` (`snapshot.py:67`, `iloc[-1]` at `84-85`, `_fmt` at `53-64`). ✔
+- "Current loader removes rows without a closing price and excludes rows after the analysis date" — accurate: `_fill_price_gaps` does `dropna(subset=["Close"])` (`ohlcv.py:87`), `fill_gaps=False` path does too (`ohlcv.py:251`), and the cutoff is `ohlcv.py:230`. ✔
+- "A missing close is not counted" (§2 input contract) — correct for both fill modes: the NaN-close **row is dropped**, not filled (only surviving whole-row gaps are ffill/bfill, `ohlcv.py:88`). ✔
+- "A returned insufficient-history string is a successful router result and does not trigger the next configured vendor" (§3) — correct: `route_to_vendor` returns any non-exception result immediately (`router.py:235-236`); only typed errors fall through. This is a real and important consequence. ✔
+
+**Needs correction / clarification:**
+- **REQ-O1-04 vs. Alpha Vantage.** §1 correctly says AV is out of scope, and §3 flags "the configured indicator vendor may differ from the Yahoo-only verified snapshot." Be explicit: `get_indicators` routes to `alpha_vantage` first in the default chain (`router.py:104-106`; AV is listed before yfinance). If AV succeeds it returns first and **O1's Yahoo guard never runs**. So "every output path" is only true for the Yahoo path. The requirement text "on the bulk indicator path, the per-day fallback, and the verified snapshot" is fine, but add: *when the Yahoo vendor is the one serving the indicator.* Otherwise a reviewer could read REQ-O1-04 as a cross-vendor guarantee it cannot make. (Note: AV's pre-warm-up behavior is server-side and unverified here — the docs already say so correctly.)
+- **"Zero usable closes retain the existing no-market-data behavior" (REQ-O1-01/02), and T-O1-10.** This is accurate but only via `load_ohlcv`: with no closes it raises `NoMarketDataError` (`ohlcv.py:238-241`), which the router turns into `NO_DATA_AVAILABLE` (`router.py:185-197`). The guard test must therefore expect the **loader to raise**, not the guard to emit text. T-O1-10 should exercise the real `load_ohlcv` (seeded cache with no valid close) or assert the raised error — if it only mocks a cleaned frame it can't trigger that path.
+- **Date-absent wording (input contract).** Correct: an absent date yields `"N/A: Not a trading day (weekend or holiday)"` (`market.py:172`) and the doc honestly notes this text doesn't prove holiday vs. missing-data. Good as written.
+
+---
+
+## 2. Can it be implemented without changing unrelated indicators?
+
+**Yes, with one caveat.** `market.py` is shared by every Yahoo indicator (RSI/MACD/Boll/ATR/VWMA/EMA all flow through the same `_get_stock_stats_bulk` / `get_stock_stats`). A guard keyed strictly on `close_50_sma` / `close_200_sma` names leaves others untouched — REQ-O1-05's "equals same-run stockstats reference" is the right check and avoids assuming any numeric result for short history. Two caveats:
+- The counting logic must not alter the returned value type/format for other indicators (keep the existing `str(value)` / `"N/A"` branch).
+- T-O1-07 says "forced per-day fallback, and the verified snapshot" for non-SMA — the snapshot only computes a fixed indicator set (`snapshot.py:24-28`), so testing *arbitrary* non-SMA names there isn't possible; restrict that sub-check to indicators in `DEFAULT_SNAPSHOT_INDICATORS`, or drop the snapshot clause for non-SMA.
+
+---
+
+## 3. Are the test cases practical and executable?
+
+Mostly yes. Issues that could make a test pass for the wrong reason or fail wrongly:
+
+- **T-O1-04 (260-row, inspect `iloc[59]`).** Checking the *60th row* by position is reasonable because `_get_stock_stats_bulk` iterates rows in frame order (`market.py:224`). But it depends on the frame being date-sorted and unique — the doc already flags this as an owner/C confirmation (input contract). Also note the returned map is keyed by **date string**, so index `iloc[59]` must be the frame's 60th date, and the assertion should look up that **date key**, not assume insertion order beyond the same frame. Acceptable if the test derives the date from the frame rather than hard-coding a calendar date.
+- **T-O1-06 (fallback).** Correct trigger: patch `market._get_stock_stats_bulk` to raise a plain `RuntimeError` — but it must **not** be a `VendorError`, or `market.py:181-182` re-raises and skips the fallback. The plan says `RuntimeError`, which is right. Keep `look_back_days=0` (single date) as stated. Note the fallback loop (`market.py:188-193`) renders every date in the window, so a non-zero look-back would add "not a trading day" lines — the `=0` scoping is necessary, good.
+- **T-O1-09 (missing close via real loader).** Good in principle, but the cleaning half is **already covered** by `tests/test_ohlcv_latest_bar.py:154` (`test_older_nan_close_row_is_still_dropped`) and `:88` (`test_fill_price_gaps_drops_nan_close_rows`). The plan already allows "existing loader-cleaning tests may be referenced instead of duplicated" — prefer that; the O1-unique value is only the **connection** from a cleaned 49/199-row frame to the guard, which the mocked-loader cases (T-O1-01/-03) already prove. So T-O1-09 is largely redundant; keep only if you want an end-to-end anchor.
+- **T-O1-05 (snapshot).** Comparing displayed text to `price_text(mean)` is correct because `_fmt` → `price_text` (2 dp, significant-digit aware; `snapshot.py:56-63`, `common.price_text`). Ensure the assertion targets the specific `| close_50_sma | … |` row, not a substring elsewhere.
+- **T-O1-08 (distinct messages).** Practical: build one window with a real short-history date and a genuine non-row date. Note the holiday string is `market.py:172` and per-day `market.py:294`; both must differ from the sentinel. Fine.
+- **Missing tolerance approval.** §1 says "a tolerance approved with the fit criteria" but no number is fixed. The fit criteria say "within an approved tolerance." **Pin it (e.g. 1e-6 on parsed floats before formatting)** or the test is underspecified. Rows like T-O1-02/-03 cannot be objectively judged without it.
+- **A 199/200 snapshot boundary exists in T-O1-05** — good; earlier drafts lacked it.
+
+---
+
+## 4. Anything missed / to change before implementation
+
+1. **Fix the tolerance** to a concrete number in both docs (recommend parse-then-compare floats at 1e-6, and for display compare to `price_text(mean)`).
+2. **Add "when Yahoo serves the indicator"** to REQ-O1-04 (AV-first routing, above) so the "all paths" claim is scoped.
+3. **T-O1-10** must exercise the real loader-raise path, not a mocked cleaned frame.
+4. **Confirm sort/uniqueness** of the cleaned frame is guaranteed (the doc defers to owner/C — that's the right call; just make it a blocking pre-implementation decision, because T-O1-03/-04 depend on it).
+5. **Decide T-O1-09** (reference existing cleaning tests vs. keep). Low risk either way.
+6. **Restrict T-O1-07's snapshot clause** to indicators in `DEFAULT_SNAPSHOT_INDICATORS`.
+7. **Future-row**: the docs handle this correctly (they do **not** claim coverage; `test_excludes_future_rows` checks a price, not SMA counting). No change needed — just keep that wording.
+8. **The "sole sentinel = router success" consequence** (§3) is important: it means a short-history SMA will **not** fall back to another vendor. That's acceptable for guard-only, but state it as intended behavior so nobody assumes cross-vendor completion.
+
+**Historical-data limitation** is stated correctly and prominently (§1 scope limit); the AAPL old-date recovery is explicitly out of scope. Good.
+
+Nothing above requires code changes to assess — all checks are consistency/design review. Awaiting your approval decision; no files changed, no tests run.
+
+---
+
+## User
+
+Thanks for the read-only review. Please recheck two claims before we finalize the documents:
+
+1. `default_config.py` currently sets the technical-indicators vendor to `yfinance`. Correct your statement that the normal default chain uses Alpha Vantage first. Explain separately what happens if the user explicitly selects another vendor or `default`.
+2. For T-O1-10, distinguish a non-empty input whose `Close` values are all missing from an input that becomes empty after the analysis-date cutoff. Specify one exact offline fixture and the existing behavior it should verify; do not assume every zero-row route raises the same error.
+
+Then give me a short table of exact proposed wording changes for the O1 requirements draft and test plan. Include a justified numeric comparison tolerance, the date-key assertion in T-O1-04, and non-SMA snapshot indicators supported by `DEFAULT_SNAPSHOT_INDICATORS`. Separate changes needed before approval from optional test improvements.
+
+Keep this read-only. Do not modify files, implement code, run tests, or mark anything approved. 
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 6.7s)
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "grep -rn \"technical_indicators\\|yfinance\\|alpha_vantage\\|data_vendors\" tradingagents/default_config.py"
+}
+```
+
+**Output:**
+```
+tradingagents/default_config.py:157:        # e.g. "yfinance,alpha_vantage". "default" uses all available vendors.
+tradingagents/default_config.py:158:        "data_vendors": {
+tradingagents/default_config.py:159:            "core_stock_apis": "yfinance",       # Options: alpha_vantage, yfinance
+tradingagents/default_config.py:160:            "technical_indicators": "yfinance",  # Options: alpha_vantage, yfinance
+tradingagents/default_config.py:163:        "fundamental_data": "sec_edgar,yfinance",  # Options: sec_edgar, alpha_vantage, yfinance
+tradingagents/default_config.py:164:            "news_data": "yfinance",             # Options: alpha_vantage, yfinance
+tradingagents/default_config.py:170:            # Example: "get_stock_data": "alpha_vantage",  # Override category default
+
+```
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "grep -rn \"technical_indicators\\|yfinance\\|alpha_vantage\\|get_vendor\\|DEFAULT\\|default\" tradingagents/dataflows/config.py | head -40"
+}
+```
+
+**Output:**
+```
+tradingagents/dataflows/config.py:5:import tradingagents.default_config as default_config
+tradingagents/dataflows/config.py:7:# Use default config but allow it to be overridden
+tradingagents/dataflows/config.py:13:_run_config: ContextVar[dict | None] = ContextVar("tradingagents_run_config", default=None)
+tradingagents/dataflows/config.py:17:    """Initialize the configuration with default values."""
+tradingagents/dataflows/config.py:20:        _config = deepcopy(default_config.DEFAULT_CONFIG)
+tradingagents/dataflows/config.py:37:    partial update like ``{"data_vendors": {"core_stock_apis": "alpha_vantage"}}``
+tradingagents/dataflows/config.py:38:    keeps the other nested keys from the default; scalar keys are replaced.
+tradingagents/dataflows/config.py:46:    """Serve ``config``, over the defaults, to every read made inside the block."""
+tradingagents/dataflows/config.py:47:    token = _run_config.set(_merge(deepcopy(default_config.DEFAULT_CONFIG), config))
+tradingagents/dataflows/config.py:55:    """A context serving ``config``, over the defaults, to every read run in it.
+tradingagents/dataflows/config.py:61:    context.run(_run_config.set, _merge(deepcopy(default_config.DEFAULT_CONFIG), config))
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 5.7s)
+
+Confirmed. Let me verify `get_vendor` and the `default` sentinel behavior.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "sed -n '152,175p' tradingagents/dataflows/router.py; echo \"=== VENDOR_METHODS get_indicators ===\"; sed -n '100,110p' tradingagents/dataflows/router.py"
+}
+```
+
+**Output:**
+```
+def get_category_for_method(method: str) -> str:
+    """Get the category that contains the specified method."""
+    for category, info in TOOLS_CATEGORIES.items():
+        if method in info["tools"]:
+            return category
+    raise ValueError(f"Method '{method}' not found in any category")
+
+
+def get_vendor(category: str, method: str = None) -> str:
+    """Get the configured vendor for a data category or specific tool method.
+    Tool-level configuration takes precedence over category-level.
+    """
+    config = get_config()
+
+    # Check tool-level configuration first (if method provided)
+    if method:
+        tool_vendors = config.get("tool_vendors", {})
+        if method in tool_vendors:
+            return tool_vendors[method]
+
+    # Fall back to category-level configuration
+    return config.get("data_vendors", {}).get(category, "default")
+
+
+=== VENDOR_METHODS get_indicators ===
+        "alpha_vantage": get_alpha_vantage_stock,
+        "yfinance": get_YFin_data_online,
+    },
+    # technical_indicators
+    "get_indicators": {
+        "alpha_vantage": get_alpha_vantage_indicator,
+        "yfinance": get_stock_stats_indicators_window,
+    },
+    # fundamental_data
+    "get_fundamentals": {
+        "alpha_vantage": get_alpha_vantage_fundamentals,
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 16.0s)
+
+Verified. Here are the two rechecks and the wording table.
+
+## 1. Default technical-indicators vendor — my earlier statement was wrong
+
+- `default_config.py:160` sets `"technical_indicators": "yfinance"`. So the **normal default chain is yfinance only**, not Alpha Vantage first. My "AV listed before yfinance → AV serves first" claim was incorrect for the default config. Correct statement: default serves the Yahoo/stockstats path, so the O1 guard is active in the default configuration.
+- **Explicit `alpha_vantage`:** `get_vendor` returns it (`router.py:160-174`), `vendor_chain = ["alpha_vantage"]` (`router.py:216-225`), only AV runs (`router.py:104-106`); O1's Yahoo guard does **not** apply. AV's warm-up behavior is server-side and unverified here.
+- **Explicit `yfinance,alpha_vantage`:** chain is `[yfinance, alpha_vantage]`; yfinance runs first and, if it returns a value (including the new sentinel string), the chain stops (`router.py:235-237`). The sentinel is a successful result, not a `NoMarketDataError`, so it does **not** fall through to AV.
+- **`default` sentinel (no explicit config set):** `get_vendor` falls back to the string `"default"` (`router.py:174`); `route_to_vendor` treats `"default"` as "use all available vendors" (`router.py:216,225`), with `get_indicators` order `alpha_vantage, yfinance` (`router.py:104-106`). **Only in this "default" case** does AV run before yfinance — not in the shipped config, which sets `yfinance` explicitly.
+
+So the doc's REQ-O1-04 should be scoped to "when the yfinance vendor serves the indicator," and the default config does serve it.
+
+## 2. T-O1-10 — two distinct zero-row routes
+
+They are **not** the same error path:
+- **Non-empty input, all `Close` missing:** `load_ohlcv` reaches the all-NaN check (`ohlcv.py:236-241`) and raises `NoMarketDataError(symbol, canonical, "no bar in range has a closing price")`.
+- **Input becomes empty after the analysis-date cutoff:** rows exist but all are `> as_of_dt`; after `data = data[data["Date"] <= as_of_dt]` (`ohlcv.py:230`) the frame is empty, the `.iloc[-1]` check is skipped (`ohlcv.py:236` guards `not data.empty`), and the empty frame flows on. It is **not** guaranteed to raise the same `NoMarketDataError`; behavior depends on downstream (`_fill_price_gaps`/stockstats on empty). Do not assume equivalence.
+
+**Proposed exact offline fixture (non-empty, all-missing-close):** seeded cache CSV with 50 dated rows where **every** `Close` is `""`, using the `tests/test_ohlcv_latest_bar.py:98` `_run_load` pattern (mocked `get_config` → tmp cache, frozen `Timestamp.today`, `Ticker.history` raising "should read seeded cache"). Expected: `pytest.raises(NoMarketDataError)` with detail `"no bar in range has a closing price"`. This verifies **existing** `ohlcv.py:238-241` behavior and that O1 introduces no `have 0` sentinel.
+- For the cutoff-empty route, either **omit** it from T-O1-10 (out of O1 scope) or add a **separate** explicit case asserting whatever current behavior is (verify before writing the assertion — do not assume it raises).
+
+---
+
+## Wording changes table
+
+### Required before approval
+
+| Doc | Location | Change | Justification |
+|---|---|---|---|
+| Requirements | REQ-O1-04 statement | Add: "…when the **yfinance** vendor serves the indicator (the shipped default, `default_config.py:160`); if another vendor such as Alpha Vantage is configured, that vendor's own warm-up behavior applies and is outside O1." | Corrects vendor-routing; default is yfinance, not AV-first. |
+| Requirements | §2 input/output contract, tolerance | Fix numeric tolerance to **1e-6** on parsed floats compared **before** formatting; for snapshot display compare to `price_text(mean)` exactly. | "approved tolerance" is currently unfixed; 1e-6 gives exact-equality margin for float64 rolling means while tolerating last-bit rounding. |
+| Test plan | T-O1-04 | Assert by **date key**, not positional index of the returned dict: derive `target_date = frame["Date"].iloc[59]` (as `"%Y-%m-%d"`), then `assert bulk50[target_date]` is the valid mean and `bulk200[target_date]` is the insufficient text with `have 60`. | The bulk map is keyed by date string (`market.py:224-231`); positional lookup is incidental and depends on insertion order. Date-key is the contract. |
+| Test plan | T-O1-10 | Split into (a) non-empty, **all `Close` missing** → `pytest.raises(NoMarketDataError)` with `"no bar in range has a closing price"` (`ohlcv.py:238-241`), via seeded cache; (b) cutoff-empty **only if** current behavior is first observed and asserted. Do not claim "(a) and (b) raise the same error." | The two routes differ (`ohlcv.py:230` vs `:236-241`); assuming identical errors is unsupported. |
+| Requirements | §3 vendor fallback note | Keep, but rewrite to match §1: default is `yfinance`; the sentinel is a successful router result (`router.py:235-237`) and does not fall through; only the explicit `default` **sentinel** selects all vendors in `alpha_vantage,yfinance` order (`router.py:216,225`). | Removes the incorrect "AV first" implication. |
+
+### Optional test improvements
+
+| Doc | Location | Change | Justification |
+|---|---|---|---|
+| Test plan | T-O1-07 | Restrict the snapshot sub-check to indicators in `DEFAULT_SNAPSHOT_INDICATORS` (`snapshot.py:24-28`): `close_10_ema, rsi, boll, boll_ub, boll_lb, macd, macds, macdh, atr`. Exclude `close_50_sma`/`close_200_sma` (the guarded ones). | The snapshot only computes its fixed set; arbitrary non-SMA names can't be tested there. |
+| Test plan | T-O1-09 | Reference existing cleaning tests (`test_ohlcv_latest_bar.py:88` `test_fill_price_gaps_drops_nan_close_rows`, `:154` `test_older_nan_close_row_is_still_dropped`) instead of duplicating; keep only the "cleaned 49/199-row → guard" link. | Cleaning is already covered; avoid redundancy. |
+| Test plan | T-O1-05 | Assert on the specific `| close_50_sma | … |` row by label, not substring-in-text. | Prevents a passing match from an unrelated line. |
+| Test plan | §1 | State the 1e-6 tolerance explicitly (mirrors Requirements). | Keeps both docs aligned. |
+
+Nothing above is approved; no files modified, nothing run.
+
+---
+
+## User
+
+Please make one final documentation-only revision of:
+
+- `O1-SMA-Guard-Requirements-Draft.md`
+- `O1-SMA-Guard-Test-Plan-Draft.md`
+
+Use your latest source review and make these specific corrections:
+
+1. Scope REQ-O1-04 to the Yahoo/yfinance indicator path. The shipped technical-indicators default is `yfinance`; Alpha Vantage remains outside O1.
+2. In T-O1-04, derive the 60th session's date from the frame and assert both bulk result maps using that date key.
+3. For T-O1-07, use a non-SMA indicator in the default snapshot list. Note that the underlying snapshot function can also accept a custom indicator list.
+4. Rewrite T-O1-10 with one precise offline fixture: a non-empty seeded price frame whose `Close` values are all missing. Exercise an O1 report or snapshot entry point through the real loader, and state whether the direct entry point raises `NoMarketDataError` or a routed tool returns `NO_DATA_AVAILABLE`. Assert that it never produces a numeric SMA or `have 0` insufficient-history text. Do not combine this with the separate empty-after-date-cutoff case.
+5. Propose `abs(actual - expected) <= 1e-6` for numeric SMA comparisons before display formatting; compare snapshot display text to the existing `price_text(mean)` rule. Keep the exact insufficient-history text and tolerance marked as proposed until I approve them.
+
+Keep the chronological, unique-date input assumption visibly pending confirmation with C. Preserve the guard-only historical-data limitation. Do not expand O1 to other indicators or data retrieval.
+
+Edit only these two Markdown files. Do not change source code, create tests, run tests, commit, or push. Keep both documents marked Draft and do not record approval. When finished, briefly list what you changed and what decisions remain for me, C, and F. 
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 4.2s)
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "grep -n \"NoMarketDataError\" tradingagents/dataflows/vendors/yahoo/ohlcv.py; echo \"=== router NO_DATA ===\"; grep -n \"NO_DATA_AVAILABLE\\|no_data_available\" tradingagents/dataflows/router.py; echo \"=== tools get_indicators catch ===\"; sed -n '58,70p' tradingagents/agents/tools.py"
+}
+```
+
+**Output:**
+```
+8:from tradingagents.dataflows.errors import NoMarketDataError
+119:    Raises NoMarketDataError (with a stale-specific detail) so the router treats
+138:        raise NoMarketDataError(
+239:            raise NoMarketDataError(
+=== router NO_DATA ===
+185:def no_data_available(error: NoMarketDataError) -> str:
+193:        f"NO_DATA_AVAILABLE: No usable market data for '{error.symbol}'{resolved} from "
+282:        return no_data_available(last_no_data)
+=== tools get_indicators catch ===
+    """
+    # LLMs sometimes pass multiple indicators as a comma-separated string;
+    # split and process each individually.
+    curr_date = as_of(curr_date, trade_date)
+    indicators = [i.strip().lower() for i in indicator.split(",") if i.strip()]
+    results = []
+    for ind in indicators:
+        try:
+            results.append(route_to_vendor("get_indicators", symbol, ind, curr_date, look_back_days))
+        except ValueError as e:
+            results.append(str(e))
+    return "\n\n".join(results)
+
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 8.1s)
+
+Let me check how the snapshot entry point propagates the loader's `NoMarketDataError`, so T-O1-10 can state the direct-entry behavior precisely.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "sed -n '31,51p' tradingagents/dataflows/vendors/yahoo/snapshot.py; echo \"=== tools snapshot ===\"; sed -n '82,105p' tradingagents/agents/tools.py"
+}
+```
+
+**Output:**
+```
+def _verified_rows(symbol: str, as_of_date: str) -> pd.DataFrame:
+    """OHLCV on or before as_of_date, date-sorted. Raises NoMarketDataError if nothing usable.
+
+    ``load_ohlcv`` already normalizes the Date column and filters out
+    look-ahead rows, but we re-apply the cutoff defensively — this is a
+    verification path, so it must not trust its input to be pre-filtered.
+    """
+    # As reported: this snapshot is quoted by the agents as exact prices, so a
+    # gap-filled cell would put the previous session's number under this date.
+    data = load_ohlcv(symbol, as_of_date, fill_gaps=False)
+    if data is None or data.empty:
+        raise NoMarketDataError(symbol, normalize_symbol(symbol), "no price rows")
+
+    df = data.copy()
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+    df = df.dropna(subset=["Date"])
+    df = df[df["Date"] <= pd.to_datetime(as_of_date)].sort_values("Date")
+    if df.empty:
+        raise NoMarketDataError(symbol, normalize_symbol(symbol), f"no price rows on or before {as_of_date}")
+    return df
+
+=== tools snapshot ===
+
+    Returns the latest OHLCV row on or before curr_date, common technical
+    indicators, and recent closes. Call this before making exact claims about
+    price levels, Bollinger bands, RSI, MACD, moving averages, support /
+    resistance, or historical comparisons, and treat it as the source of truth.
+    """
+    # An exception out of a tool would end the run.
+    try:
+        return build_verified_market_snapshot(symbol, as_of(curr_date, trade_date), look_back_days)
+    except VendorUnavailableError as exc:
+        return vendor_unavailable("get_verified_market_snapshot", exc)
+    except NoMarketDataError as exc:
+        return no_data_available(exc)
+
+
+@tool
+def get_fundamentals(
+    ticker: Annotated[str, InjectedState("company_of_interest")],
+    curr_date: Annotated[str, "current date you are trading at, yyyy-mm-dd"],
+    trade_date: Annotated[str, InjectedState("trade_date")] = "",
+) -> str:
+    """
+    Retrieve comprehensive fundamental data for the instrument under analysis.
+    Uses the configured fundamental_data vendor.
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 5.5s)
+
+All verified. Applying the documentation-only edits.
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/O1-SMA-Guard-Requirements-Draft.md",
+  "oldString": "| REQ-O1-04 | Functional behavior | Apply REQ-O1-01 and REQ-O1-02 on the bulk indicator path, the per-day fallback, and the verified snapshot. | **Must.** An unguarded path would still send a misleading value to the analyst. | Each path reports insufficient history for 49/199 sessions and a valid value at the corresponding 50/200 boundary. |",
+  "newString": "| REQ-O1-04 | Functional behavior | When the yfinance/stockstats vendor serves the indicator (the shipped technical-indicators default, `default_config.py:160`), apply REQ-O1-01 and REQ-O1-02 on the bulk indicator path, the per-day fallback, and the verified snapshot. Alpha Vantage and any other configured indicator vendor remain outside O1. | **Must.** An unguarded Yahoo path would still send a misleading value to the analyst. | On the Yahoo path, each of the bulk, fallback, and snapshot entry points reports insufficient history for 49/199 sessions and a valid value at the corresponding 50/200 boundary. |"
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 4.8s)
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/O1-SMA-Guard-Requirements-Draft.md",
+  "oldString": "**Proposed text:** `N/A: insufficient history (needs W sessions, have N)`, where W is 50 or 200 and N is the number of usable closes through the reported date. This text is not current behavior and requires approval.",
+  "newString": "**Proposed text (not current behavior; requires owner approval):** `N/A: insufficient history (needs W sessions, have N)`, where W is 50 or 200 and N is the number of usable closes through the reported date.\n\n**Proposed numeric comparison (requires owner approval):** for a valid SMA, compare parsed numeric values against an independently computed mean as `abs(actual - expected) <= 1e-6` **before** any display formatting. For the snapshot, format the expected mean with the existing `price_text` rule and compare the displayed text exactly."
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 5.9s)
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/O1-SMA-Guard-Requirements-Draft.md",
+  "oldString": "**Input and output contract:** The existing public tool inputs and function signatures remain unchanged. The Yahoo path receives a symbol, indicator name, analysis date, and (for the report) look-back period. Valid results retain the current numeric rendering; insufficient results use the approved text. The guard counts one cleaned, dated closing-price row per session through the date being reported. The owner and C must confirm that the input is chronologically ordered with unique dates, or assign that guarantee to a specific component before approval. A missing close is not counted. A date absent from the cleaned loader output retains the existing non-trading-day message; this wording does not prove whether the date was actually a holiday or a missing-data day. The snapshot uses its latest trading row on or before the requested analysis date.",
+  "newString": "**Input and output contract:** The existing public tool inputs and function signatures remain unchanged. The Yahoo path receives a symbol, indicator name, analysis date, and (for the report) look-back period. Valid results retain the current numeric rendering; insufficient results use the approved text. The guard counts one cleaned, dated closing-price row per session through the date being reported. **Pending confirmation with C:** the owner and C must confirm that the cleaned input is chronologically ordered with unique dates (or assign that guarantee to a specific component) before approval, because the per-date counting and the by-date map lookup assume it. A missing close is not counted. A date absent from the cleaned loader output retains the existing non-trading-day message; this wording does not prove whether the date was actually a holiday or a missing-data day. The snapshot uses its latest trading row on or before the requested analysis date."
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 5.4s)
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/O1-SMA-Guard-Requirements-Draft.md",
+  "oldString": "| `ohlcv.py`, router, tools, Alpha Vantage | No proposed O1 change. | Historical download behavior remains a documented limitation. The configured indicator vendor may differ from the Yahoo-only verified snapshot. A returned insufficient-history string is a successful router result and does not trigger the next configured vendor. C must record this authority and fallback contract. |",
+  "newString": "| `ohlcv.py`, router, tools, Alpha Vantage | No proposed O1 change. | Historical download behavior remains a documented limitation. The shipped technical-indicators default is `yfinance` (`default_config.py:160`), so the Yahoo guard is active by default; if a user configures `alpha_vantage` (or another vendor) that vendor's own warm-up behavior applies and O1 does not cover it. The only configuration that selects every vendor is the explicit `\"default\"` sentinel, which. for `get_indicators`, orders `alpha_vantage` before `yfinance` (`router.py:216,225`, `router.py:104-106`). On the yfinance path a returned insufficient-history string is a successful router result and does not fall through to another vendor (`router.py:235-237`); C must record this authority and fallback contract. |"
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 5.7s)
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/O1-SMA-Guard-Requirements-Draft.md",
+  "oldString": "| Exact insufficient-history text | Proposed above; decision pending. |",
+  "newString": "| Exact insufficient-history text | Proposed above; decision pending. |\n| Numeric comparison tolerance (`<= 1e-6`, pre-format) | Proposed above; decision pending. |\n| Chronological, unique-date input guarantee | Pending confirmation with Member C. |"
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 6.3s)
+
+Now the test plan edits.
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/O1-SMA-Guard-Test-Plan-Draft.md",
+  "oldString": "Use deterministic, non-constant OHLCV prices on chronologically ordered, unique simulated session dates. For guard tests, replace `market.load_ohlcv` or `snapshot.load_ohlcv` with a frame that represents the **already-cleaned** loader output. The reported date must be a date in the frame unless a test explicitly checks an absent date. Compute expected valid SMAs independently as the mean of the latest W usable closes through that date. Compare parsed numeric values using a tolerance approved with the fit criteria; for the snapshot, compare the expected displayed text after applying the existing price-format rule. For a report, assert the entire value on the **target date line**, not the presence of a value elsewhere in the report.",
+  "newString": "Use deterministic, non-constant OHLCV prices on chronologically ordered, unique simulated session dates (the chronological/unique-date input guarantee is **pending confirmation with C**; see the requirements draft). For guard tests, replace `market.load_ohlcv` or `snapshot.load_ohlcv` with a frame that represents the **already-cleaned** loader output. The reported date must be a date in the frame unless a test explicitly checks an absent date. Compute expected valid SMAs independently as the mean of the latest W usable closes through that date. Compare parsed numeric values with the **proposed** tolerance `abs(actual - expected) <= 1e-6`, applied **before** display formatting (pending owner approval); for the snapshot, compare the expected displayed text to the existing `price_text(mean)` rule. For a report, assert the entire value on the **target date line**, not the presence of a value elsewhere in the report."
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 7.9s)
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/O1-SMA-Guard-Test-Plan-Draft.md",
+  "oldString": "| T-O1-04 | A 260-row cleaned frame; call `_get_stock_stats_bulk` separately for `close_50_sma` and `close_200_sma` at the last date, then inspect the date of the 60th chronological session (`iloc[59]`) in both returned maps. | At that exact date, 50-SMA is valid and 200-SMA is insufficient with N=60. | Using whole-frame length for an early reported date. | REQ-O1-03 |",
+  "newString": "| T-O1-04 | A 260-row cleaned frame; derive the 60th session's date from the frame (`target_date = frame[\"Date\"].iloc[59]`, formatted `%Y-%m-%d`), then call `_get_stock_stats_bulk` separately for `close_50_sma` and `close_200_sma` and look up `target_date` as a **key** in each returned map. | At `bulk50[target_date]` the 50-SMA is valid (matches the latest-50 mean within 1e-6); at `bulk200[target_date]` the 200-SMA is insufficient with N=60. | Using whole-frame length for an early reported date, or a positional lookup that only works by insertion order. | REQ-O1-03 |"
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 10.8s)
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/O1-SMA-Guard-Test-Plan-Draft.md",
+  "oldString": "| T-O1-07 | For a controlled frame, request representative non-SMA indicators through bulk, forced per-day fallback, and the verified snapshot; compute references from the same frame with stockstats directly. Run all prior test suites after implementation. | Each tested non-SMA value matches its direct reference or existing display rule; all prior suites pass. | Guard accidentally applying to unrelated indicators in an edited path. | REQ-O1-05 |",
+  "newString": "| T-O1-07 | For a controlled frame, request a non-SMA indicator present in `DEFAULT_SNAPSHOT_INDICATORS` (`snapshot.py:24-28`, e.g. `rsi`) through bulk, forced per-day fallback, and the verified snapshot; compute references from the same frame with stockstats directly. Note the snapshot builder also accepts a custom `indicators` argument, but O1 tests only use the default list to avoid depending on arbitrary names. Run all prior test suites after implementation. | Each tested non-SMA value matches its direct reference within 1e-6 or the existing display rule; all prior suites pass. | Guard accidentally applying to unrelated indicators in an edited path. | REQ-O1-05 |"
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 10.4s)
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/O1-SMA-Guard-Test-Plan-Draft.md",
+  "oldString": "| T-O1-10 | An empty or no-usable-close input reaches the existing no-data/error path under controlled offline conditions. | No numeric SMA and no misleading `have 0` insufficient-history result; the existing no-data behavior is preserved. | Confusing absent market data with an available but short SMA history. | REQ-O1-01, -02 |",
+  "newString": "| T-O1-10 | One offline fixture: a **non-empty** seeded price frame (e.g. 50 dated rows) whose `Close` values are **all missing**, loaded through the real `load_ohlcv` via the `_run_load` seeded-cache pattern (`tests/test_ohlcv_latest_bar.py:98`). Exercise an O1 entry point (bulk report / snapshot). At the **direct** entry point `load_ohlcv` raises `NoMarketDataError` with detail `\"no bar in range has a closing price\"` (`ohlcv.py:238-241`); through the **routed tool** (`get_indicators` via `route_to_vendor`, or `get_verified_market_snapshot` which calls `no_data_available`, `tools.py:94-96`) the result is the `NO_DATA_AVAILABLE` sentinel (`router.py:185-197`). | The output never contains a numeric SMA and never contains `have 0` insufficient-history text; the existing no-data behavior is preserved. | Confusing absent market data with an available but short SMA history, or emitting a fabricated/zero-count SMA. | REQ-O1-01, -02, -04 |"
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 5.2s)
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/O1-SMA-Guard-Test-Plan-Draft.md",
+  "oldString": "“Insufficient” below means the approved labelled text, with no numeric SMA for that indicator. W−1 and W are the essential boundaries; 40, 60, and 220 are additional representative cases.",
+  "newString": "“Insufficient” below means the proposed labelled text, with no numeric SMA for that indicator; both the text and the `<= 1e-6` tolerance remain **proposed pending owner approval**. W−1 and W are the essential boundaries; 40, 60, and 220 are additional representative cases.\n\nT-O1-10 covers only the **non-empty, all-`Close`-missing** case. It is deliberately **not** combined with a frame that becomes empty after the analysis-date cutoff (`ohlcv.py:230`); that route is separate and its current behavior must be observed before any assertion is written."
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 7.1s)
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/O1-SMA-Guard-Test-Plan-Draft.md",
+  "oldString": "Before OpenCode writes implementation code, record the approved O1 scope, exact sentinel text, requirement/test-plan version, reviewer, approval date, and evidence location. The approved test cases should be fixed before implementation begins. If the scope changes to include historical download or cache behavior, revise the requirements and test plan, then obtain approval for that changed plan.",
+  "newString": "Before OpenCode writes implementation code, record the approved O1 scope, exact sentinel text, numeric tolerance, requirement/test-plan version, reviewer, approval date, and evidence location. The approved test cases should be fixed before implementation begins. If the scope changes to include historical download or cache behavior, revise the requirements and test plan, then obtain approval for that changed plan.\n\n**Guard-only scope limit (unchanged):** O1 does not change the historical download window or cache, and does not recover older prices (e.g. the AAPL case in issue #1679). O1 does not extend to other indicators or to non-Yahoo data retrieval."
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 7.1s)
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/O1-SMA-Guard-Test-Plan-Draft.md",
+  "oldString": "The course's required repository structure and the team's workspace document put deterministic tests in `test/offline/`. The current `pyproject.toml` uses `testpaths = [\"tests\"]`, while CI runs `pytest -q`; simply adding O1 tests under `test/offline/` would not make CI collect them. **Member F should decide and document the collection change before implementation.** A suitable approach is to include both the inherited `tests/` suite and the team-owned `test/offline/` directory in pytest discovery, so the old regression suite and O1 tests run together. This is a proposed CI decision, not a completed change.",
+  "newString": "The course's required repository structure and the team's workspace document put deterministic tests in `test/offline/`. The current `pyproject.toml` uses `testpaths = [\"tests\"]`, while CI runs `pytest -q`; simply adding O1 tests under `test/offline/` would not make CI collect them. **Member F should decide and document the collection change before implementation.** A suitable approach is to include both the inherited `tests/` suite and the team-owned `test/offline/` directory in pytest discovery, so the old regression suite and O1 tests run together. This is a proposed CI decision, not a completed change; nothing is approved."
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 7.9s)
+
+Let me verify the final state reads cleanly around the edited sections.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "sed -n '26,34p;40,42p;44,56p' O1-SMA-Guard-Requirements-Draft.md"
+}
+```
+
+**Output:**
+```
+| REQ-O1-04 | Functional behavior | When the yfinance/stockstats vendor serves the indicator (the shipped technical-indicators default, `default_config.py:160`), apply REQ-O1-01 and REQ-O1-02 on the bulk indicator path, the per-day fallback, and the verified snapshot. Alpha Vantage and any other configured indicator vendor remain outside O1. | **Must.** An unguarded Yahoo path would still send a misleading value to the analyst. | On the Yahoo path, each of the bulk, fallback, and snapshot entry points reports insufficient history for 49/199 sessions and a valid value at the corresponding 50/200 boundary. |
+| REQ-O1-05 | Invariant | Leave non-SMA indicators' behavior unchanged. | **Must.** A broad guard could suppress unrelated indicators. | For a controlled frame, each selected non-SMA output equals the same-run direct stockstats reference; the prior regression suite has zero new failures. |
+| REQ-O1-06 | Quality attribute: clear output | Use a labelled insufficient-history result that is distinct from the existing non-trading-day result. The exact text remains a review decision. | **Must.** A generic `N/A` would hide the reason from the analyst. | Metric: ambiguous statuses in the O1 output tests. Threshold: **0**. Verification: tests assert distinct exact text for insufficient history and a non-trading day. |
+
+**Proposed text (not current behavior; requires owner approval):** `N/A: insufficient history (needs W sessions, have N)`, where W is 50 or 200 and N is the number of usable closes through the reported date.
+
+**Proposed numeric comparison (requires owner approval):** for a valid SMA, compare parsed numeric values against an independently computed mean as `abs(actual - expected) <= 1e-6` **before** any display formatting. For the snapshot, format the expected mean with the existing `price_text` rule and compare the displayed text exactly.
+
+**Input and output contract:** The existing public tool inputs and function signatures remain unchanged. The Yahoo path receives a symbol, indicator name, analysis date, and (for the report) look-back period. Valid results retain the current numeric rendering; insufficient results use the approved text. The guard counts one cleaned, dated closing-price row per session through the date being reported. **Pending confirmation with C:** the owner and C must confirm that the cleaned input is chronologically ordered with unique dates (or assign that guarantee to a specific component) before approval, because the per-date counting and the by-date map lookup assume it. A missing close is not counted. A date absent from the cleaned loader output retains the existing non-trading-day message; this wording does not prove whether the date was actually a holiday or a missing-data day. The snapshot uses its latest trading row on or before the requested analysis date.
+| `market.py` | Guard `_get_stock_stats_bulk` per row and `get_stock_stats` for the fallback. A shared SMA-window rule may live here. | Other Yahoo indicators use this file. |
+| `snapshot.py` | Guard the latest reported SMA values with the same rule. | The market analyst treats this snapshot as a source for exact claims. |
+| `ohlcv.py`, router, tools, Alpha Vantage | No proposed O1 change. | Historical download behavior remains a documented limitation. The shipped technical-indicators default is `yfinance` (`default_config.py:160`), so the Yahoo guard is active by default; if a user configures `alpha_vantage` (or another vendor) that vendor's own warm-up behavior applies and O1 does not cover it. The only configuration that selects every vendor is the explicit `"default"` sentinel, which. for `get_indicators`, orders `alpha_vantage` before `yfinance` (`router.py:216,225`, `router.py:104-106`). On the yfinance path a returned insufficient-history string is a successful router result and does not fall through to another vendor (`router.py:235-237`); C must record this authority and fallback contract. |
+Member C should check whether another feature plans to edit `market.py` or `snapshot.py`, and whether the proposed helper has an appropriate home. Member F should resolve the offline-test location and CI collection issue described in the companion test plan. Member B can incorporate the approved requirements into the course's machine-readable YAML registry; this Markdown draft is not the final D1 deliverable.
+
+## 4. Review decisions and record
+
+| Decision | Current state |
+|---|---|
+| O1 scope: guard only, or also historical data retrieval | Guard only is proposed; Member A decision pending. |
+| Exact insufficient-history text | Proposed above; decision pending. |
+| Numeric comparison tolerance (`<= 1e-6`, pre-format) | Proposed above; decision pending. |
+| Chronological, unique-date input guarantee | Pending confirmation with Member C. |
+| File/interface conflict check with Member C | Pending. |
+| Test location and CI collection with Member F | Pending. |
+| Requirements and test-plan approval before implementation | Pending; record approver, date, version, and evidence after the actual decision. |
+
+```
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "sed -n '9,11p;17,31p;34,40p' O1-SMA-Guard-Test-Plan-Draft.md"
+}
+```
+
+**Output:**
+```
+Use deterministic, non-constant OHLCV prices on chronologically ordered, unique simulated session dates (the chronological/unique-date input guarantee is **pending confirmation with C**; see the requirements draft). For guard tests, replace `market.load_ohlcv` or `snapshot.load_ohlcv` with a frame that represents the **already-cleaned** loader output. The reported date must be a date in the frame unless a test explicitly checks an absent date. Compute expected valid SMAs independently as the mean of the latest W usable closes through that date. Compare parsed numeric values with the **proposed** tolerance `abs(actual - expected) <= 1e-6`, applied **before** display formatting (pending owner approval); for the snapshot, compare the expected displayed text to the existing `price_text(mean)` rule. For a report, assert the entire value on the **target date line**, not the presence of a value elsewhere in the report.
+
+Keep the bulk report, fallback, and snapshot checks separate. `get_stock_stats_indicators_window` takes one indicator name per call, so 50-SMA and 200-SMA assertions require separate calls. Unit cases should use no live network or paid API. The plan's expected outcomes are **not observed test results**.
+T-O1-10 covers only the **non-empty, all-`Close`-missing** case. It is deliberately **not** combined with a frame that becomes empty after the analysis-date cutoff (`ohlcv.py:230`); that route is separate and its current behavior must be observed before any assertion is written.
+
+| Test ID | Controlled input and entry point | Expected result | Detects | Requirements |
+|---|---|---|---|---|
+| T-O1-01 | 40 and 49 cleaned closes; call the bulk indicator report separately for each SMA. | Both SMAs insufficient at 40; 50-SMA insufficient at 49. | Partial-window value and 49/50 off-by-one. | REQ-O1-01, -02 |
+| T-O1-02 | 50 and 60 cleaned closes; separate bulk report calls. | 50-SMA equals the latest-50 mean; 200-SMA insufficient at both counts. | Incorrect 50 boundary or false 200-SMA. | REQ-O1-01, -02 |
+| T-O1-03 | 199, 200, and 220 cleaned closes; separate bulk report calls. | 200-SMA insufficient at 199; at 200 and 220 both SMAs equal their respective latest-window means. | 199/200 off-by-one or wrong normal value. | REQ-O1-01, -02 |
+| T-O1-04 | A 260-row cleaned frame; derive the 60th session's date from the frame (`target_date = frame["Date"].iloc[59]`, formatted `%Y-%m-%d`), then call `_get_stock_stats_bulk` separately for `close_50_sma` and `close_200_sma` and look up `target_date` as a **key** in each returned map. | At `bulk50[target_date]` the 50-SMA is valid (matches the latest-50 mean within 1e-6); at `bulk200[target_date]` the 200-SMA is insufficient with N=60. | Using whole-frame length for an early reported date, or a positional lookup that only works by insertion order. | REQ-O1-03 |
+| T-O1-05 | Snapshot with 40, 50, 199, and 200 cleaned closes. | At 40 both SMA cells insufficient; at 50 only 50-SMA valid; at 199 only 50-SMA valid; at 200 both valid. Valid displayed values match independently computed means after display formatting. | Snapshot bypassing guard or boundary error. | REQ-O1-01, -02, -04 |
+| T-O1-06 | Make `_get_stock_stats_bulk` raise `RuntimeError`; give the fallback cleaned frames of 49/50 and 199/200 rows. Call `get_stock_stats_indicators_window` separately for each SMA with `look_back_days=0` and the frame's last trading date. | The 49-row 50-SMA and 199-row 200-SMA return the insufficient-history line; the 50-row 50-SMA and 200-row 200-SMA return their correct means. | A bulk-only fix or a wrong fallback boundary. | REQ-O1-01, -02, -04 |
+| T-O1-07 | For a controlled frame, request a non-SMA indicator present in `DEFAULT_SNAPSHOT_INDICATORS` (`snapshot.py:24-28`, e.g. `rsi`) through bulk, forced per-day fallback, and the verified snapshot; compute references from the same frame with stockstats directly. Note the snapshot builder also accepts a custom `indicators` argument, but O1 tests only use the default list to avoid depending on arbitrary names. Run all prior test suites after implementation. | Each tested non-SMA value matches its direct reference within 1e-6 or the existing display rule; all prior suites pass. | Guard accidentally applying to unrelated indicators in an edited path. | REQ-O1-05 |
+| T-O1-08 | In one window output, include a trading date with insufficient SMA history and a nearby weekend/holiday date. | The two dates have distinct, exact messages: insufficient history versus not a trading day. | Ambiguous unavailable status. | REQ-O1-06 |
+| T-O1-09 | Use a seeded local cache with 50 dated rows, one middle `Close` missing, and call an O1 entry point through the real `load_ohlcv`; repeat for 200 rows if the 50-case does not cover a separate branch. Keep vendor behavior controlled and offline. | The loader removes the missing-close row; the resulting 49/199 usable closes do not satisfy the 50/200 SMA window. Existing loader-cleaning tests may be referenced instead of duplicated. | Counting an invalid close as a valid session or failing to connect loader cleaning to the guard. | REQ-O1-01, -02 |
+| T-O1-10 | One offline fixture: a **non-empty** seeded price frame (e.g. 50 dated rows) whose `Close` values are **all missing**, loaded through the real `load_ohlcv` via the `_run_load` seeded-cache pattern (`tests/test_ohlcv_latest_bar.py:98`). Exercise an O1 entry point (bulk report / snapshot). At the **direct** entry point `load_ohlcv` raises `NoMarketDataError` with detail `"no bar in range has a closing price"` (`ohlcv.py:238-241`); through the **routed tool** (`get_indicators` via `route_to_vendor`, or `get_verified_market_snapshot` which calls `no_data_available`, `tools.py:94-96`) the result is the `NO_DATA_AVAILABLE` sentinel (`router.py:185-197`). | The output never contains a numeric SMA and never contains `have 0` insufficient-history text; the existing no-data behavior is preserved. | Confusing absent market data with an available but short SMA history, or emitting a fabricated/zero-count SMA. | REQ-O1-01, -02, -04 |
+
+## 3. Offline execution and CI handoff
+
+The course's required repository structure and the team's workspace document put deterministic tests in `test/offline/`. The current `pyproject.toml` uses `testpaths = ["tests"]`, while CI runs `pytest -q`; simply adding O1 tests under `test/offline/` would not make CI collect them. **Member F should decide and document the collection change before implementation.** A suitable approach is to include both the inherited `tests/` suite and the team-owned `test/offline/` directory in pytest discovery, so the old regression suite and O1 tests run together. This is a proposed CI decision, not a completed change; nothing is approved.
+
+All O1 cases must make **zero outbound network requests**. Mocked-loader cases use in-memory frames; the loader-cleaning case uses a seeded local cache and controlled vendor behavior. Mark offline tests as unit tests under the agreed configuration. The new tests and **all prior rounds' test suites** must pass in the approved CI matrix; results are pending. Before implementation code, record approval of the concrete test cases and their version; later preserve a negative test failing on the unguarded baseline, then passing with the guard.
+
+## 4. Approval record and implementation boundary
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 6.7s)
+
+One typo in my requirements edit ("which. for"). Fixing it.
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/O1-SMA-Guard-Requirements-Draft.md",
+  "oldString": "The only configuration that selects every vendor is the explicit `\"default\"` sentinel, which. for `get_indicators`, orders `alpha_vantage` before `yfinance`",
+  "newString": "The only configuration that selects every vendor is the explicit `\"default\"` sentinel, which for `get_indicators` orders `alpha_vantage` before `yfinance`"
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 8.8s)
+
+Both documents updated (documentation only; nothing run, nothing approved).
+
+## What I changed
+
+**`O1-SMA-Guard-Requirements-Draft.md`**
+- **REQ-O1-04** scoped to the yfinance/stockstats path when that vendor serves the indicator (shipped default `default_config.py:160`); Alpha Vantage/other vendors explicitly outside O1.
+- Added **proposed** numeric tolerance `abs(actual - expected) <= 1e-6` (pre-format) and snapshot display compared to `price_text(mean)`; both marked pending approval. Named text also marked proposed-pending-approval.
+- Input contract: chronological/unique-date guarantee now **pending confirmation with C**, tied to per-date counting and by-date map lookup.
+- §3 vendor note corrected: default is `yfinance`; only the explicit `"default"` sentinel selects all vendors (AV before yfinance); sentinel is a successful result and does not fall through (`router.py:235-237`).
+- Review-decisions table gained rows for the tolerance and the C confirmation.
+
+**`O1-SMA-Guard-Test-Plan-Draft.md`**
+- §1: added the `<= 1e-6` pre-format tolerance, `price_text(mean)` for snapshot, and the pending-C note on input ordering.
+- **T-O1-04**: derives `target_date = frame["Date"].iloc[59]` and asserts both bulk maps by that **date key**.
+- **T-O1-07**: uses a `DEFAULT_SNAPSHOT_INDICATORS` member (e.g. `rsi`), notes the builder also accepts a custom `indicators` argument, defaults-only for O1.
+- **T-O1-10**: rewritten as one non-empty, all-`Close`-missing seeded frame through the real loader; direct entry raises `NoMarketDataError` (`ohlcv.py:238-241`), routed tool returns `NO_DATA_AVAILABLE` (`router.py:185-197`, `tools.py:94-96`); asserts no numeric SMA and no `have 0` text. Explicitly separated from the empty-after-cutoff case.
+- Noted text/tolerance remain proposed; guard-only scope limit restated; nothing marked approved.
+</br>
+
+## Decisions remaining
+
+- **Member A (you):** approve O1 guard-only scope; exact insufficient-history text; the `<= 1e-6` tolerance.
+- **Member C:** confirm the cleaned input is chronologically ordered with unique dates (blocking approve); file/interface conflict check on `market.py`/`snapshot.py` and helper home; record the vendor authority/fallback contract.
+- **Member F:** resolve `test/offline/` vs `tests/` pytest/CI collection; confirm offline-only execution and the CI matrix run.
+
+---
+
+## User
+
+Please review O1-SMA-Guard-Test-Plan-v1.0-DRAFT.md against the current local source code and the O1 requirements in docs/req/requirements.yaml.
+
+For each T-O1-01 through T-O1-12, tell me whether the stated entry point, fixture, and expected assertion are executable. Focus especially on the shuffled and duplicate-date cases (T-O1-11/12), the fallback path, and the real loader cases. For any problem, cite the relevant function and suggest the smallest correction to the test plan.
+
+Please only inspect files. Do not edit files, write tests, run tests, or implement the guard. We will submit the corrected plan to F for pre-implementation review. 
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 5.0s)
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "ls -la O1-SMA-Guard-Test-Plan-v1.0-DRAFT.md docs/req/requirements.yaml 2>&1"
+}
+```
+
+**Output:**
+```
+-rw-r--r--@ 1 caicys  staff  86814 11月 16 12:03 docs/req/requirements.yaml
+-rw-r--r--@ 1 caicys  staff   8572 11月 16 14:46 O1-SMA-Guard-Test-Plan-v1.0-DRAFT.md
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 2.6s)
+
+**Tool: read**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/O1-SMA-Guard-Test-Plan-v1.0-DRAFT.md"
+}
+```
+
+**Output:**
+```
+<path><PROJECT_ROOT>/O1-SMA-Guard-Test-Plan-v1.0-DRAFT.md</path>
+<type>file</type>
+<content>
+1: # O1 — SMA Validity Guard: Test Plan v1.0 (Draft)
+2: 
+3: **Owner:** Member A  
+4: **Reviewers:** Member F (test plan); Member B (requirement–case mapping)  
+5: **Status:** Prepared for review on 16 November 2026. No pre-implementation approval, execution, or result is claimed.  
+6: **Requirement baseline:** `docs/req/requirements.yaml`, REQ-O1-01 through REQ-O1-06, in the requirements review PR. Check its merged version before approval.
+7: 
+8: ## 1. Scope and method
+9: 
+10: Test the Yahoo/stockstats `close_50_sma` and `close_200_sma` paths only: the bulk indicator report, the per-day fallback, and the verified snapshot. The guard does not change the history download window, cache, other indicators, or other vendors.
+11: 
+12: Use deterministic non-constant OHLCV frames with dated closes and no external network. For boundary cases, replace the Yahoo module's `load_ohlcv` with a frame representing cleaned loader output. For loader cases, exercise the real `load_ohlcv` using a seeded local cache and block downloads. Calculate expected SMA values independently from the latest 50 or 200 valid closes on or before the target date. Compare the unformatted value with absolute error at most `1e-6`; compare snapshot text using the existing `price_text` display rule. Check the value for the **target date**, not a matching value elsewhere in the report.
+13: 
+14: The required insufficient-history value is exactly `N/A: insufficient history (needs W sessions, have N)` after replacing W and N with integer counts. A duplicate trading date gives exactly `N/A: invalid price history (duplicate trading date)` for the requested SMA. The existing non-trading-day and no-market-data results stay distinct. The cases below are planned outcomes, not observed results.
+15: 
+16: ## 2. Cases and requirement mapping
+17: 
+18: | ID | Controlled input and entry point | Expected assertion | Requirements |
+19: |---|---|---|---|
+20: | T-O1-01 | 40 and 49 cleaned dated closes; call `_get_stock_stats_bulk` separately for each SMA. | At 40, both SMA values are exact insufficient-history strings with `have 40`; at 49, 50-SMA says `have 49`. No partial-window number. | REQ-O1-01, REQ-O1-02 |
+21: | T-O1-02 | 50 and 60 cleaned closes; separate bulk calls. | 50-SMA equals the latest-50 mean within tolerance; 200-SMA says `have 50` or `have 60`. | REQ-O1-01, REQ-O1-02 |
+22: | T-O1-03 | 199, 200, and 220 cleaned closes; separate bulk calls. | At 199, 200-SMA says `have 199`; at 200 and 220, both SMAs equal their latest-window means. | REQ-O1-01, REQ-O1-02 |
+23: | T-O1-04 | 260 ordered dates; request the 60th chronological date from `_get_stock_stats_bulk` for each SMA and look it up by date key. | On that date, 50-SMA equals the mean of dates 11–60; 200-SMA says `have 60`, despite 260 rows being present. | REQ-O1-03 |
+24: | T-O1-05 | Call `build_verified_market_snapshot` with 40, 50, 199, and 200 cleaned closes, using the default indicators. | Its 50/200 SMA cells have the same boundary outcomes; valid cells match `price_text` of the independently computed mean. | REQ-O1-01, REQ-O1-02, REQ-O1-04 |
+25: | T-O1-06 | Force `_get_stock_stats_bulk` to raise `RuntimeError`; call `get_stock_stats_indicators_window` for each SMA with `look_back_days=0` and frames of 49/50 or 199/200 rows. | The target-date report line has the exact insufficient string at W−1 and a correct mean at W. Confirm the fallback really ran. | REQ-O1-01, REQ-O1-02, REQ-O1-04 |
+26: | T-O1-07 | On a controlled frame, request one default non-SMA indicator, such as `rsi`, through bulk, forced fallback, and snapshot; compute a same-frame stockstats reference. | Non-SMA values retain their prior numerical/display behavior; the existing regression suite has no new failures. | REQ-O1-05 |
+27: | T-O1-08 | In one `get_stock_stats_indicators_window` output, include a dated row with insufficient history and a nearby absent weekend date. | The first line has the exact insufficient-history value; the absent date has the existing `N/A: Not a trading day (weekend or holiday)` value. | REQ-O1-06 |
+28: | T-O1-09 | Seed the real `load_ohlcv` cache with 50 dated rows and one middle missing `Close`; repeat with 200 rows if needed to cover both windows. Keep the current date, cache, and vendor controlled. | Loader removes the missing-close row. The O1 entry point counts 49/199 valid closes and does not return a numeric 50/200 SMA. Reuse existing loader tests where they prove the cleaning step. | REQ-O1-01, REQ-O1-02 |
+29: | T-O1-10 | Seed a **non-empty** cache frame whose `Close` column is entirely missing; exercise real `load_ohlcv` and one routed O1 tool. | Direct loader raises `NoMarketDataError` with detail `no bar in range has a closing price`; the routed output has `NO_DATA_AVAILABLE`, with no numeric SMA or `have 0` message. | REQ-O1-01, REQ-O1-02, REQ-O1-04 |
+30: | T-O1-11 | Give the Yahoo SMA calculation 260 unique dates with non-constant closes in shuffled row order. Query the 60th chronological date and the last date; use the same dates in sorted order as the control. Also put an extreme later price after an earlier requested analysis date. | Shuffled and sorted inputs give the same value **for each date**: at date 60, 50-SMA is the latest-50 mean and 200-SMA says `have 60`; at the final date, both SMAs match their latest-window means. Later rows do not affect an earlier date. | REQ-O1-03 |
+31: | T-O1-12 | Supply a cleaned-looking frame with two rows sharing a trading date. Request both SMAs through the bulk entry point, the per-day path, and the snapshot where each accepts the frame. Use a separate non-SMA control. | No SMA entry point publishes a numeric result for the invalid history; the requested SMA result is the exact duplicate-date message. The non-SMA control retains its prior behavior. | REQ-O1-03, REQ-O1-06 |
+32: 
+33: For T-O1-11, a mocked loader can deliberately return shuffled/future rows to test the SMA boundary. That does **not** prove the real loader's analysis-date cutoff; the existing `load_ohlcv` cutoff and snapshot future-row test are separate regression evidence. For T-O1-12, confirm whether a public routed tool can expose duplicate input before writing an assertion about the routed text. Do not invent a routed status that the current interface cannot produce.
+34: 
+35: ## 3. Execution and evidence plan
+36: 
+37: Place deterministic O1 tests under `test/offline/`, subject to F's final CI review. The current main configuration collects both `tests/` and `test/offline/` by default and excludes tests marked `integration`. Keep these offline cases in the default run; use `pytest -q test/offline/<O1_test_file>.py` for the O1 file and `pytest -q` for the regression run after implementation. F will record the actual pytest node IDs, default collection, network-block result, CI run links, and any separately run inherited suite. Do not mark a deterministic offline case `integration` merely because it crosses a loader or router boundary.
+38: 
+39: Before implementation, seek F's approval of this exact plan version and case range T-O1-01 through T-O1-12. B checks the requirement–case mapping. Keep a dated approval record in `docs/test-approvals/` or the team's agreed record location, with the plan link, reviewer, decision, scope, and timestamp; preserve the original message/PR evidence. A then approves the read-only OpenCode execution plan as a separate decision. Only after these approvals should implementation or test code be written. Record actual first-code time, baseline failure if feasible, passing result, PR review, CI links, and raw OpenCode transcript later; do not fill these fields in advance.
+40: 
+41: ## 4. Read-only feasibility checks before approval
+42: 
+43: - Confirm the exact function seam and report-line parser for each case, especially T-O1-06 and T-O1-12. `get_stock_stats_indicators_window` handles one indicator per call.
+44: - Check whether T-O1-11's earlier-date assertion can be exercised through the bulk function with a controlled frame, and whether the source itself enforces the analysis-date cutoff or relies on `load_ohlcv`.
+45: - Confirm T-O1-12's expected duplicate-date behavior at bulk, per-day, and snapshot entry points and define the smallest production change needed to make them agree. Keep the non-SMA control independent.
+46: - Confirm T-O1-09/10's seeded-cache fixtures remain recent enough for the loader's stale-data rule and cannot reach the network.
+47: - Check the feature branch against current main's pytest collection and offline network fixtures before recording exact CI commands.
+48: 
+49: If a check shows a case is infeasible or changes an approved requirement, revise this draft and obtain approval of the new version before coding.
+
+(End of file - total 49 lines)
+</content>
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 3.1s)
+
+Let me check the requirements.yaml for REQ-O1 entries and re-verify the specific code seams the cases depend on.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "grep -n \"REQ-O1\" docs/req/requirements.yaml | head -40"
+}
+```
+
+**Output:**
+```
+85:  - id: "REQ-O1-01"
+95:  - id: "REQ-O1-02"
+105:  - id: "REQ-O1-03"
+117:  - id: "REQ-O1-04"
+120:    statement: "When the yfinance/stockstats vendor serves the indicator (the shipped technical-indicators default, default_config.py:160), apply REQ-O1-01 and REQ-O1-02 on the bulk indicator path, the per-day fallback, and the verified snapshot. Alpha Vantage and any other configured indicator vendor remain outside O1."
+127:  - id: "REQ-O1-05"
+139:  - id: "REQ-O1-06"
+
+```
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "grep -n \"testpaths\\|test/offline\" pyproject.toml; echo \"=== ci ===\"; grep -n \"pytest\\|testpaths\\|test/offline\" .github/workflows/ci.yml"
+}
+```
+
+**Output:**
+```
+59:testpaths = ["tests"]
+=== ci ===
+36:        run: pytest -q
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 2.1s)
+
+**Tool: read**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/docs/req/requirements.yaml",
+  "offset": 80,
+  "limit": 75
+}
+```
+
+**Output:**
+```
+<path><PROJECT_ROOT>/docs/req/requirements.yaml</path>
+<type>file</type>
+<content>
+80:     selected_scope: "ordinary and wrap_up calls of selected Analysts; first structured call deferred and disclosed"
+81:     identity: "Graph Config metadata scope=analyst and agent_key=spec.key at Analyst subgraph boundary; never infer identity from callback order or node name"
+82:     unattributed: "in-scope calls with missing/invalid key count as unattributed; out-of-scope calls excluded from named rows"
+83:     legacy_api: "get_stats returns exactly the existing four keys and semantics"
+84: requirements:
+85:   - id: "REQ-O1-01"
+86:     type: "functional_behavior"
+87:     priority: "Must"
+88:     statement: "On the Yahoo SMA path, a 50-session SMA is numeric only with at least 50 cleaned, non-missing dated closes through the reported date; with 1–49 usable closes return the exact insufficient-history text. An empty/no-close frame retains the existing no-market-data outcome."
+89:     fit_criterion: "49 usable closes -> N/A: insufficient history (needs 50 sessions, have 49); 50 -> latest-50 dated-close mean with absolute error <= 1e-6 before display formatting; an all-missing-close frame yields NO_DATA_AVAILABLE through the routed tool."
+90:     tradeoff: "Must. Without it, a short-history value can be labelled a 50-session SMA."
+91:     status: "selected_for_development"
+92:     source_review: "sources-v2.0/O1-SMA-Guard-Requirements-Latest.md#L23"
+93:     verification: ["T-O1-01", "T-O1-02", "T-O1-03", "T-O1-05", "T-O1-06", "T-O1-09", "T-O1-10"]
+94:     source_code: ["tradingagents/dataflows/vendors/yahoo/market.py", "tradingagents/dataflows/vendors/yahoo/snapshot.py"]
+95:   - id: "REQ-O1-02"
+96:     type: "functional_behavior"
+97:     priority: "Must"
+98:     statement: "On the Yahoo SMA path, a 200-session SMA is numeric only with at least 200 cleaned, non-missing dated closes through the reported date; with 1–199 usable closes return the exact insufficient-history text. An empty/no-close frame retains the existing no-market-data outcome."
+99:     fit_criterion: "199 usable closes -> N/A: insufficient history (needs 200 sessions, have 199); 200 -> latest-200 dated-close mean with absolute error <= 1e-6 before display formatting; an all-missing-close frame yields NO_DATA_AVAILABLE through the routed tool."
+100:     tradeoff: "Must. Without it, a short-history value can be labelled a 200-session SMA."
+101:     status: "selected_for_development"
+102:     source_review: "sources-v2.0/O1-SMA-Guard-Requirements-Latest.md#L24"
+103:     verification: ["T-O1-01", "T-O1-02", "T-O1-03", "T-O1-05", "T-O1-06", "T-O1-09", "T-O1-10"]
+104:     source_code: ["tradingagents/dataflows/vendors/yahoo/market.py", "tradingagents/dataflows/vendors/yahoo/snapshot.py"]
+105:   - id: "REQ-O1-03"
+106:     type: "invariant"
+107:     priority: "Must"
+108:     statement: "Count cleaned, non-missing closes separately for each reported date. Sort dated closes chronologically for the SMA-only calculation; exclude rows after the analysis date. A duplicate trading date is an invalid SMA input and must never produce a numeric SMA."
+109:     fit_criterion: "At row/date 60 of a 260-date frame, 50-SMA is the latest-50 mean and 200-SMA is insufficient with count 60; shuffled unique-date input produces the same dated SMA values; duplicate-date input returns N/A: invalid price history (duplicate trading date)."
+110:     metric: "Violations of the stated invariant in mapped acceptance cases"
+111:     threshold: "0"
+112:     tradeoff: "Must. A whole-frame count could make an early date look valid because later rows exist."
+113:     status: "selected_for_development"
+114:     source_review: "sources-v2.0/O1-SMA-Guard-Requirements-Latest.md#L25"
+115:     verification: ["T-O1-04", "T-O1-11", "T-O1-12"]
+116:     source_code: ["tradingagents/dataflows/vendors/yahoo/market.py", "tradingagents/dataflows/vendors/yahoo/snapshot.py"]
+117:   - id: "REQ-O1-04"
+118:     type: "functional_behavior"
+119:     priority: "Must"
+120:     statement: "When the yfinance/stockstats vendor serves the indicator (the shipped technical-indicators default, default_config.py:160), apply REQ-O1-01 and REQ-O1-02 on the bulk indicator path, the per-day fallback, and the verified snapshot. Alpha Vantage and any other configured indicator vendor remain outside O1."
+121:     fit_criterion: "On the Yahoo path, each of the bulk, fallback, and snapshot entry points reports insufficient history for 49/199 sessions and a valid value at the corresponding 50/200 boundary."
+122:     tradeoff: "Must. An unguarded Yahoo path would still send a misleading value to the analyst."
+123:     status: "selected_for_development"
+124:     source_review: "sources-v2.0/O1-SMA-Guard-Requirements-Latest.md#L26"
+125:     verification: ["T-O1-05", "T-O1-06", "T-O1-10"]
+126:     source_code: ["tradingagents/dataflows/vendors/yahoo/market.py", "tradingagents/dataflows/vendors/yahoo/snapshot.py"]
+127:   - id: "REQ-O1-05"
+128:     type: "invariant"
+129:     priority: "Must"
+130:     statement: "Leave non-SMA indicators' behavior unchanged."
+131:     fit_criterion: "For a controlled frame, each selected non-SMA output equals the same-run direct stockstats reference; the prior regression suite has zero new failures."
+132:     metric: "Violations of the stated invariant in mapped acceptance cases"
+133:     threshold: "0"
+134:     tradeoff: "Must. A broad guard could suppress unrelated indicators."
+135:     status: "selected_for_development"
+136:     source_review: "sources-v2.0/O1-SMA-Guard-Requirements-Latest.md#L27"
+137:     verification: ["T-O1-07"]
+138:     source_code: ["tradingagents/dataflows/vendors/yahoo/market.py", "tradingagents/dataflows/vendors/yahoo/snapshot.py"]
+139:   - id: "REQ-O1-06"
+140:     type: "quality_attribute"
+141:     priority: "Must"
+142:     statement: "Use an exact insufficient-history message distinct from the existing non-trading-day and no-market-data outcomes; duplicate dates use a separate invalid-history message."
+143:     fit_criterion: "Exact insufficient-history text is N/A: insufficient history (needs W sessions, have N), with W and N replaced by integers. Duplicate dates yield N/A: invalid price history (duplicate trading date). A date absent from the cleaned loader output retains the existing non-trading-day text. No output test confuses these states."
+144:     metric: "Ambiguous status comparisons in O1 output tests"
+145:     threshold: "0"
+146:     tradeoff: "Must. A generic N/A would hide the reason from the analyst."
+147:     status: "selected_for_development"
+148:     source_review: "sources-v2.0/O1-SMA-Guard-Requirements-Latest.md#L28"
+149:     verification: ["T-O1-08", "T-O1-12"]
+150:     source_code: ["tradingagents/dataflows/vendors/yahoo/market.py", "tradingagents/dataflows/vendors/yahoo/snapshot.py"]
+151:   - id: "O2-FR-01"
+152:     type: "functional_behavior"
+153:     priority: "Must"
+154:     statement: "For every completed CLI invocation, attempt one JSON provenance manifest. On success show its unique path; on write failure keep the analysis result but show a manifest-failed warning and do not claim saved provenance."
+
+(Showing lines 80-154 of 1158. Use offset=155 to continue.)
+</content>
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 2.5s)
+
+Now let me verify the specific code seams the flagged cases depend on: how `_get_stock_stats_bulk`/`get_stock_stats` handle order and duplicates, the snapshot indicator-set acceptance, and the mock surfaces.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "sed -n '205,294p' tradingagents/dataflows/vendors/yahoo/market.py"
+}
+```
+
+**Output:**
+```
+def _get_stock_stats_bulk(
+    symbol: Annotated[str, "ticker symbol of the company"],
+    indicator: Annotated[str, "technical indicator to calculate"],
+    as_of_date: Annotated[str, "current date for reference"]
+) -> dict:
+    """
+    Optimized bulk calculation of stock stats indicators.
+    Fetches data once and calculates indicator for all available dates.
+    Returns dict mapping date strings to indicator values.
+    """
+    from stockstats import wrap
+
+    data = load_ohlcv(symbol, as_of_date)
+    df = wrap(data)
+    df["Date"] = df["Date"].dt.strftime("%Y-%m-%d")
+
+    df[indicator]  # This triggers stockstats to calculate the indicator
+
+    result_dict = {}
+    for _, row in df.iterrows():
+        date_str = row["Date"]
+        indicator_value = row[indicator]
+
+        if pd.isna(indicator_value):
+            result_dict[date_str] = "N/A"
+        else:
+            result_dict[date_str] = str(indicator_value)
+
+    return result_dict
+
+
+def get_stockstats_indicator(
+    symbol: Annotated[str, "ticker symbol of the company"],
+    indicator: Annotated[str, "technical indicator to get the analysis and report of"],
+    as_of_date: Annotated[
+        str, "The current trading date you are trading on, YYYY-mm-dd"
+    ],
+) -> str:
+
+    as_of_dt = datetime.strptime(as_of_date, "%Y-%m-%d")
+    as_of_date = as_of_dt.strftime("%Y-%m-%d")
+
+    try:
+        indicator_value = get_stock_stats(
+            symbol,
+            indicator,
+            as_of_date,
+        )
+    except VendorError:
+        raise  # Unknown/delisted symbol — let the router emit the sentinel
+    except Exception as e:
+        # An empty string renders as "2026-05-08: " in the indicator table, which
+        # reads as no value that day rather than a read that failed. Raise so the
+        # router can try the next vendor or report the series unavailable.
+        raise NoMarketDataError(
+            symbol, symbol, f"{indicator} could not be read for {as_of_date}: {e}"
+        ) from e
+
+    return str(indicator_value)
+
+
+def get_closes(symbol: str, start_date: str, end_date: str) -> pd.Series:
+    """Daily closes from ``start_date`` up to, not including, ``end_date``."""
+    canonical = normalize_symbol(symbol)
+    history = yf_retry(lambda: yf.Ticker(canonical).history(start=start_date, end=end_date))
+    return history["Close"] if history is not None and "Close" in history else pd.Series(dtype=float)
+
+
+def get_stock_stats(
+    symbol: Annotated[str, "ticker symbol for the company"],
+    indicator: Annotated[
+        str, "quantitative indicators based off of the stock data for the company"
+    ],
+    as_of_date: Annotated[
+        str, "curr date for retrieving stock price data, YYYY-mm-dd"
+    ],
+):
+    data = load_ohlcv(symbol, as_of_date)
+    df = wrap(data)
+    df["Date"] = df["Date"].dt.strftime("%Y-%m-%d")
+    as_of_str = pd.to_datetime(as_of_date).strftime("%Y-%m-%d")
+
+    df[indicator]  # trigger stockstats to calculate the indicator
+    matching_rows = df[df["Date"].str.startswith(as_of_str)]
+
+    if not matching_rows.empty:
+        indicator_value = matching_rows[indicator].values[0]
+        return indicator_value
+    else:
+        return "N/A: Not a trading day (weekend or holiday)"
+
+```
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "sed -n '67,92p' tradingagents/dataflows/vendors/yahoo/snapshot.py; echo \"=== tools snapshot try ===\"; sed -n '86,97p' tradingagents/agents/tools.py"
+}
+```
+
+**Output:**
+```
+def build_verified_market_snapshot(
+    symbol: str,
+    as_of_date: str,
+    look_back_days: int = 30,
+    indicators: Iterable[str] | None = None,
+) -> str:
+    """Render a ground-truth snapshot: latest OHLCV row, indicators, recent closes."""
+    # `df` keeps the original capitalized OHLCV columns (Open/High/Low/Close/
+    # Volume); stockstats `wrap()` lowercases columns and adds indicator
+    # columns, so read raw prices from `df` and indicators from `stock_df`.
+    df = _verified_rows(symbol, as_of_date)
+    stock_df = wrap(df.copy())
+
+    selected = tuple(indicators or DEFAULT_SNAPSHOT_INDICATORS)
+    indicator_values: dict[str, str] = {}
+    for name in selected:
+        try:
+            stock_df[name]  # triggers stockstats calculation
+            indicator_values[name] = _fmt(stock_df.iloc[-1][name])
+        except Exception as exc:  # noqa: BLE001 — one bad indicator shouldn't sink the snapshot
+            indicator_values[name] = f"N/A ({type(exc).__name__})"
+
+    latest = df.iloc[-1]
+    latest_date = _fmt(latest["Date"])
+    window = max(1, min(int(look_back_days), 30))
+    recent = df.tail(window)
+=== tools snapshot try ===
+    resistance, or historical comparisons, and treat it as the source of truth.
+    """
+    # An exception out of a tool would end the run.
+    try:
+        return build_verified_market_snapshot(symbol, as_of(curr_date, trade_date), look_back_days)
+    except VendorUnavailableError as exc:
+        return vendor_unavailable("get_verified_market_snapshot", exc)
+    except NoMarketDataError as exc:
+        return no_data_available(exc)
+
+
+@tool
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 3.2s)
+
+Let me confirm the loader's date-order handling (does `load_ohlcv` sort?) and duplicate-date behavior, plus the stale rule for seeded caches.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "grep -n \"sort\\|drop_duplicates\\|duplicated\" tradingagents/dataflows/vendors/yahoo/ohlcv.py; echo \"=== stale rule ===\"; sed -n '109,144p' tradingagents/dataflows/vendors/yahoo/ohlcv.py"
+}
+```
+
+**Output:**
+```
+=== stale rule ===
+def _assert_ohlcv_not_stale(
+    data: pd.DataFrame,
+    as_of_date: str,
+    symbol: str,
+    canonical: str | None = None,
+    *,
+    max_stale_days: int = MAX_OHLCV_STALE_DAYS,
+) -> None:
+    """Reject OHLCV whose latest row is far older than as_of_date.
+
+    Raises NoMarketDataError (with a stale-specific detail) so the router treats
+    it like any other "no usable data from this vendor" — try the next vendor,
+    then emit one clear unavailable signal. Empty frames are left to the
+    caller's existing no-data handling; this guards only the dangerous case of
+    present-but-stale rows (a vendor returning a year-old frame that would
+    otherwise feed wrong prices to the agent, #1021).
+    """
+    if data is None or data.empty:
+        return
+    requested = pd.to_datetime(as_of_date, errors="coerce")
+    if pd.isna(requested):
+        return
+    requested = requested.normalize()
+    dates = _coerce_ohlcv_dates(data)
+    if dates.empty:
+        return
+    latest = dates.max().normalize()
+    stale_days = (requested - latest).days
+    if stale_days > max_stale_days:
+        raise NoMarketDataError(
+            symbol,
+            canonical,
+            f"latest row is {latest.date()}, {stale_days} days before the "
+            f"requested {requested.date()} (stale) — refusing to use it",
+        )
+
+
+```
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "grep -n \"sort\\|drop_duplicates\\|duplicated\\|Date\" tradingagents/dataflows/vendors/yahoo/snapshot.py | head"
+}
+```
+
+**Output:**
+```
+32:    """OHLCV on or before as_of_date, date-sorted. Raises NoMarketDataError if nothing usable.
+34:    ``load_ohlcv`` already normalizes the Date column and filters out
+45:    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+46:    df = df.dropna(subset=["Date"])
+47:    df = df[df["Date"] <= pd.to_datetime(as_of_date)].sort_values("Date")
+90:    latest_date = _fmt(latest["Date"])
+115:              "| Date | Close |", "|---|---:|"]
+117:        lines.append(f"| {_fmt(row['Date'])} | {_fmt(row.get('Close'))} |")
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 13.5s)
+
+Confirmed key facts: `load_ohlcv` does **not** sort or dedupe; `get_stock_stats` uses `.values[0]` (order-dependent); snapshot sorts but does not dedupe. These directly affect T-O1-11/12. Here is the case-by-case executability review.
+
+## Verified code facts the cases depend on
+
+- `_get_stock_stats_bulk` iterates `df` in **frame order** and keys results by date (`market.py:224-231`); it does **not** sort or dedupe.
+- `get_stock_stats` selects `matching_rows[indicator].values[0]` — first match in **frame order** (`market.py:288-291`).
+- `load_ohlcv` does **not** sort or drop duplicate dates (no `sort_values`/`drop_duplicates` in `ohlcv.py`).
+- `_verified_rows` **sorts** (`snapshot.py:47`) but does **not** dedupe.
+- `build_verified_market_snapshot` accepts a custom `indicators` argument (`snapshot.py:71`), defaulting to `DEFAULT_SNAPSHOT_INDICATORS`.
+- Duplicate-date text `N/A: invalid price history (duplicate trading date)` is a **new production behavior** required by requirements.yaml REQ-O1-03/06 (`requirements.yaml:108-109,143`) — it does not exist in current code.
+
+## Per-case executability
+
+| Case | Executable? | Note |
+|---|---|---|
+| T-O1-01 | Yes | Bulk-only, mocked cleaned frame; `have 40`/`have 49` exact. Sound. |
+| T-O1-02 | **Minor ambiguity** | "`have 50` or `have 60`" is under-specified — one fixture per call, so state each separately (50-row→`have 50`, 60-row→`have 60`). Otherwise fine. |
+| T-O1-03 | Yes | Bulk boundary; fine. |
+| T-O1-04 | Yes | Date-key lookup matches the dict contract (`market.py:223-231`); 260-row frame at date 60 → `have 60`. Correct. |
+| T-O1-05 | Yes | Snapshot sorted internally; `price_text` compare valid (`snapshot.py:47,85`). Fine. |
+| T-O1-06 | Yes, with care | `RuntimeError` (not a `VendorError`) is required so the `except VendorError: raise` at `market.py:181-182` doesn't skip the fallback — the plan says `RuntimeError`, correct. "Confirm the fallback really ran" needs a concrete signal: assert the log warning (`market.py:184`) or patch `get_stockstats_indicator`/`get_stock_stats` with a spy. Suggest naming the spy explicitly. |
+| T-O1-07 | Yes | Default indicator set is real (`snapshot.py:24-28`); `rsi` present. Fine. |
+| T-O1-08 | Yes | Holiday string is `market.py:172` (and per-day `market.py:294`); distinct from sentinel. Fine. |
+| T-O1-09 | Mostly yes | Seeded-cache fixture must satisfy the **stale rule** (`ohlcv.py:109-143`, ≤10 days) or `load_ohlcv` raises at `ohlcv.py:255`. The `_run_load` pattern (`tests/test_ohlcv_latest_bar.py:98-110`) already freezes `Timestamp.today` — cite it so the fixture cannot go stale. Behavior fine otherwise. |
+| T-O1-10 | Yes | Direct `load_ohlcv` raises `NoMarketDataError "no bar in range has a closing price"` (`ohlcv.py:238-241`); routed snapshot/`get_indicators` → `NO_DATA_AVAILABLE` (`router.py:185-197`, `tools.py:94-96`). Correct. |
+| **T-O1-11** | **Problem — assertion is wrong for current code** | "Shuffled and sorted inputs give the same value **for each date**" is **not** true of the current unguarded code: `get_stock_stats` takes `.values[0]` in frame order (`market.py:288-291`), and bulk keys by date so a shuffled frame's per-date map differs if stockstats' rolling depends on order. The plan even acknowledges the source does not sort (line 44). **Smallest correction:** change the assertion to "the guard sorts dated closes before computing the SMA, so shuffled and sorted frames yield the same per-date SMA values" and make it depend on the **guard's new sorting** (REQ-O1-03), not current behavior; assert via `_get_stock_stats_bulk` only (not `get_stock_stats` unless the guard also sorts there). Also the "extreme later price after an earlier analysis date" sub-assertion only holds if `load_ohlcv`'s cutoff is what's under test — with a mocked loader that returns future rows, the guard itself must exclude them or the assertion tests nothing; currently the plan says the mock can return future rows "to test the SMA boundary," which conflates guard-sorts with loader-cutoff. |
+| **T-O1-12** | **Problem — not executable as written without a production design decision** | There is **no** duplicate-date message in current code; both bulk and per-day will just compute a number from the duplicated rows (`market.py:224-231`, `288-291`), and `_verified_rows` sorts but never dedupes (`snapshot.py:47`). So "expected duplicate-date message" requires the guard to add a dedupe/detect step on **all three** entry points. The plan's own line 33/45 flags this ("confirm whether a public routed tool can expose duplicate input… do not invent a routed status"). **Smallest correction:** make T-O1-12 a guard-behavior test that supplies a duplicated frame directly to `_get_stock_stats_bulk` and `get_stock_stats` (and `build_verified_market_snapshot` via mocked `load_ohlcv`), and requires the guard to return the exact duplicate text; drop any assertion on a routed tool exposing duplicates unless the loader is changed — route text cannot produce it today. Add explicit production requirement: dedupe/detect must be implemented in each of the three functions for the case to pass. |
+
+## Cross-cutting issues in the plan
+
+1. **§3 CI claim is false for the current repo.** Line 37 says "The current main configuration collects both `tests/` and `test/offline/` by default." `pyproject.toml:59` is `testpaths = ["tests"]` only; CI runs bare `pytest -q` (`ci.yml:36`). `test/offline/` is **not** collected. This must be stated as **pending F** (as earlier drafts did), not as current fact. Smallest fix: reword to "requires F to add `test/offline` to `testpaths`/CI; not yet collected."
+2. **T-O1-02** ambiguity (above).
+3. **T-O1-06** needs a concrete "fallback ran" signal (spy/log assert).
+4. **T-O1-09** should cite the frozen-`today` `_run_load` fixture so the stale rule (`ohlcv.py:109-143`) can't trip.
+5. **REQ mapping**: requirements.yaml already maps T-O1-11/12 under REQ-O1-03 (`requirements.yaml:115`) and T-O1-12 also REQ-O1-06 (`:149`). Consistent with the plan's rows — good. But REQ-O1-03's fit criterion ("shuffled … same dated SMA values; duplicate-date input returns …") is stated as an **invariant on the guard**, so T-O1-11 must test the guard's sorting, not current behavior (see above).
+
+## Smallest corrections to hand to F
+
+- **T-O1-02:** split into 50→`have 50` and 60→`have 60` explicit fixtures.
+- **T-O1-06:** name the fallback-ran check (log `market.py:184` or spy on `get_stockstats_indicator`).
+- **T-O1-09:** reference `_run_load` (`tests/test_ohlcv_latest_bar.py:98`) to freeze `today`; keeps clear of `ohlcv.py:109-143`.
+- **T-O1-11:** assert the **guard sorts** (REQ-O1-03), via `_get_stock_stats_bulk` only; remove/reframe the future-row sub-assertion so it tests the loader cutoff or the guard exclusion, not an ambiguous mocked mix.
+- **T-O1-12:** require the guard to dedupe/detect on bulk, per-day, and snapshot; test via those three functions with a duplicated frame; **do not** assert a routed-tool duplicate message (not producible today). Add the production dedupe requirement explicitly.
+- **§3:** correct the collection claim to "not collected today; F must decide the `test/offline` change" (`pyproject.toml:59`, `ci.yml:36`).
+
+Everything else (T-O1-01/03/04/05/07/08/10) is executable as written. No files changed; nothing run.
+
+---
+
+## User
+
+Please reconcile your earlier O1 requirements draft and analysis with REQ-O1-01 through REQ-O1-06 in docs/req/requirements.yaml and O1-SMA-Guard-Test-Plan-v1.0-DRAFT.md.
+
+The older O1-SMA-Guard-Requirements-Draft.md is a discussion record. Use the newer YAML as the selected requirement baseline for planning, while keeping its approval status accurate.
+
+List the changes in required behavior, especially chronological sorting, the analysis-date cutoff, duplicate-date rejection, exact output messages, and test cases T-O1-11/12. For each case you previously called “not executable,” distinguish between (a) behavior missing from current code that O1 must implement and (b) a genuinely impractical test design.
+
+Then give me a revised read-only implementation and test execution plan with the specific functions likely to change. Do not edit files, write code, or run tests. Stop for approval. 
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 3.9s)
+
+I'll reconcile the YAML baseline (source of truth) with my earlier draft and analysis, then lay out the delta and a read-only plan. Let me re-confirm the exact YAML fit criteria and status field so I state approval accurately.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "sed -n '84,150p' docs/req/requirements.yaml"
+}
+```
+
+**Output:**
+```
+requirements:
+  - id: "REQ-O1-01"
+    type: "functional_behavior"
+    priority: "Must"
+    statement: "On the Yahoo SMA path, a 50-session SMA is numeric only with at least 50 cleaned, non-missing dated closes through the reported date; with 1–49 usable closes return the exact insufficient-history text. An empty/no-close frame retains the existing no-market-data outcome."
+    fit_criterion: "49 usable closes -> N/A: insufficient history (needs 50 sessions, have 49); 50 -> latest-50 dated-close mean with absolute error <= 1e-6 before display formatting; an all-missing-close frame yields NO_DATA_AVAILABLE through the routed tool."
+    tradeoff: "Must. Without it, a short-history value can be labelled a 50-session SMA."
+    status: "selected_for_development"
+    source_review: "sources-v2.0/O1-SMA-Guard-Requirements-Latest.md#L23"
+    verification: ["T-O1-01", "T-O1-02", "T-O1-03", "T-O1-05", "T-O1-06", "T-O1-09", "T-O1-10"]
+    source_code: ["tradingagents/dataflows/vendors/yahoo/market.py", "tradingagents/dataflows/vendors/yahoo/snapshot.py"]
+  - id: "REQ-O1-02"
+    type: "functional_behavior"
+    priority: "Must"
+    statement: "On the Yahoo SMA path, a 200-session SMA is numeric only with at least 200 cleaned, non-missing dated closes through the reported date; with 1–199 usable closes return the exact insufficient-history text. An empty/no-close frame retains the existing no-market-data outcome."
+    fit_criterion: "199 usable closes -> N/A: insufficient history (needs 200 sessions, have 199); 200 -> latest-200 dated-close mean with absolute error <= 1e-6 before display formatting; an all-missing-close frame yields NO_DATA_AVAILABLE through the routed tool."
+    tradeoff: "Must. Without it, a short-history value can be labelled a 200-session SMA."
+    status: "selected_for_development"
+    source_review: "sources-v2.0/O1-SMA-Guard-Requirements-Latest.md#L24"
+    verification: ["T-O1-01", "T-O1-02", "T-O1-03", "T-O1-05", "T-O1-06", "T-O1-09", "T-O1-10"]
+    source_code: ["tradingagents/dataflows/vendors/yahoo/market.py", "tradingagents/dataflows/vendors/yahoo/snapshot.py"]
+  - id: "REQ-O1-03"
+    type: "invariant"
+    priority: "Must"
+    statement: "Count cleaned, non-missing closes separately for each reported date. Sort dated closes chronologically for the SMA-only calculation; exclude rows after the analysis date. A duplicate trading date is an invalid SMA input and must never produce a numeric SMA."
+    fit_criterion: "At row/date 60 of a 260-date frame, 50-SMA is the latest-50 mean and 200-SMA is insufficient with count 60; shuffled unique-date input produces the same dated SMA values; duplicate-date input returns N/A: invalid price history (duplicate trading date)."
+    metric: "Violations of the stated invariant in mapped acceptance cases"
+    threshold: "0"
+    tradeoff: "Must. A whole-frame count could make an early date look valid because later rows exist."
+    status: "selected_for_development"
+    source_review: "sources-v2.0/O1-SMA-Guard-Requirements-Latest.md#L25"
+    verification: ["T-O1-04", "T-O1-11", "T-O1-12"]
+    source_code: ["tradingagents/dataflows/vendors/yahoo/market.py", "tradingagents/dataflows/vendors/yahoo/snapshot.py"]
+  - id: "REQ-O1-04"
+    type: "functional_behavior"
+    priority: "Must"
+    statement: "When the yfinance/stockstats vendor serves the indicator (the shipped technical-indicators default, default_config.py:160), apply REQ-O1-01 and REQ-O1-02 on the bulk indicator path, the per-day fallback, and the verified snapshot. Alpha Vantage and any other configured indicator vendor remain outside O1."
+    fit_criterion: "On the Yahoo path, each of the bulk, fallback, and snapshot entry points reports insufficient history for 49/199 sessions and a valid value at the corresponding 50/200 boundary."
+    tradeoff: "Must. An unguarded Yahoo path would still send a misleading value to the analyst."
+    status: "selected_for_development"
+    source_review: "sources-v2.0/O1-SMA-Guard-Requirements-Latest.md#L26"
+    verification: ["T-O1-05", "T-O1-06", "T-O1-10"]
+    source_code: ["tradingagents/dataflows/vendors/yahoo/market.py", "tradingagents/dataflows/vendors/yahoo/snapshot.py"]
+  - id: "REQ-O1-05"
+    type: "invariant"
+    priority: "Must"
+    statement: "Leave non-SMA indicators' behavior unchanged."
+    fit_criterion: "For a controlled frame, each selected non-SMA output equals the same-run direct stockstats reference; the prior regression suite has zero new failures."
+    metric: "Violations of the stated invariant in mapped acceptance cases"
+    threshold: "0"
+    tradeoff: "Must. A broad guard could suppress unrelated indicators."
+    status: "selected_for_development"
+    source_review: "sources-v2.0/O1-SMA-Guard-Requirements-Latest.md#L27"
+    verification: ["T-O1-07"]
+    source_code: ["tradingagents/dataflows/vendors/yahoo/market.py", "tradingagents/dataflows/vendors/yahoo/snapshot.py"]
+  - id: "REQ-O1-06"
+    type: "quality_attribute"
+    priority: "Must"
+    statement: "Use an exact insufficient-history message distinct from the existing non-trading-day and no-market-data outcomes; duplicate dates use a separate invalid-history message."
+    fit_criterion: "Exact insufficient-history text is N/A: insufficient history (needs W sessions, have N), with W and N replaced by integers. Duplicate dates yield N/A: invalid price history (duplicate trading date). A date absent from the cleaned loader output retains the existing non-trading-day text. No output test confuses these states."
+    metric: "Ambiguous status comparisons in O1 output tests"
+    threshold: "0"
+    tradeoff: "Must. A generic N/A would hide the reason from the analyst."
+    status: "selected_for_development"
+    source_review: "sources-v2.0/O1-SMA-Guard-Requirements-Latest.md#L28"
+    verification: ["T-O1-08", "T-O1-12"]
+    source_code: ["tradingagents/dataflows/vendors/yahoo/market.py", "tradingagents/dataflows/vendors/yahoo/snapshot.py"]
+
+```
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "sed -n '1,40p' docs/req/requirements.yaml | grep -n \"status\\|version\\|approv\\|selected\\|draft\" "
+}
+```
+
+**Output:**
+```
+1:# A-selected consolidated development baseline. Earlier owner drafts remain review evidence.
+2:registry_version: "1.0.0-a-baseline"
+3:status: "selected_for_development; test and agent-plan approvals still required"
+6:  authority: "A-selected development baseline requested 2026-11-16; this file does not claim retroactive approval by B-F"
+7:  approval_gate: "Each change still requires a versioned test-plan approval and coding-agent execution-plan approval before code generation; PR/CI approval follows implementation"
+8:  approval_roles:
+29:    config_allowlist: ["llm_provider", "deep_think_provider", "deep_think_llm", "quick_think_provider", "quick_think_llm", "analysts", "max_debate_rounds", "max_risk_discuss_rounds", "max_tool_rounds", "output_language", "data_vendors", "tool_vendors", "news_article_limit", "global_news_article_limit", "global_news_lookback_days", "input_condensation_enabled", "input_budget_chars", "input_news_cap_chars", "input_stocktwits_cap_chars", "input_reddit_cap_chars", "input_near_dup_jaccard", "o5_rules_version", "o5_requested_topics", "o5_limit", "o4_gate_policy_version"]
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 15.6s)
+
+I have the authoritative baseline. Drawing the reconciliation from it.
+
+## Reconciliation status
+
+**Authority:** `docs/req/requirements.yaml` is the selected development baseline (`registry_version: 1.0.0-a-baseline`, header lines 1-7). My older `O1-SMA-Guard-Requirements-Draft.md` and the reviewed `O1-SMA-Guard-Test-Plan-Draft.md` are **discussion evidence**, superseded where they differ.
+
+**Approval status (accurate):** YAML `status: "selected_for_development; test and agent-plan approvals still required"` (line 3). It explicitly "does not claim retroactive approval by B-F" (line 6) and requires a versioned test-plan approval and coding-agent execution-plan approval before code generation (line 7). Every REQ-O1-0x is `status: selected_for_development`. **So: requirements are selected, not approved; test plan and agent plan are unapproved.** I keep that wording throughout.
+
+## Required-behavior changes vs my earlier draft
+
+The YAML adds behavior my earlier draft did **not** require. These are genuine additions to O1 scope:
+
+1. **Chronological sorting (REQ-O1-03).** Previous draft: guard only counted per-row; no sorting requirement. YAML: "Sort dated closes chronologically for the SMA-only calculation." Current code does **not** sort in `_get_stock_stats_bulk`/`get_stock_stats` (iterates frame order, `market.py:224-231`, `288-291`). → New O1 work.
+2. **Analysis-date cutoff inside the SMA calculation (REQ-O1-03).** Previous draft: relied on `load_ohlcv`'s cutoff; explicitly did not test it in O1. YAML: "exclude rows after the analysis date" as part of the SMA invariant. → New O1 responsibility (or explicitly delegate to `load_ohlcv` and prove it).
+3. **Duplicate-date rejection (REQ-O1-03, -06).** Previous draft: not present at all. YAML: a duplicate trading date "must never produce a numeric SMA" and returns exact text `N/A: invalid price history (duplicate trading date)`. Current code: neither bulk nor per-day nor snapshot dedupes (`snapshot.py:47` sorts but keeps duplicates). → New O1 work across three paths.
+4. **Exact output messages (REQ-O1-06).** Now fixed, not "proposed pending approval" as my draft had it:
+   - Insufficient: `N/A: insufficient history (needs W sessions, have N)`.
+   - Duplicate: `N/A: invalid price history (duplicate trading date)`.
+   - Non-trading-day: existing `N/A: Not a trading day (weekend or holiday)`.
+   - No-data: existing `NO_DATA_AVAILABLE` routed sentinel.
+   My draft left the insufficient text "proposed pending owner approval"; the YAML states it as the fit criterion. → Treat as selected (still subject to the overall test-plan approval gate, but text is now fixed, not open).
+5. **Tolerance fixed at `<= 1e-6` before display formatting (REQ-O1-01/02).** Matches my draft's proposed tolerance — now baseline.
+
+**Unchanged from my draft:** guard-only scope, Yahoo/yfinance path only, AV out of scope, historical download window out of scope.
+
+## T-O1-11 and T-O1-12: (a) missing behavior vs (b) impractical design
+
+| Case | What I called "not executable" | Classification |
+|---|---|---|
+| **T-O1-11** (shuffled unique dates) | Current code gives order-dependent results: `get_stock_stats` uses `.values[0]` (`market.py:288-291`); bulk keys by date in frame order. So "same value for each date under shuffle" fails today. | **(a) behavior missing from current code.** O1 must sort before computing. The **test design is practical**: feed shuffled vs sorted frames to `_get_stock_stats_bulk` and compare per-date values. Not impractical — it's a spec O1 doesn't yet meet. The only design caveat: the "extreme later price after earlier analysis date" sub-assertion must exercise either the guard's own cutoff or the real `load_ohlcv` cutoff, not a mocked loader that silently strips future rows (otherwise it tests nothing). That caveat is a **design fix**, not (b)-impossible. |
+| **T-O1-12** (duplicate dates) | No duplicate-date text exists; bulk/per-day compute a number, snapshot sorts but keeps duplicates. So "expected duplicate message" fails today. | **(a) behavior missing from current code.** O1 must add dedupe/detect to all three entry points and emit the exact text. The **test design is practical** at the function level (`_get_stock_stats_bulk`, `get_stock_stats`, `build_verified_market_snapshot` with mocked loader). The clause "confirm whether a public routed tool can expose duplicate input" is the only (b)-flavored concern — a routed tool cannot surface duplicates today because `load_ohlcv` passes them through unmarked; asserting routed duplicate text would be **impractical until the loader/guard marks them**, so drop that clause or scope it to the three functions. |
+
+**Net:** neither case is genuinely impractical at the function seam. Both are **(a) missing implementation** plus **(minor (b)) design wording** that must not assert a routed-tool duplicate status the current interface cannot produce.
+
+## Revised read-only implementation & test-execution plan
+
+### Functions likely to change
+
+| Function (file) | Change | Reqs |
+|---|---|---|
+| `_get_stock_stats_bulk` (`market.py:205`) | Sort frame by `Date`; detect duplicate dates → write duplicate text for affected SMA; per-date cumulative count of non-missing closes; enforce analysis-date cutoff (or assert pre-filtered); emit insufficient text / numeric for the two SMAs only. | -01, -02, -03, -06 |
+| `get_stock_stats` (`market.py:273`) | Same sort/duplicate/count/cutoff rules for the single reported date; change `.values[0]` selection to be order-independent after sorting and to reject duplicates. | -01, -02, -03, -06 |
+| `build_verified_market_snapshot` / `_verified_rows` (`snapshot.py:67`, `31`) | Already sorts (`:47`); add duplicate detection → duplicate text for SMA cells; guard latest-row SMA count via shared rule. | -01, -02, -03, -04, -06 |
+| Shared helper + `SMA_WINDOWS` (home in `market.py`, imported by `snapshot.py`) | One source: window sizes, count function, sentinel strings, duplicate check. | all |
+| **Not changed** | `ohlcv.py`, `router.py`, `tools.py`, `alpha_vantage/*` — plus record whether cutoff stays in `load_ohlcv` or is re-asserted in the guard. | — |
+
+**Open design question for approval:** REQ-O1-03 says "exclude rows after the analysis date" as an SMA invariant. Two options: (i) rely on `load_ohlcv`'s existing cutoff (`ohlcv.py:230`) and make the guard **assert** the frame is already cutoff (defensive), or (ii) the guard re-filters by `as_of_date`. Option (i) is smallest and avoids double logic; option (ii) makes the invariant locally enforceable. **Recommend (i) + a defensive assert**, so T-O1-11's future-row sub-assertion can test the guard's exclusion without owning loader policy. This needs your decision.
+
+### Test execution plan (read-only, offline)
+
+- **Location/CI:** unresolved by YAML; `pyproject.toml:59` collects only `tests/` and CI runs `pytest -q` (`ci.yml:36`). `test/offline/` is **not** collected today → pending **Member F** decision. Do not state it as current fact.
+- **Units, no network:** bulk/snapshot cases mock `market.load_ohlcv`/`snapshot.load_ohlcv`; loader cases (T-O1-09/10) seed cache with frozen `today` using the `_run_load` pattern (`tests/test_ohlcv_latest_bar.py:98-110`) so the stale rule (`ohlcv.py:109-143`) can't trip.
+- **Per-case readiness after O1 implements sort/dup/cutoff:**
+
+| Case | After O1 change executable? | Fix needed in plan |
+|---|---|---|
+| T-O1-01/03/04/05/07/08/10 | Yes | none (T-O1-02 split the `have 50`/`have 60` fixtures explicitly) |
+| T-O1-06 | Yes | name the fallback-ran signal (log `market.py:184` / spy on `get_stockstats_indicator`) |
+| T-O1-09 | Yes | cite `_run_load` frozen-date fixture |
+| T-O1-11 | Yes, **once guard sorts** | assert via `_get_stock_stats_bulk`; frame the future-row sub-check as the guard's cutoff/exclusion, not a loader-stripped mock |
+| T-O1-12 | Yes, **once guard dedupes on all three paths** | test the three functions directly with a duplicated frame; remove the routed-tool duplicate assertion (not producible today) |
+| §3 collection claim | — | reword to "pending F; not collected today" |
+
+- **Evidence/approval:** record YAML version `1.0.0-a-baseline`, plan version, reviewer, decision; do not record approval until given.
+
+## Corrections I'm making to my own earlier statements
+
+- Earlier I treated the insufficient text and `1e-6` as "proposed pending approval." **YAML fixes both** — I now treat them as selected baseline (text fixed; still under the test-plan approval gate).
+- Earlier I said "no future-row test in O1" and "duplicate not in scope." **YAML adds both** (REQ-O1-03). Updating scope accordingly.
+- Earlier I flagged T-O1-11/12 as "not executable." Correct classification: **(a) missing implementation**, not (b) impractical design, except the routed-tool duplicate assertion which is impractical today and should be dropped.
+
+**Stopping for your approval.** Decisions needed before coding: (1) cutoff ownership — Option (i) defensive assert (recommended) vs (ii) re-filter in guard; (2) Member F's `test/offline` collection decision; (3) confirm text strings are final as written in YAML. No files edited, no code written, no tests run.
+
+---
+
+## User
+
+Please revise your O1 execution plan strictly against `docs/req/requirements.yaml` (REQ-O1-01 through REQ-O1-06) and `O1-SMA-Guard-Test-Plan-v1.0-DRAFT.md`. The older O1 requirements draft is discussion history.
+
+For T-O1-11, follow the YAML requirement to exclude rows after `as_of_date` and sort dated closes for the O1 SMA calculation. For T-O1-12, reject duplicate trading dates with the exact invalid-history message; do not silently deduplicate and return a numeric SMA. Preserve the YAML's existing insufficient-history and no-market-data outcomes, and leave non-SMA indicators unchanged.
+
+Map the existing T-O1-01 through T-O1-12 cases to the functions you plan to change. Include a short trigger → action → output table using only behavior already specified in the YAML. Do not add required behavior or new test cases. If you find a genuine conflict or an unexecutable assertion, cite the exact file and line and list it separately for our review.
+
+My local O1 branch is older than main's CI PR #1. Note the branch update as a later prerequisite, but do not update it now.
+
+Only inspect files. Do not edit files, run tests, change Git branches, or write code. Stop for approval. 
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 3.7s)
+
+I'll ground this strictly in the two baseline files. Let me re-confirm the exact YAML wording and the test-plan case text I must map against.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "sed -n '105,116p' docs/req/requirements.yaml; echo \"=== 06 ===\"; sed -n '139,150p' docs/req/requirements.yaml"
+}
+```
+
+**Output:**
+```
+  - id: "REQ-O1-03"
+    type: "invariant"
+    priority: "Must"
+    statement: "Count cleaned, non-missing closes separately for each reported date. Sort dated closes chronologically for the SMA-only calculation; exclude rows after the analysis date. A duplicate trading date is an invalid SMA input and must never produce a numeric SMA."
+    fit_criterion: "At row/date 60 of a 260-date frame, 50-SMA is the latest-50 mean and 200-SMA is insufficient with count 60; shuffled unique-date input produces the same dated SMA values; duplicate-date input returns N/A: invalid price history (duplicate trading date)."
+    metric: "Violations of the stated invariant in mapped acceptance cases"
+    threshold: "0"
+    tradeoff: "Must. A whole-frame count could make an early date look valid because later rows exist."
+    status: "selected_for_development"
+    source_review: "sources-v2.0/O1-SMA-Guard-Requirements-Latest.md#L25"
+    verification: ["T-O1-04", "T-O1-11", "T-O1-12"]
+    source_code: ["tradingagents/dataflows/vendors/yahoo/market.py", "tradingagents/dataflows/vendors/yahoo/snapshot.py"]
+=== 06 ===
+  - id: "REQ-O1-06"
+    type: "quality_attribute"
+    priority: "Must"
+    statement: "Use an exact insufficient-history message distinct from the existing non-trading-day and no-market-data outcomes; duplicate dates use a separate invalid-history message."
+    fit_criterion: "Exact insufficient-history text is N/A: insufficient history (needs W sessions, have N), with W and N replaced by integers. Duplicate dates yield N/A: invalid price history (duplicate trading date). A date absent from the cleaned loader output retains the existing non-trading-day text. No output test confuses these states."
+    metric: "Ambiguous status comparisons in O1 output tests"
+    threshold: "0"
+    tradeoff: "Must. A generic N/A would hide the reason from the analyst."
+    status: "selected_for_development"
+    source_review: "sources-v2.0/O1-SMA-Guard-Requirements-Latest.md#L28"
+    verification: ["T-O1-08", "T-O1-12"]
+    source_code: ["tradingagents/dataflows/vendors/yahoo/market.py", "tradingagents/dataflows/vendors/yahoo/snapshot.py"]
+
+```
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "sed -n '30,31p' O1-SMA-Guard-Test-Plan-v1.0-DRAFT.md; echo \"=== 37 line ===\"; sed -n '37p' O1-SMA-Guard-Test-Plan-v1.0-DRAFT.md; echo \"=== branch ===\"; git branch --show-current; git log --oneline -3"
+}
+```
+
+**Output:**
+```
+| T-O1-09 | Seed the real `load_ohlcv` cache with 50 dated rows and one middle missing `Close`; repeat with 200 rows if needed to cover both windows. Follow the frozen-`today`, fresh-cache, blocked-download pattern in `tests/test_ohlcv_latest_bar.py::_run_load`. | Loader removes the missing-close row. The O1 entry point counts 49/199 valid closes and does not return a numeric 50/200 SMA. Reuse existing loader tests where they prove the cleaning step. | REQ-O1-01, REQ-O1-02 |
+| T-O1-10 | Seed a **non-empty** cache frame whose `Close` column is entirely missing; exercise real `load_ohlcv` and one routed O1 tool. | Direct loader raises `NoMarketDataError` with detail `no bar in range has a closing price`; the routed output has `NO_DATA_AVAILABLE`, with no numeric SMA or `have 0` message. | REQ-O1-01, REQ-O1-02, REQ-O1-04 |
+=== 37 line ===
+## 3. Execution and evidence plan
+=== branch ===
+feature/o1-sma-guard
+970a9ea Import official TradingAgents baseline 9fa1196 and CS5351 folders
+8ce5945 Initialize CS5351 project workspace
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 2.0s)
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "sed -n '18,33p' O1-SMA-Guard-Test-Plan-v1.0-DRAFT.md"
+}
+```
+
+**Output:**
+```
+## 2. Cases and requirement mapping
+
+| ID | Controlled input and entry point | Expected assertion | Requirements |
+|---|---|---|---|
+| T-O1-01 | 40 and 49 cleaned dated closes; call `_get_stock_stats_bulk` separately for each SMA. | At 40, both SMA values are exact insufficient-history strings with `have 40`; at 49, 50-SMA says `have 49`. No partial-window number. | REQ-O1-01, REQ-O1-02 |
+| T-O1-02 | 50 and 60 cleaned closes; separate bulk calls for each fixture and indicator. | 50-SMA equals the latest-50 mean within tolerance at both counts; 200-SMA says `have 50` on the 50-row fixture and `have 60` on the 60-row fixture. | REQ-O1-01, REQ-O1-02 |
+| T-O1-03 | 199, 200, and 220 cleaned closes; separate bulk calls. | At 199, 200-SMA says `have 199`; at 200 and 220, both SMAs equal their latest-window means. | REQ-O1-01, REQ-O1-02 |
+| T-O1-04 | 260 ordered dates; request the 60th chronological date from `_get_stock_stats_bulk` for each SMA and look it up by date key. | On that date, 50-SMA equals the mean of dates 11–60; 200-SMA says `have 60`, despite 260 rows being present. | REQ-O1-03 |
+| T-O1-05 | Call `build_verified_market_snapshot` with 40, 50, 199, and 200 cleaned closes, using the default indicators. | Its 50/200 SMA cells have the same boundary outcomes; valid cells match `price_text` of the independently computed mean. | REQ-O1-01, REQ-O1-02, REQ-O1-04 |
+| T-O1-06 | Force `_get_stock_stats_bulk` to raise `RuntimeError`; spy on `get_stockstats_indicator`; call `get_stock_stats_indicators_window` for each SMA with `look_back_days=0` and frames of 49/50 or 199/200 rows. | The spy confirms the per-day fallback ran. The target-date report line has the exact insufficient string at W−1 and a correct mean at W. | REQ-O1-01, REQ-O1-02, REQ-O1-04 |
+| T-O1-07 | On a controlled frame, request one default non-SMA indicator, such as `rsi`, through bulk, forced fallback, and snapshot; compute a same-frame stockstats reference. | Non-SMA values retain their prior numerical/display behavior; the existing regression suite has no new failures. | REQ-O1-05 |
+| T-O1-08 | In one `get_stock_stats_indicators_window` output, include a dated row with insufficient history and a nearby absent weekend date. | The first line has the exact insufficient-history value; the absent date has the existing `N/A: Not a trading day (weekend or holiday)` value. | REQ-O1-06 |
+| T-O1-09 | Seed the real `load_ohlcv` cache with 50 dated rows and one middle missing `Close`; repeat with 200 rows if needed to cover both windows. Follow the frozen-`today`, fresh-cache, blocked-download pattern in `tests/test_ohlcv_latest_bar.py::_run_load`. | Loader removes the missing-close row. The O1 entry point counts 49/199 valid closes and does not return a numeric 50/200 SMA. Reuse existing loader tests where they prove the cleaning step. | REQ-O1-01, REQ-O1-02 |
+| T-O1-10 | Seed a **non-empty** cache frame whose `Close` column is entirely missing; exercise real `load_ohlcv` and one routed O1 tool. | Direct loader raises `NoMarketDataError` with detail `no bar in range has a closing price`; the routed output has `NO_DATA_AVAILABLE`, with no numeric SMA or `have 0` message. | REQ-O1-01, REQ-O1-02, REQ-O1-04 |
+| T-O1-11 | Supply 260 unique dated, non-constant closes in shuffled order and the same frame sorted as a control. Call `_get_stock_stats_bulk` for each SMA with `as_of_date` set first to the 60th chronological date and then to the final date; the mocked loader deliberately returns all 260 rows in both calls. Put an extreme price after the earlier analysis date. | **After the guard is implemented**, shuffled and sorted frames give the same dated SMA results. At date 60, 50-SMA is the mean of chronological dates 11–60 and 200-SMA says `have 60`; at the final date, both SMAs match their latest-window means. The later extreme price does not affect date 60. | REQ-O1-03 |
+| T-O1-12 | Supply a cleaned-looking frame with two rows sharing a trading date. Inject it at `load_ohlcv` for `_get_stock_stats_bulk`, `get_stock_stats` (per-day path), and `build_verified_market_snapshot`; request both SMAs separately. Use a separate non-SMA control. | **After the guard is implemented**, no SMA entry point publishes a numeric result for invalid history; the requested SMA result is the exact duplicate-date message. The non-SMA control retains its prior behavior. No routed-tool duplicate-message assertion is made. | REQ-O1-03, REQ-O1-06 |
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 11.9s)
+
+Confirmed both baselines. Here is the execution plan mapped strictly to the YAML requirements and the v1.0 test plan. Read-only; stopping for approval.
+
+## Plan basis
+
+- Requirements baseline: `docs/req/requirements.yaml` REQ-O1-01…-06 (`status: selected_for_development`; header line 3 states test and agent-plan approvals still required — not approved).
+- Test cases: `O1-SMA-Guard-Test-Plan-v1.0-DRAFT.md` T-O1-01…-12 (rows 20-31).
+- Older requirements draft: discussion history only.
+
+## Functions to change, and the cases each serves
+
+| Function (file:line) | Planned change (YAML-specified only) | Cases |
+|---|---|---|
+| `_get_stock_stats_bulk` (`market.py:205`) | Sort dated closes chronologically; exclude rows after `as_of_date`; count cleaned non-missing closes per reported date; duplicate trading date → `N/A: invalid price history (duplicate trading date)` (never numeric); insufficient/numeric per W for the two SMAs only. | T-O1-01, -02, -03, -04, -11, -12 |
+| `get_stock_stats` (`market.py:273`) | Same sort/cutoff/duplicate/count rules for the single reported date; order-independent selection (replace `.values[0]` behavior via sorted+duplicate-guarded frame); duplicate → invalid-history text. | T-O1-09 (entry), -12 |
+| `build_verified_market_snapshot` / `_verified_rows` (`snapshot.py:67`, `:31`) | `_verified_rows` already sorts (`:47`); add duplicate detection → invalid-history text for SMA cells; guard latest-row SMA outcome via shared rule. | T-O1-05, -07, -12 |
+| Shared helper + `SMA_WINDOWS` (proposed home `market.py`, imported by `snapshot.py`) | Single source for window sizes, per-date count, cutoff/sort, duplicate check, and the exact strings. | all |
+| `get_stockstats_indicator` (`market.py:236`) | No logic change planned; it delegates to `get_stock_stats`, so the guard flows through. Listed because T-O1-06 spies on it. | T-O1-06 |
+| `load_ohlcv` (`ohlcv.py:161`) | No change planned; it already drops non-close rows and applies the cutoff (`ohlcv.py:230,238-241`). Serves T-O1-09/-10. | T-O1-09, -10 |
+| **Not changed** | `router.py`, `tools.py`, `alpha_vantage/*`. | — |
+
+## Case → function map (existing cases only)
+
+| Case | Entry point to drive | Function under test |
+|---|---|---|
+| T-O1-01 | `_get_stock_stats_bulk` | `_get_stock_stats_bulk` |
+| T-O1-02 | `_get_stock_stats_bulk` | `_get_stock_stats_bulk` |
+| T-O1-03 | `_get_stock_stats_bulk` | `_get_stock_stats_bulk` |
+| T-O1-04 | `_get_stock_stats_bulk` | `_get_stock_stats_bulk` |
+| T-O1-05 | `build_verified_market_snapshot` | snapshot path |
+| T-O1-06 | `get_stock_stats_indicators_window` → `get_stockstats_indicator`→`get_stock_stats` | fallback (`market.py:188-193`) |
+| T-O1-07 | bulk, forced fallback, snapshot | all three (non-SMA control) |
+| T-O1-08 | `get_stock_stats_indicators_window` | window render (`market.py:161-172`) + per-day |
+| T-O1-09 | real `load_ohlcv` → O1 entry point | `load_ohlcv` cleaning + guard |
+| T-O1-10 | real `load_ohlcv` + routed tool | `load_ohlcv` no-close + router sentinel |
+| T-O1-11 | `_get_stock_stats_bulk` | `_get_stock_stats_bulk` (sort + cutoff) |
+| T-O1-12 | bulk, `get_stock_stats`, snapshot | all three (duplicate rejection) |
+
+## Trigger → action → output (YAML-specified behavior only)
+
+| Trigger | Action (REQ) | Output (exact) |
+|---|---|---|
+| Per-date usable closes 1–49 / 1–199 | Count per date; guard (REQ-O1-01/02) | `N/A: insufficient history (needs 50 sessions, have N)` / `…(needs 200 sessions, have N)` |
+| Per-date usable closes ≥ 50 / ≥ 200 | Compute latest-W dated-close mean (REQ-O1-01/02) | Numeric value; matches mean within `1e-6` pre-format |
+| Frame order shuffled, unique dates | Sort chronologically for SMA-only calc (REQ-O1-03) | Same dated SMA as sorted input |
+| Row after `as_of_date` present | Exclude it from the SMA calc (REQ-O1-03) | Earlier date unaffected |
+| Duplicate trading date present | Reject as invalid SMA input (REQ-O1-03) | `N/A: invalid price history (duplicate trading date)` — never numeric |
+| No usable close in frame | Existing no-market-data path (REQ-O1-01/02) | Direct: `NoMarketDataError`; routed: `NO_DATA_AVAILABLE` |
+| Date absent from cleaned frame | Existing non-trading-day path (REQ-O1-06) | `N/A: Not a trading day (weekend or holiday)` |
+| Non-SMA indicator requested | Unchanged (REQ-O1-05) | Prior numeric/display behavior |
+
+## Genuine conflicts / unexecutable items (for your review)
+
+1. **REQ-O1-03 cutoff vs. `load_ohlcv` ownership (not a conflict, a clarification needed).** The YAML makes "exclude rows after the analysis date" part of the SMA invariant (`requirements.yaml:108`), but today the cutoff lives in `load_ohlcv` (`ohlcv.py:230`), not in the SMA functions. T-O1-11 mocks the loader and "deliberately returns all 260 rows," so the **guard itself must apply the cutoff** for the assertion to hold. This is consistent with the YAML but means the guard duplicates a policy `load_ohlcv` already enforces. Flagged for decision: guard-applied cutoff (YAML-literal, T-O1-11 as written) vs. defensive assert that input is pre-cutoff. The plan as written follows the YAML literally (guard applies cutoff).
+2. **T-O1-06 spy target.** The case spies on `get_stockstats_indicator` (`test plan row 25`), which is the intermediary; the guard logic lives in `get_stock_stats`. Executable, but note the spy proves the *fallback wrapper* ran, not that `get_stock_stats` was entered. Minor: acceptable as written; no change required to satisfy YAML.
+3. **T-O1-12 routed-tool clause is intentionally excluded** by the current plan (`test plan row 31`, "No routed-tool duplicate-message assertion is made"), which matches my earlier finding that the routed interface cannot surface a duplicate status today. This is consistent, not a conflict — noting so it isn't re-added.
+4. **§3 collection claim.** The plan says main "collects both `tests/` and `test/offline/` by default," but local `pyproject.toml:59` is `testpaths = ["tests"]` and CI runs bare `pytest -q` (`ci.yml:36`). This is a **branch-age artifact**, not a plan defect — see prerequisite below. Listed separately rather than treated as a test-design flaw.
+
+No YAML requirement is contradicted by the plan; item 1 is a design decision, items 2-4 are notes, not conflicts.
+
+## Prerequisite (note only, do not action now)
+
+The local branch `feature/o1-sma-guard` is at baseline `970a9ea`, older than main's CI PR #1. The §3 collection statement (and possibly `test/offline` discovery) reflects main, not this branch. **Updating the branch to main is a later prerequisite** before implementation/CI work; not performed here.
+
+**Stopping for approval.** No files edited, no tests run, no branch change, no code written.
+
+---
+
+## User
+
+show me the export file ptah
+
+---
+
+## Assistant (Plan · DeepSeek-V4-Flash · 7.7s)
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "ls -la *.md docs/req/*.yaml 2>/dev/null"
+}
+```
+
+**Output:**
+```
+-rw-r--r--@ 1 caicys  staff   53618 11月 11 15:38 CHANGELOG.md
+-rw-r--r--@ 1 caicys  staff    2722 11月 16 12:03 docs/req/product-requirements.yaml
+-rw-r--r--@ 1 caicys  staff   86814 11月 16 12:03 docs/req/requirements.yaml
+-rw-r--r--@ 1 caicys  staff    9202 11月 16 15:49 O1-OpenCode-Execution-Plan-precode-v1.0-DRAFT.md
+-rw-r--r--@ 1 caicys  staff    9427 11月 13 15:46 O1-SMA-Guard-Requirements-Draft.md
+-rw-r--r--@ 1 caicys  staff    9462 11月 13 15:46 O1-SMA-Guard-Test-Plan-Draft.md
+-rw-r--r--@ 1 caicys  staff    9442 11月 16 14:58 O1-SMA-Guard-Test-Plan-v1.0-DRAFT.md
+-rw-r--r--@ 1 caicys  staff   27379 11月 11 15:38 README.md
+-rw-r--r--@ 1 caicys  staff   87706 11月 13 14:32 session-ses_e34f_20261113_requirement.md
+-rw-r--r--@ 1 caicys  staff  137777 11月 16 16:52 session-ses_e34f.md
+
+```
+
+---
+
+## Assistant (Plan · DeepSeek-V4-Flash · 4.1s)
+
+No file literal y called an "export" exists. The most likely export artifacts are the session transcript files:
+
+- `<PROJECT_ROOT>/session-ses_e34f.md` (137 KB, most recent)
+- `<PROJECT_ROOT>/session-ses_e34f_20261113_requirement.md` (87 KB)
+
+Which did you mean? If you had a specific export in mind, tell me its name and I'll locate it.
+
+---
+
+## User
+
+If I restart the computer, will the content of our Open Code session conversation still be available?
+
+---
+
+## Assistant (Plan · DeepSeek-V4-Flash · 4.0s)
+
+Let me check how opencode persists sessions locally.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "ls -la ~/.local/share/opencode 2>/dev/null; echo \"---\"; ls -la ~/.config/opencode 2>/dev/null; echo \"--- XDG ---\"; echo \"$XDG_DATA_HOME\""
+}
+```
+
+**Output:**
+```
+total 26824
+drwxr-xr-x@ 8 caicys  staff       256 11月 11 22:40 .
+drwxr-xr-x  5 caicys  staff       160  9月  7 19:12 ..
+drwxr-xr-x@ 3 caicys  staff        96  8月 31 20:09 log
+-rw-r--r--@ 1 caicys  staff  11370496 11月 16 15:23 opencode.db
+-rw-r--r--@ 1 caicys  staff     32768 11月 13 14:45 opencode.db-shm
+-rw-r--r--@ 1 caicys  staff   1895232 11月 16 16:54 opencode.db-wal
+drwxr-xr-x@ 2 caicys  staff        64  8月 31 20:09 repos
+drwxr-xr-x  3 caicys  staff        96 11月 11 22:40 snapshot
+---
+total 64
+drwxr-xr-x@  8 caicys  staff    256 10月  4 18:00 .
+drwxr-xr-x   7 caicys  staff    224  9月  1 17:35 ..
+-rw-r--r--@  1 caicys  staff     63  8月 31 20:09 .gitignore
+drwxr-xr-x@ 30 caicys  staff    960  8月 31 20:09 node_modules
+-rw-r--r--@  1 caicys  staff    468 10月  4 18:05 opencode.jsonc
+-rw-r--r--@  1 caicys  staff     50 10月  4 18:00 opencode.jsonc.backup
+-rw-r--r--@  1 caicys  staff  14631  8月 31 20:09 package-lock.json
+-rw-r--r--@  1 caicys  staff     65  8月 31 20:09 package.json
+--- XDG ---
+
+
+```
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "find ~/.local/share/opencode ~/Library/Application\\ Support/opencode ~/.opencode -maxdepth 3 -type d 2>/dev/null | head -40"
+}
+```
+
+**Output:**
+```
+<LOCAL_OPENCODE_DATA>
+<LOCAL_OPENCODE_DATA>/repos
+<LOCAL_OPENCODE_DATA>/snapshot
+<LOCAL_OPENCODE_DATA>/snapshot/5e4064cab78284c46f12fb43d17b3e872ae6390d
+<LOCAL_OPENCODE_DATA>/snapshot/5e4064cab78284c46f12fb43d17b3e872ae6390d/8c23f9fab8e536da86f12dd66988e4d28090ca27
+<LOCAL_OPENCODE_DATA>/log
+<LOCAL_OPENCODE_HOME>
+<LOCAL_OPENCODE_HOME>/bin
+<LOCAL_OPENCODE_HOME>/node_modules
+<LOCAL_OPENCODE_HOME>/node_modules/zod
+<LOCAL_OPENCODE_HOME>/node_modules/zod/v4-mini
+<LOCAL_OPENCODE_HOME>/node_modules/zod/locales
+<LOCAL_OPENCODE_HOME>/node_modules/zod/mini
+<LOCAL_OPENCODE_HOME>/node_modules/zod/v4
+<LOCAL_OPENCODE_HOME>/node_modules/zod/v3
+<LOCAL_OPENCODE_HOME>/node_modules/zod/src
+<LOCAL_OPENCODE_HOME>/node_modules/shebang-regex
+<LOCAL_OPENCODE_HOME>/node_modules/fast-check
+<LOCAL_OPENCODE_HOME>/node_modules/fast-check/lib
+<LOCAL_OPENCODE_HOME>/node_modules/.bin
+<LOCAL_OPENCODE_HOME>/node_modules/toml
+<LOCAL_OPENCODE_HOME>/node_modules/toml/lib
+<LOCAL_OPENCODE_HOME>/node_modules/@opencode-ai
+<LOCAL_OPENCODE_HOME>/node_modules/@opencode-ai/plugin
+<LOCAL_OPENCODE_HOME>/node_modules/@opencode-ai/sdk
+<LOCAL_OPENCODE_HOME>/node_modules/find-my-way-ts
+<LOCAL_OPENCODE_HOME>/node_modules/find-my-way-ts/dist
+<LOCAL_OPENCODE_HOME>/node_modules/find-my-way-ts/QueryString
+<LOCAL_OPENCODE_HOME>/node_modules/find-my-way-ts/src
+<LOCAL_OPENCODE_HOME>/node_modules/@ai-sdk
+<LOCAL_OPENCODE_HOME>/node_modules/@ai-sdk/provider
+<LOCAL_OPENCODE_HOME>/node_modules/multipasta
+<LOCAL_OPENCODE_HOME>/node_modules/multipasta/dist
+<LOCAL_OPENCODE_HOME>/node_modules/multipasta/src
+<LOCAL_OPENCODE_HOME>/node_modules/detect-libc
+<LOCAL_OPENCODE_HOME>/node_modules/detect-libc/lib
+<LOCAL_OPENCODE_HOME>/node_modules/kubernetes-types
+<LOCAL_OPENCODE_HOME>/node_modules/kubernetes-types/rbac
+<LOCAL_OPENCODE_HOME>/node_modules/kubernetes-types/apiserverinternal
+<LOCAL_OPENCODE_HOME>/node_modules/kubernetes-types/flowcontrol
+
+```
+
+---
+
+## Assistant (Plan · DeepSeek-V4-Flash · 4.3s)
+
+Yes — the conversation is persisted to disk, so it survives a reboot.
+
+- Sessions are stored in a local SQLite database: `~/.local/share/opencode/opencode.db` (11 MB, plus `-wal`/`-shm` journals). This holds message history across restarts.
+- Logs: `~/.local/share/opencode/log`.
+
+Caveats:
+- It's not kept in this project folder; it lives under your home directory, so it persists through a restart but **not** through disk reformat / user reset / deleting that DB.
+- If you need a durable, portable copy for the course (D5 evidence), export the session to a file in the repo (e.g. the `session-ses_e34f.md` files already present) — otherwise you rely on the local DB.
+
+Want me to outline how to resume this session after restart, or how to export the current session to a file?
+
+---
+
+> **Human annotation — Member A:** I asked the agent to check the approved records and the branch before coding. This kept the work tied to the reviewed scope.
+
+## User
+
+Continue O1 in this project checkout. Read `AGENTS.md`, `Prompt.md`, `docs/test-approvals/O1-2026-11-16.md`, and the approved O1 v1.1 test and execution plans under `docs/req/reviews/o1/precode-v1.1/`. Use REQ-O1-01–06 in `docs/req/requirements.yaml` as the requirements baseline; the older root-level O1 drafts are historical.
+
+Confirm the branch is `feature/o1-sma-guard` at `5afb24c`, and that your proposed work matches the PR #4 approvals: T-O1-01–12 and only `market.py`, `snapshot.py`, and `test/offline/test_o1_sma_guard.py`. Briefly show the implementation and verification steps, then stop before editing or running tests so I can confirm the match. Flag any mismatch instead of expanding the scope. 
+
+---
+
+## Assistant (Plan · DeepSeek-V4-Flash · 18.1s)
+
+I'll read the required files and verify the branch state.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "git branch --show-current; git rev-parse HEAD; git log --oneline -3"
+}
+```
+
+**Output:**
+```
+feature/o1-sma-guard
+5afb24cf1b48e15e5000ee1365826eebb30d01ae
+5afb24c Merge O1 pre-code review package v1.1
+c71261a docs(o1): align catalog inventory and bulk mapping
+c7026e1 docs(o1): complete bulk requirement mapping in test plan
+
+```
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "ls -la docs/test-approvals/ docs/req/reviews/o1/precode-v1.1/ 2>&1"
+}
+```
+
+**Output:**
+```
+docs/req/reviews/o1/precode-v1.1/:
+total 48
+drwxr-xr-x@ 4 caicys  staff   128 11月 16 21:16 .
+drwxr-xr-x@ 3 caicys  staff    96 11月 16 21:16 ..
+-rw-r--r--@ 1 caicys  staff  9512 11月 16 21:16 O1-OpenCode-Execution-Plan-precode-v1.1-DRAFT.md
+-rw-r--r--@ 1 caicys  staff  9915 11月 16 21:16 O1-SMA-Guard-Test-Plan-v1.1-DRAFT.md
+
+docs/test-approvals/:
+total 16
+drwxr-xr-x@ 4 caicys  staff   128 11月 16 21:19 .
+drwxr-xr-x@ 8 caicys  staff   256 11月 16 11:38 ..
+-rw-r--r--@ 1 caicys  staff  2053 11月 16 21:19 O1-2026-11-16.md
+-rw-r--r--@ 1 caicys  staff  2108 11月 16 21:16 TEMPLATE.md
+
+```
+
+---
+
+## Assistant (Plan · DeepSeek-V4-Flash · 26.4s)
+
+Branch and commit confirmed. Reading the approval and plans.
+
+**Tool: read**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/docs/test-approvals/O1-2026-11-16.md"
+}
+```
+
+**Output:**
+```
+<path><PROJECT_ROOT>/docs/test-approvals/O1-2026-11-16.md</path>
+<type>file</type>
+<content>
+1: # O1 pre-code approvals and kickoff record
+2: 
+3: - Feature owner: A (蔡一莎). Approved requirements: `docs/req/requirements.yaml`, REQ-O1-01 through REQ-O1-06, from merged requirements PR #2.
+4: - Test plan: `docs/req/reviews/o1/precode-v1.1/O1-SMA-Guard-Test-Plan-v1.1-DRAFT.md`, v1.1, T-O1-01 through T-O1-12. F (`fancx777`) approved commit `c71261a7e4b2d9d07beb285bd0adf630462ea430` on 2026-11-16 12:58:20 UTC (20:58:20 Asia/Shanghai): https://github.com/Caicys297/TradingAgents-CS5351/pull/4#pullrequestreview-5920333872
+5: - OpenCode execution plan: `docs/req/reviews/o1/precode-v1.1/O1-OpenCode-Execution-Plan-precode-v1.1-DRAFT.md`, v1.1. A (`Caicys297`) approved the same PR head on 2026-11-16 13:08:27 UTC (21:08:27 Asia/Shanghai): https://github.com/Caicys297/TradingAgents-CS5351/pull/4#issuecomment-6917298255
+6: - Approved write scope: `tradingagents/dataflows/vendors/yahoo/market.py`, `tradingagents/dataflows/vendors/yahoo/snapshot.py`, `test/offline/test_o1_sma_guard.py`. Any material scope or behavior change needs a revised plan and approval.
+7: - B's independent requirement-to-case check may follow and is not an O1 coding blocker under A's decision at 2026-11-16 13:09:58 UTC: https://github.com/Caicys297/TradingAgents-CS5351/pull/4#issuecomment-6917333147
+8: - Documentation PR #4 merged as `5afb24cf1b48e15e5000ee1365826eebb30d01ae`. Local O1 branch fast-forwarded to that commit before any O1 code edit in this branch.
+9: - Pre-code branch inspection: `pyproject.toml` now has `testpaths = ["tests", "test/offline"]`; `test/offline/conftest.py` contains an autouse network-blocking fixture. This is a file inspection, not a pytest collection or fixture execution result.
+10: - First O1 test or production code edit: not yet recorded.
+11: - Actual O1 test results, node IDs, CI links, and final code PR review: pending implementation and execution.
+12: 
+13: The approved v1.1 documents retain their historical “Draft/approval pending” wording because approval occurred later in the linked PR review. This record does not alter the approved document contents.
+
+(End of file - total 13 lines)
+</content>
+```
+
+**Tool: read**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/docs/req/reviews/o1/precode-v1.1/O1-SMA-Guard-Test-Plan-v1.1-DRAFT.md"
+}
+```
+
+**Output:**
+```
+<path><PROJECT_ROOT>/docs/req/reviews/o1/precode-v1.1/O1-SMA-Guard-Test-Plan-v1.1-DRAFT.md</path>
+<type>file</type>
+<content>
+1: # O1 — SMA Validity Guard: Test Plan v1.1 (Draft)
+2: 
+3: **Owner:** Member A
+4: 
+5: **Reviewers:** Member F (test plan); Member B (requirement–case mapping)
+6: 
+7: **Status:** Revised after F's review of commit `3981944` on 16 November 2026. Approval remains pending; no implementation, O1 test run, or CI result is claimed.
+8: 
+9: **Requirement baseline:** `docs/req/requirements.yaml`, REQ-O1-01 through REQ-O1-06, merged in requirements PR #2. Check the exact version before approval. The root `O1-SMA-Guard-Requirements-Draft.md` is an earlier discussion record; it does not override the selected YAML where they differ.
+10: 
+11: ## 1. Scope and method
+12: 
+13: Test the Yahoo/stockstats `close_50_sma` and `close_200_sma` paths only: the bulk indicator report, the per-day fallback, and the verified snapshot. The guard does not change the history download window, cache, other indicators, or other vendors.
+14: 
+15: Use deterministic non-constant OHLCV frames with dated closes and no external network. For boundary cases, replace the Yahoo module's `load_ohlcv` with a frame representing cleaned loader output. For loader cases, exercise the real `load_ohlcv` using a seeded local cache and block downloads. Calculate expected SMA values independently from the latest 50 or 200 valid closes on or before the target date. Compare the unformatted value with absolute error at most `1e-6`; compare snapshot text using the existing `price_text` display rule. Check the value for the **target date**, not a matching value elsewhere in the report.
+16: 
+17: The required insufficient-history value is exactly `N/A: insufficient history (needs W sessions, have N)` after replacing W and N with integer counts. A duplicate trading date gives exactly `N/A: invalid price history (duplicate trading date)` for the requested SMA. The existing non-trading-day and no-market-data results stay distinct. The cases below are planned outcomes, not observed results.
+18: 
+19: ## 2. Cases and requirement mapping
+20: 
+21: | ID | Controlled input and entry point | Expected assertion | Requirements |
+22: |---|---|---|---|
+23: | T-O1-01 | 40 and 49 cleaned dated closes; call `_get_stock_stats_bulk` separately for each SMA. | At 40, both SMA values are exact insufficient-history strings with `have 40`; at 49, 50-SMA says `have 49`. No partial-window number. | REQ-O1-01, REQ-O1-02, REQ-O1-04 |
+24: | T-O1-02 | 50 and 60 cleaned closes; separate bulk calls for each fixture and indicator. | 50-SMA equals the latest-50 mean within tolerance at both counts; 200-SMA says `have 50` on the 50-row fixture and `have 60` on the 60-row fixture. | REQ-O1-01, REQ-O1-02, REQ-O1-04 |
+25: | T-O1-03 | 199, 200, and 220 cleaned closes; separate bulk calls. | At 199, 200-SMA says `have 199`; at 200 and 220, both SMAs equal their latest-window means. | REQ-O1-01, REQ-O1-02, REQ-O1-04 |
+26: | T-O1-04 | 260 ordered dates; request the 60th chronological date from `_get_stock_stats_bulk` for each SMA and look it up by date key. | On that date, 50-SMA equals the mean of dates 11–60; 200-SMA says `have 60`, despite 260 rows being present. | REQ-O1-03 |
+27: | T-O1-05 | Call `build_verified_market_snapshot` with 40, 49, 50, 199, and 200 cleaned closes, using the default indicators. | At 49, the 50-SMA cell is exactly `N/A: insufficient history (needs 50 sessions, have 49)`. At 199, 50-SMA is numeric and the 200-SMA cell is exactly `N/A: insufficient history (needs 200 sessions, have 199)`. At 40 both are insufficient; at 50 only 50-SMA is numeric; at 200 both are numeric. Valid cells match `price_text` of independently computed means. | REQ-O1-01, REQ-O1-02, REQ-O1-04 |
+28: | T-O1-06 | Force `_get_stock_stats_bulk` to raise `RuntimeError`; spy on `get_stockstats_indicator`; call `get_stock_stats_indicators_window` for each SMA with `look_back_days=0` and frames of 49/50 or 199/200 rows. | The spy confirms the per-day fallback ran. The target-date report line has the exact insufficient string at W−1 and a correct mean at W. | REQ-O1-01, REQ-O1-02, REQ-O1-04 |
+29: | T-O1-07 | On a controlled frame, request one default non-SMA indicator, such as `rsi`, through bulk, forced fallback, and snapshot; compute a same-frame stockstats reference. | Non-SMA values retain their prior numerical/display behavior; the existing regression suite has no new failures. | REQ-O1-05 |
+30: | T-O1-08 | In one `get_stock_stats_indicators_window` output, include a dated row with insufficient history and a nearby absent weekend date. | The first line has the exact insufficient-history value; the absent date has the existing `N/A: Not a trading day (weekend or holiday)` value. | REQ-O1-06 |
+31: | T-O1-09 | Run **both** seeded-cache cases through the real `load_ohlcv`: (a) 50 dated rows with one middle missing `Close`, then request 50-SMA; (b) 200 dated rows with one middle missing `Close`, then request 200-SMA. Follow the frozen-`today`, fresh-cache, blocked-download pattern in `tests/test_ohlcv_latest_bar.py::_run_load`. | Assert the loader leaves exactly 49 and 199 valid dated closes, respectively. The O1 entry point returns exactly `N/A: insufficient history (needs 50 sessions, have 49)` for (a) and `N/A: insufficient history (needs 200 sessions, have 199)` for (b). Both cases are mandatory. | REQ-O1-01, REQ-O1-02 |
+32: | T-O1-10 | Seed a **non-empty** cache frame whose `Close` column is entirely missing; exercise real `load_ohlcv` and one routed O1 tool. | Direct loader raises `NoMarketDataError` with detail `no bar in range has a closing price`; the routed output has `NO_DATA_AVAILABLE`, with no numeric SMA or `have 0` message. | REQ-O1-01, REQ-O1-02, REQ-O1-06 |
+33: | T-O1-11 | Supply 260 unique dated, non-constant closes in shuffled order and the same frame sorted as a control. Call `_get_stock_stats_bulk` for each SMA with `as_of_date` set first to the 60th chronological date and then to the final date; the mocked loader deliberately returns all 260 rows in both calls. Put an extreme price after the earlier analysis date. | **After the guard is implemented**, shuffled and sorted frames give the same dated SMA results. At date 60, 50-SMA is the mean of chronological dates 11–60 and 200-SMA says `have 60`; at the final date, both SMAs match their latest-window means. The later extreme price does not affect date 60. | REQ-O1-03 |
+34: | T-O1-12 | Supply a cleaned-looking frame with two rows sharing a trading date. Inject it at `load_ohlcv` for `_get_stock_stats_bulk`, `get_stock_stats` (per-day path), and `build_verified_market_snapshot`; request both SMAs separately. Use a separate non-SMA control. | **After the guard is implemented**, no SMA entry point publishes a numeric result for invalid history; the requested SMA result is the exact duplicate-date message. The non-SMA control retains its prior behavior. No routed-tool duplicate-message assertion is made. | REQ-O1-03, REQ-O1-06 |
+35: 
+36: T-O1-11 tests the **new O1 calculation's** ordering and date cutoff, even when the controlled frame includes later rows. It does **not** prove the real loader's cutoff; existing loader and snapshot tests provide that separate evidence. T-O1-12 tests the **new O1 duplicate-date behavior** at the three direct entry points. Current code has no such message and must change for this planned case to pass. The public routed tool is outside this assertion because the current real loader does not reject duplicates.
+37: 
+38: ## 3. Execution and evidence plan
+39: 
+40: Place deterministic O1 tests under `test/offline/`, subject to F's final CI review. Current `main` (after CI PR #1) collects both `tests/` and `test/offline/` by default and excludes tests marked `integration`; the older local `feature/o1-sma-guard` checkout still has `testpaths = ["tests"]`. Bring that feature branch up to the approved main baseline safely before relying on default collection, and confirm its local configuration. Keep these offline cases in the default run; use `pytest -q test/offline/<O1_test_file>.py` for the O1 file and `pytest -q` for the regression run after implementation. F will record the actual pytest node IDs, default collection, network-block result, CI run links, and any separately run inherited suite. Do not mark a deterministic offline case `integration` merely because it crosses a loader or router boundary.
+41: 
+42: Before implementation, seek F's approval of this exact plan version and case range T-O1-01 through T-O1-12. B checks the requirement–case mapping. Keep a dated approval record in `docs/test-approvals/` or the team's agreed record location, with the plan link, reviewer, decision, scope, and timestamp; preserve the original message/PR evidence. A then approves the read-only OpenCode execution plan as a separate decision. Only after these approvals should implementation or test code be written. Record actual first-code time, baseline failure if feasible, passing result, PR review, CI links, and raw OpenCode transcript later; do not fill these fields in advance.
+43: 
+44: ## 4. Read-only feasibility checks before approval
+45: 
+46: - Confirm the exact function seam and report-line parser for each case, especially T-O1-06 and T-O1-12. `get_stock_stats_indicators_window` handles one indicator per call.
+47: - Check whether T-O1-11's earlier-date assertion can be exercised through the bulk function with a controlled frame, and whether the source itself enforces the analysis-date cutoff or relies on `load_ohlcv`.
+48: - Confirm T-O1-12's expected duplicate-date behavior at bulk, per-day, and snapshot entry points and define the smallest production change needed to make them agree. Keep the non-SMA control independent.
+49: - Confirm T-O1-09/10's seeded-cache fixtures remain recent enough for the loader's stale-data rule and cannot reach the network.
+50: - Check the feature branch against current main's pytest collection and offline network fixtures before recording exact CI commands.
+51: 
+52: If a check shows a case is infeasible or changes an approved requirement, revise this draft and obtain approval of the new version before coding.
+
+(End of file - total 52 lines)
+</content>
+```
+
+---
+
+## Assistant (Plan · DeepSeek-V4-Flash · 19.8s)
+
+Now the execution plan and the AGENTS/Prompt, plus verify the pre-code branch facts cited in the approval record.
+
+**Tool: read**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/docs/req/reviews/o1/precode-v1.1/O1-OpenCode-Execution-Plan-precode-v1.1-DRAFT.md"
+}
+```
+
+**Output:**
+```
+<path><PROJECT_ROOT>/docs/req/reviews/o1/precode-v1.1/O1-OpenCode-Execution-Plan-precode-v1.1-DRAFT.md</path>
+<type>file</type>
+<content>
+1: # O1 SMA Validity Guard — OpenCode Execution Plan v1.1 (Draft)
+2: 
+3: **Owner and execution-plan reviewer:** Member A
+4: 
+5: **Test-plan reviewer:** Member F; Member B checks the requirement–case mapping
+6: 
+7: **Status:** Updated to match test-plan v1.1 after F's review on 16 November 2026. No approval, implementation, O1 test execution, or CI result is claimed.
+8: 
+9: ## 1. Basis and scope
+10: 
+11: Use `docs/req/requirements.yaml` REQ-O1-01 through REQ-O1-06 from the merged requirements PR #2 as the requirement baseline. The companion test plan is `O1-SMA-Guard-Test-Plan-v1.1-DRAFT.md`, cases T-O1-01 through T-O1-12. The older `O1-SMA-Guard-Requirements-Draft.md` is discussion history where it differs from the YAML.
+12: 
+13: O1 changes only the Yahoo/stockstats `close_50_sma` and `close_200_sma` results. The bulk report, per-day fallback, and verified snapshot must agree. Other indicators, Alpha Vantage, public tool signatures, the Yahoo history download window, and cache policy stay outside this change.
+14: 
+15: This plan summarizes OpenCode's read-only analysis in session `ses_e34f21c97ffevLFn0o9TxQa9zG` and A's review corrections. The raw session must be preserved separately for D5; this summary is not a substitute for that transcript.
+16: 
+17: ## 2. Pre-code checks and approvals
+18: 
+19: 1. **Confirm the implementation base.** The local `feature/o1-sma-guard` checkout is still at `970a9ea`, before CI PR #1 and requirements PR #2. It also contains untracked local documents under `docs/req/`. Record those files and update the feature branch safely from current `main` before writing code; do not use a blind pull or discard the untracked files. Confirm the resulting commit, YAML version, `test/offline/` collection, and offline network fixture.
+20: 2. **Confirm governance files.** Check the project-root `AGENTS.md` and `Prompt.md` and follow the approved reading order and permissions before asking OpenCode to write code. They are absent from the current local O1 checkout; their creation is a project-level task, not an O1 code change in this plan.
+21: 3. **Approve the test plan first.** F records approval of the exact O1 test-plan version and T-O1-01 through T-O1-12 before any O1 test or implementation code is written. B checks the YAML-to-case mapping. Use `docs/test-approvals/TEMPLATE.md` or the agreed record location with the reviewer, actual time, version, case range, and original GitHub/message evidence.
+22: 4. **Approve this execution plan separately.** A records the reviewed plan version, implementation-base commit, allowed files, scope, and actual approval time before the first OpenCode code edit. If the file list or behavior changes materially, revise the plan and obtain approval of that revision.
+23: 
+24: ## 3. Allowed changes after both approvals
+25: 
+26: | File | Planned change |
+27: |---|---|
+28: | `tradingagents/dataflows/vendors/yahoo/market.py` | Add an internal rule for the two named SMA windows. Use it in `_get_stock_stats_bulk` and `get_stock_stats`; keep `get_stock_stats_indicators_window`'s public signature and fallback behavior. |
+29: | `tradingagents/dataflows/vendors/yahoo/snapshot.py` | Use the same SMA rule for the two SMA cells in `build_verified_market_snapshot`. Keep the existing formatting and other indicator cells. |
+30: | `test/offline/test_o1_sma_guard.py` | Add deterministic, network-free cases T-O1-01 through T-O1-12, including controlled real-loader fixtures for T-O1-09/10. F confirms this exact path when approving the test plan. |
+31: 
+32: No change is planned to `ohlcv.py`, `router.py`, `agents/tools.py`, Alpha Vantage, `pyproject.toml`, CI workflows, or `test/offline/conftest.py`. A new production file, dependency, public API change, or changed download/cache policy requires a revised plan before editing.
+33: 
+34: ## 4. Function-level implementation plan
+35: 
+36: 1. In `market.py`, keep one internal mapping for `close_50_sma → 50` and `close_200_sma → 200` and one shared SMA calculation rule. Apply this path only when the requested indicator is one of those two names. The non-SMA path keeps its existing stockstats behavior.
+37: 2. For an O1 SMA request, work from cleaned dated closes. Exclude rows later than the request's `as_of_date`, reject duplicate trading dates among the remaining rows with the exact invalid-history text, and sort the eligible rows by date. For each reported date, count and use only closes through that date. Produce a numeric latest-W mean only when at least W usable closes exist; otherwise return the exact insufficient-history text for counts 1 through W−1. Do not silently deduplicate or produce a partial-window SMA.
+38: 3. `_get_stock_stats_bulk` returns its existing date-keyed map. The value for an early date must depend on that date's eligible history, not the whole frame length. `get_stock_stats` applies the same rule for one target date so the per-day fallback cannot bypass the guard. A date absent from the cleaned frame retains the existing non-trading-day message.
+39: 4. The snapshot already selects and sorts rows on or before the analysis date. Use the shared SMA rule for its 50/200 SMA cells, including duplicate-date rejection; retain the current `price_text` display rule for valid values. Do not apply O1's guard to `rsi`, EMA, Bollinger, MACD, ATR, or any other indicator.
+40: 5. Keep the current no-data path. In particular, T-O1-10's non-empty, all-`Close`-missing loader fixture must yield `NoMarketDataError` directly and `NO_DATA_AVAILABLE` through the routed tool, never `have 0`. This plan does not claim that every possible empty-frame route has the same direct exception without separate source verification.
+41: 
+42: ## 5. Existing test-case map
+43: 
+44: | Cases | Path and purpose |
+45: |---|---|
+46: | T-O1-01–04 | `_get_stock_stats_bulk`: 40/49, 50/60, 199/200/220, and early date in a 260-date frame. |
+47: | T-O1-05 | `build_verified_market_snapshot`: 40/49/50 and 199/200 boundaries, including exact 49 and 199 insufficient-history messages and valid-value display formatting. |
+48: | T-O1-06 | Force bulk `RuntimeError`; spy on `get_stockstats_indicator`; verify the per-day path reaches `get_stock_stats` and applies the guard. |
+49: | T-O1-07 | Bulk, fallback, and snapshot non-SMA control; inherited regression tests. |
+50: | T-O1-08 | Indicator-window text distinguishes insufficient history from an absent trading date. |
+51: | T-O1-09 | Both real `load_ohlcv` seeded-cache fixtures are mandatory: 50 rows with one missing middle close leave 49; 200 rows with one missing middle close leave 199. Assert the respective exact insufficient-history messages. |
+52: | T-O1-10 | Real loader and one routed tool on a non-empty frame with all closes missing; preserve no-data behavior. This case maps to REQ-O1-01/02/06, not the three-path boundary claim in REQ-O1-04. |
+53: | T-O1-11 | Bulk with shuffled unique dates and deliberate future rows from a mocked loader; guard sorts and excludes later rows before computing. |
+54: | T-O1-12 | Bulk, `get_stock_stats`, and snapshot with an eligible duplicate trading date; exact invalid-history text and no numeric SMA. |
+55: 
+56: The expected strings and valid-value tolerance are those in the YAML: `N/A: insufficient history (needs W sessions, have N)`, `N/A: invalid price history (duplicate trading date)`, and absolute numeric error at most `1e-6` before display formatting. The test plan gives the exact fixture and assertion for each ID; this execution plan does not add cases or acceptance criteria.
+57: 
+58: ## 6. Runtime actions already specified by O1
+59: 
+60: | Trigger | Action | Result |
+61: |---|---|---|
+62: | At least W eligible closes through the reported date | Compute the latest-W mean. | Numeric O1 SMA. |
+63: | 1 through W−1 eligible closes | Suppress the partial-window number. | Exact insufficient-history text with W and N. |
+64: | A row later than the analysis date | Exclude it from O1 SMA calculation. | Earlier dated result is unaffected. |
+65: | Duplicate date among rows eligible for this request | Reject the O1 SMA input; do not silently deduplicate. | Exact invalid-history text; no numeric O1 SMA. |
+66: | T-O1-10's all-missing-close loader input | Preserve existing no-data routing. | Direct loader error; routed `NO_DATA_AVAILABLE`. |
+67: | Requested date absent from cleaned rows | Preserve the existing date lookup behavior. | Existing non-trading-day text. |
+68: 
+69: ## 7. Build and verification sequence after approval
+70: 
+71: 1. Add the approved offline tests and record which cases fail on the unguarded baseline, if a baseline run is feasible. Do not change expected results just to make the baseline pass.
+72: 2. Make the minimal `market.py` and `snapshot.py` changes above. Keep the shared rule confined to the two O1 indicators.
+73: 3. Run the O1 file directly, then the default regression suite after confirming that the updated branch collects both `tests/` and `test/offline/`. F checks default collection, network blocking, pytest node IDs, and the applicable CI results. Planned commands (not run now):
+74: 
+75:    ```text
+76:    pytest --collect-only -q test/offline/test_o1_sma_guard.py
+77:    pytest -q test/offline/test_o1_sma_guard.py
+78:    pytest -q
+79:    ruff check tradingagents/dataflows/vendors/yahoo/market.py tradingagents/dataflows/vendors/yahoo/snapshot.py test/offline/test_o1_sma_guard.py
+80:    ```
+81: 
+82: 4. Open the O1 code PR. Preserve the actual test output, CI links, approval records, first-code time, code review, and raw OpenCode transcript. No result is recorded in advance.
+83: 
+84: **Stop condition:** If a case needs a different public behavior, a new file, a change to another indicator/vendor, or a new test case, stop and return the proposed change for requirement/test-plan review before coding it.
+
+(End of file - total 84 lines)
+</content>
+```
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "grep -n \"testpaths\" pyproject.toml; ls -la test/offline/ 2>&1; echo \"--- conftest ---\"; ls -la test/offline/conftest.py 2>&1"
+}
+```
+
+**Output:**
+```
+59:testpaths = ["tests", "test/offline"]
+total 8
+drwxr-xr-x@ 4 caicys  staff   128 11月 16 21:16 .
+drwxr-xr-x@ 4 caicys  staff   128 11月 11 15:38 ..
+-rw-r--r--@ 1 caicys  staff     0 11月 11 15:52 .gitkeep
+-rw-r--r--@ 1 caicys  staff  1206 11月 16 21:16 conftest.py
+--- conftest ---
+-rw-r--r--@ 1 caicys  staff  1206 11月 16 21:16 test/offline/conftest.py
+
+```
+
+---
+
+## Assistant (Plan · DeepSeek-V4-Flash · 18.4s)
+
+The pre-code branch facts now match (testpaths updated, conftest present). Let me read AGENTS.md, Prompt.md, the conftest, and confirm the current source seams the plan targets.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "ls -la AGENTS.md Prompt.md 2>&1; echo \"=== conftest ===\"; cat test/offline/conftest.py"
+}
+```
+
+**Output:**
+```
+-rw-r--r--@ 1 caicys  staff  3805 11月 16 21:19 AGENTS.md
+-rw-r--r--@ 1 caicys  staff  1224 11月 16 21:20 Prompt.md
+=== conftest ===
+"""Offline-suite fixtures: keep every test in this directory off the network.
+
+``tests/conftest.py`` already does this for the inherited suite, but that
+fixture is scoped to ``tests/`` and does not apply to this sibling directory.
+This copy keeps the same behaviour so offline cases fail loudly, rather than
+silently reaching a vendor, if they attempt network access.
+"""
+
+import socket
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _no_network(request, monkeypatch):
+    """Tests do not reach the network; one that must is marked integration."""
+    if request.node.get_closest_marker("integration"):
+        return
+
+    def refuse(*args, **kwargs):
+        raise OSError(f"test tried to reach the network: {args[1:] or kwargs}")
+
+    monkeypatch.setattr(socket.socket, "connect", refuse)
+    monkeypatch.setattr(socket.socket, "connect_ex", refuse)
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *a, **k: refuse(None, *a))
+    # yfinance's HTTP client is libcurl, which never touches Python's sockets.
+    from curl_cffi import requests as curl_requests
+
+    monkeypatch.setattr(curl_requests.Session, "request", refuse)
+    monkeypatch.setattr(curl_requests.AsyncSession, "request", refuse)
+
+```
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "grep -n \"untracked\\|docs/req\" /dev/null; git status --short | head -30"
+}
+```
+
+**Output:**
+```
+?? AGENTS.md
+?? O1-OpenCode-Execution-Plan-precode-v1.0-DRAFT.md
+?? O1-SMA-Guard-Requirements-Draft.md
+?? O1-SMA-Guard-Test-Plan-Draft.md
+?? O1-SMA-Guard-Test-Plan-v1.0-DRAFT.md
+?? Prompt.md
+?? docs/.DS_Store
+?? docs/test-approvals/O1-2026-11-16.md
+?? session-ses_e34f_20261113_requirement.md
+?? session-ses_e34f_20261116.md
+
+```
+
+---
+
+## Assistant (Plan · DeepSeek-V4-Flash · 18.0s)
+
+**Tool: read**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/Prompt.md"
+}
+```
+
+**Output:**
+```
+<path><PROJECT_ROOT>/Prompt.md</path>
+<type>file</type>
+<content>
+1: # Static coding-agent launch prompt — working draft
+2: 
+3: Start by reading `AGENTS.md` and its listed requirement, architecture, approval, and test-plan sources in order. For the current task, identify the exact requirement IDs, allowed files, existing code contracts, negative cases, and expected evidence.
+4: 
+5: Produce a short execution plan covering requirement-to-test traceability, interface contracts, scope boundaries, implementation steps, and verification commands. Stop and show the execution plan for human approval before generating any test or production code. For O1, cite the existing PR #4 approvals and ask the human to confirm that the plan still matches their exact version, cases, baseline, and allowed files. An existing approval never extends to a different scope or changed plan.
+6: 
+7: After a matching human approval, implement in small steps within the allowed paths, run the approved offline and regression checks, report actual results and failures, and stop at each scope or architecture change for human review. Preserve the raw agent session and mark human interventions. Never report unrun tests or invented evidence. This prompt starts a supervised session; it does not authorize unattended development.
+
+(End of file - total 7 lines)
+</content>
+```
+
+---
+
+## Assistant (Plan · DeepSeek-V4-Flash · 23.9s)
+
+I've read AGENTS.md (in system context), Prompt.md, the approval record, and both v1.1 plans. Confirming current source seams and file state before presenting the plan.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "git ls-files test/offline/test_o1_sma_guard.py; echo \"exists-on-disk:\"; ls -la test/offline/test_o1_sma_guard.py 2>&1; echo \"--- current SMA seams ---\"; grep -n \"def _get_stock_stats_bulk\\|def get_stock_stats\\|def get_stockstats_indicator\\|def get_stock_stats_indicators_window\" tradingagents/dataflows/vendors/yahoo/market.py; grep -n \"def build_verified_market_snapshot\\|def _verified_rows\" tradingagents/dataflows/vendors/yahoo/snapshot.py"
+}
+```
+
+**Output:**
+```
+exists-on-disk:
+ls: test/offline/test_o1_sma_guard.py: No such file or directory
+--- current SMA seams ---
+66:def get_stock_stats_indicators_window(
+205:def _get_stock_stats_bulk(
+236:def get_stockstats_indicator(
+273:def get_stock_stats(
+31:def _verified_rows(symbol: str, as_of_date: str) -> pd.DataFrame:
+67:def build_verified_market_snapshot(
+
+```
+
+---
+
+## Assistant (Plan · DeepSeek-V4-Flash · 31.3s)
+
+Verification complete. Everything matches the PR #4 approvals. Here is the plan — **nothing edited, nothing run.**
+
+## 1. Pre-flight confirmation
+
+| Check | Result |
+|---|---|
+| Branch | `feature/o1-sma-guard` ✔ |
+| HEAD | `5afb24cf1b48e15e5000ee1365826eebb30d01ae` (= `5afb24c`) ✔ |
+| Requirements baseline | `docs/req/requirements.yaml` REQ-O1-01–06 (`selected_for_development`) ✔ |
+| Test plan | v1.1, T-O1-01–12, F approved commit `c71261a` / PR #4 ✔ |
+| Execution plan | v1.1, A approved PR #4 head ✔ |
+| Allowed writes | `market.py`, `snapshot.py`, `test/offline/test_o1_sma_guard.py` ✔ |
+| `testpaths` | `["tests", "test/offline"]` (`pyproject.toml:59`) ✔ |
+| Offline fixture | `test/offline/conftest.py` autouse network-block ✔ |
+| Target test file | does not exist yet (to be created) ✔ |
+| Seams present | `market.py:66/205/236/273`, `snapshot.py:31/67` ✔ |
+
+No mismatches. Two housekeeping notes: several root draft/session files are untracked (`AGENTS.md`, `Prompt.md`, older O1 drafts, `session-ses_*.md`, `docs/test-approvals/O1-2026-11-16.md`, `docs/.DS_Store`); I will not touch them, and will create only the one approved new file.
+
+## 2. Implementation plan (after your confirmation)
+
+**`market.py`** (seams: `_get_stock_stats_bulk:205`, `get_stock_stats:273`, leave `get_stock_stats_indicators_window:66` signature/fallback intact)
+1. Add `SMA_WINDOWS = {"close_50_sma": 50, "close_200_sma": 200}` and one internal rule used by both functions.
+2. For an O1 SMA request on cleaned dated closes: exclude rows after `as_of_date`; detect duplicate trading dates among eligible rows → return `N/A: invalid price history (duplicate trading date)` (never numeric, no silent dedupe); sort by date; per reported date count/use closes through that date; numeric latest-W mean only when `count >= W`, else `N/A: insufficient history (needs W sessions, have N)`.
+3. `_get_stock_stats_bulk` keeps its date-keyed map; each date depends on its own eligible history, not frame length. `get_stock_stats` applies the same rule for its single target date. Non-SMA names bypass the guard entirely.
+
+**`snapshot.py`** (`build_verified_market_snapshot:67`, `_verified_rows:31` already sorts + cuts off)
+4. Apply the same shared rule to the 50/200 SMA cells, including duplicate-date rejection; keep `price_text` for valid values. Other indicator cells unchanged. Preserve the no-data path.
+
+**`test/offline/test_o1_sma_guard.py`** (new, network-free)
+5. One case per T-O1-01–12 exactly as v1.1 specifies (bulk boundaries 40/49/50/60/199/200/220; 260-date early-date by date key; snapshot 40/49/50/199/200; fallback via `RuntimeError` + spy; non-SMA control; insufficient vs non-trading-day; both real-loader seeded cases 49 & 199; all-missing-close loader → `NoMarketDataError`/`NO_DATA_AVAILABLE`; shuffled+future-row; duplicate-date at bulk/per-day/snapshot).
+
+**Not touched:** `ohlcv.py`, `router.py`, `agents/tools.py`, Alpha Vantage, `pyproject.toml`, CI, `conftest.py`, other indicators, public signatures.
+
+## 3. Verification steps (planned, not run)
+
+```text
+pytest --collect-only -q test/offline/test_o1_sma_guard.py
+pytest -q test/offline/test_o1_sma_guard.py
+pytest -q
+ruff check tradingagents/dataflows/vendors/yahoo/market.py tradingagents/dataflows/vendors/yahoo/snapshot.py test/offline/test_o1_sma_guard.py
+```
+Record actual node IDs/results; report real failures honestly; stop at any scope/architecture change.
+
+## Match statement
+
+My proposed work matches PR #4: **T-O1-01–12** and only the **three approved files**. No scope expansion, no new cases, no other indicators/vendors.
+
+Awaiting your confirmation to proceed. If anything above differs from the approved version, tell me and I will flag rather than expand.
+
+---
+
+> **Human annotation — Member A:** I approved the reviewed O1 plan and limited the build to three files. Tests had to come first, and the agent had to stop if the scope changed.
+
+## User
+
+Confirmed. Your plan matches the PR #4 approvals. Proceed with T-O1-01–12 and the O1 implementation, writing only `market.py`, `snapshot.py`, and `test/offline/test_o1_sma_guard.py`.
+
+Add the approved offline tests first, then implement the guard and run the verification commands in the approved plan. Report the actual results and pytest node IDs. Do not edit or commit the other untracked files. Stop and ask me before changing any requirement, public behavior, or file scope. Preserve the full OpenCode session for D5. 
+
+---
+
+## Assistant (Plan · DeepSeek-V4-Flash · 11.6s)
+
+Plan mode is active, so I cannot edit files or run tests yet — I'll present the concrete execution plan for the three approved files and await your switch out of plan mode.
+
+Let me finalize the exact code shape by re-reading the precise seams I'll modify.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "sed -n '66,203p' tradingagents/dataflows/vendors/yahoo/market.py"
+}
+```
+
+**Output:**
+```
+def get_stock_stats_indicators_window(
+    symbol: Annotated[str, "ticker symbol of the company"],
+    indicator: Annotated[str, "technical indicator to get the analysis and report of"],
+    as_of_date: Annotated[
+        str, "The current trading date you are trading on, YYYY-mm-dd"
+    ],
+    look_back_days: Annotated[int, "how many days to look back"],
+) -> str:
+
+    best_ind_params = {
+        # Moving Averages
+        "close_50_sma": (
+            "50 SMA: A medium-term trend indicator. "
+            "Usage: Identify trend direction and serve as dynamic support/resistance. "
+            "Tips: It lags price; combine with faster indicators for timely signals."
+        ),
+        "close_200_sma": (
+            "200 SMA: A long-term trend benchmark. "
+            "Usage: Confirm overall market trend and identify golden/death cross setups. "
+            "Tips: It reacts slowly; best for strategic trend confirmation rather than frequent trading entries."
+        ),
+        "close_10_ema": (
+            "10 EMA: A responsive short-term average. "
+            "Usage: Capture quick shifts in momentum and potential entry points. "
+            "Tips: Prone to noise in choppy markets; use alongside longer averages for filtering false signals."
+        ),
+        # MACD Related
+        "macd": (
+            "MACD: Computes momentum via differences of EMAs. "
+            "Usage: Look for crossovers and divergence as signals of trend changes. "
+            "Tips: Confirm with other indicators in low-volatility or sideways markets."
+        ),
+        "macds": (
+            "MACD Signal: An EMA smoothing of the MACD line. "
+            "Usage: Use crossovers with the MACD line to trigger trades. "
+            "Tips: Should be part of a broader strategy to avoid false positives."
+        ),
+        "macdh": (
+            "MACD Histogram: Shows the gap between the MACD line and its signal. "
+            "Usage: Visualize momentum strength and spot divergence early. "
+            "Tips: Can be volatile; complement with additional filters in fast-moving markets."
+        ),
+        # Momentum Indicators
+        "rsi": (
+            "RSI: Measures momentum to flag overbought/oversold conditions. "
+            "Usage: Apply 70/30 thresholds and watch for divergence to signal reversals. "
+            "Tips: In strong trends, RSI may remain extreme; always cross-check with trend analysis."
+        ),
+        # Volatility Indicators
+        "boll": (
+            "Bollinger Middle: A 20 SMA serving as the basis for Bollinger Bands. "
+            "Usage: Acts as a dynamic benchmark for price movement. "
+            "Tips: Combine with the upper and lower bands to effectively spot breakouts or reversals."
+        ),
+        "boll_ub": (
+            "Bollinger Upper Band: Typically 2 standard deviations above the middle line. "
+            "Usage: Signals potential overbought conditions and breakout zones. "
+            "Tips: Confirm signals with other tools; prices may ride the band in strong trends."
+        ),
+        "boll_lb": (
+            "Bollinger Lower Band: Typically 2 standard deviations below the middle line. "
+            "Usage: Indicates potential oversold conditions. "
+            "Tips: Use additional analysis to avoid false reversal signals."
+        ),
+        "atr": (
+            "ATR: Averages true range to measure volatility. "
+            "Usage: Set stop-loss levels and adjust position sizes based on current market volatility. "
+            "Tips: It's a reactive measure, so use it as part of a broader risk management strategy."
+        ),
+        # Volume-Based Indicators
+        "vwma": (
+            "VWMA: A moving average weighted by volume. "
+            "Usage: Confirm trends by integrating price action with volume data. "
+            "Tips: Watch for skewed results from volume spikes; use in combination with other volume analyses."
+        ),
+        "mfi": (
+            "MFI: The Money Flow Index is a momentum indicator that uses both price and volume to measure buying and selling pressure. "
+            "Usage: Identify overbought (>80) or oversold (<20) conditions and confirm the strength of trends or reversals. "
+            "Tips: Use alongside RSI or MACD to confirm signals; divergence between price and MFI can indicate potential reversals."
+        ),
+    }
+
+    if indicator not in best_ind_params:
+        raise ValueError(
+            f"Indicator {indicator} is not supported. Please choose from: {list(best_ind_params.keys())}"
+        )
+
+    end_date = as_of_date
+    as_of_dt = datetime.strptime(as_of_date, "%Y-%m-%d")
+    before = as_of_dt - relativedelta(days=look_back_days)
+
+    # Optimized: Get stock data once and calculate indicators for all dates
+    try:
+        indicator_data = _get_stock_stats_bulk(symbol, indicator, as_of_date)
+
+        # Generate the date range we need
+        current_dt = as_of_dt
+        date_values = []
+
+        while current_dt >= before:
+            date_str = current_dt.strftime('%Y-%m-%d')
+
+            # Look up the indicator value for this date
+            if date_str in indicator_data:
+                indicator_value = indicator_data[date_str]
+            else:
+                indicator_value = "N/A: Not a trading day (weekend or holiday)"
+
+            date_values.append((date_str, indicator_value))
+            current_dt = current_dt - relativedelta(days=1)
+
+        ind_string = ""
+        for date_str, value in date_values:
+            ind_string += f"{date_str}: {value}\n"
+
+    except VendorError:
+        raise  # Unknown/delisted symbol — let the router emit the sentinel
+    except Exception as e:
+        logger.warning("Bulk stockstats fetch failed, falling back per-day: %s", e)
+        # Fallback to original implementation if bulk method fails
+        ind_string = ""
+        as_of_dt = datetime.strptime(as_of_date, "%Y-%m-%d")
+        while as_of_dt >= before:
+            indicator_value = get_stockstats_indicator(
+                symbol, indicator, as_of_dt.strftime("%Y-%m-%d")
+            )
+            ind_string += f"{as_of_dt.strftime('%Y-%m-%d')}: {indicator_value}\n"
+            as_of_dt = as_of_dt - relativedelta(days=1)
+
+    result_str = (
+        f"## {indicator} values from {before.strftime('%Y-%m-%d')} to {end_date}:\n\n"
+        + ind_string
+        + "\n\n"
+        + best_ind_params.get(indicator, "No description available.")
+    )
+
+    return result_str
+
+
+```
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "sed -n '1,30p' tradingagents/dataflows/vendors/yahoo/snapshot.py; echo \"=== helpers in market ===\"; sed -n '1,16p' tradingagents/dataflows/vendors/yahoo/market.py; echo \"=== common ===\"; cat tradingagents/dataflows/vendors/yahoo/common.py"
+}
+```
+
+**Output:**
+```
+"""Deterministic market-data verification snapshot.
+
+The market analyst is an LLM that can confabulate exact numbers — citing a
+Bollinger band or a "historically validated bounce" that the underlying data
+doesn't support (#830). This module computes a ground-truth snapshot (latest
+OHLCV row on or before the analysis date, common indicators, recent closes)
+the analyst is told to treat as the source of truth for any exact numeric
+claim. Deterministic, no LLM involved.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Iterable
+
+import pandas as pd
+from stockstats import wrap
+
+from tradingagents.dataflows.errors import NoMarketDataError
+from tradingagents.dataflows.symbols import normalize_symbol
+from tradingagents.dataflows.vendors.yahoo.common import price_text
+from tradingagents.dataflows.vendors.yahoo.ohlcv import load_ohlcv
+
+# A fixed, common indicator set so the snapshot is the same shape every run.
+DEFAULT_SNAPSHOT_INDICATORS: tuple[str, ...] = (
+    "close_10_ema", "close_50_sma", "close_200_sma",
+    "rsi", "boll", "boll_ub", "boll_lb",
+    "macd", "macds", "macdh", "atr",
+)
+
+
+=== helpers in market ===
+import logging
+from datetime import datetime
+from typing import Annotated
+
+import pandas as pd
+import yfinance as yf
+from dateutil.relativedelta import relativedelta
+from stockstats import wrap
+
+from tradingagents.dataflows.errors import NoMarketDataError, VendorError
+from tradingagents.dataflows.symbols import normalize_symbol
+from tradingagents.dataflows.vendors.yahoo.common import price_text, raise_for_empty, yf_retry
+from tradingagents.dataflows.vendors.yahoo.ohlcv import _assert_ohlcv_not_stale, load_ohlcv
+
+logger = logging.getLogger(__name__)
+
+=== common ===
+"""What every Yahoo request shares: its retry, how a failure or an empty answer is
+reported, and how a price is written out."""
+
+import logging
+import math
+import time
+
+import yfinance as yf
+from yfinance.exceptions import YFPricesMissingError, YFRateLimitError
+
+from tradingagents.dataflows.errors import NoMarketDataError, VendorUnavailableError
+from tradingagents.dataflows.net import vendor_reachable
+
+logger = logging.getLogger(__name__)
+
+YAHOO_HOST = "https://query2.finance.yahoo.com"
+
+
+def price_text(value: float) -> str:
+    """A price with six significant digits and at least two decimals.
+
+    Fixed decimals print a sub-cent coin as 0.00 and a currency pair without its
+    pips; this keeps both readable.
+    """
+    if not math.isfinite(value):
+        return str(value)
+    decimals = 2 if value == 0 else max(2, 5 - math.floor(math.log10(abs(value))))
+    whole, _, fraction = f"{value:.{decimals}f}".partition(".")
+    return f"{whole}.{fraction.rstrip('0').ljust(2, '0')}"
+
+
+def raise_for_empty(symbol: str, canonical: str, what: str) -> None:
+    """Report an empty Yahoo answer as an absence, or as an outage if it is one.
+
+    An empty answer from a Yahoo that cannot be reached is not an answer about
+    the symbol, so the host is probed before "this symbol has no {what}" is said.
+    """
+    if not vendor_reachable(YAHOO_HOST):
+        raise VendorUnavailableError(f"Yahoo Finance is unreachable; no {what} was retrieved")
+    raise NoMarketDataError(symbol, canonical, f"no {what}")
+
+
+# yfinance answers some failed requests with an empty result, which would read as
+# "no data" for a symbol nobody checked; raised, the failure is reported as one.
+yf.config.debug.hide_exceptions = False
+
+
+def _answered_empty(exc: Exception) -> bool:
+    """Whether Yahoo answered that it has nothing: no such symbol (HTTP 404), or a
+    price window with no prices in it.
+
+    yfinance raises YFPricesMissingError for that answer and also for an answer
+    that was an error (an error status, or Yahoo describing a failure), so only
+    a chart with no prices, or Yahoo saying the data does not exist, counts.
+    A missing time zone is not an answer: yfinance reports a failed lookup the same way.
+    """
+    if isinstance(exc, YFPricesMissingError):
+        reason = exc.yahoo_reason
+        return "status_code" not in (exc.debug_info or "") and (
+            reason is None or reason.startswith("Data doesn't exist"))
+    return getattr(getattr(exc, "response", None), "status_code", None) == 404
+
+
+def yf_retry(func, max_retries=3, base_delay=2.0):
+    """Execute a yfinance call with exponential backoff on rate limits.
+
+    yfinance raises YFRateLimitError on HTTP 429 responses but does not
+    retry them internally, so this wrapper retries them. A rate limit that
+    outlasts the retries, or any other exception, is raised as
+    VendorUnavailableError: it failed in transit and says nothing about the
+    symbol. Yahoo answering that it has nothing for the symbol returns None,
+    an empty answer. ``func`` should build its own Ticker and make the request
+    itself: a Ticker keeps a failed ``info`` fetch as done, so asking the same
+    one again reads an empty profile.
+    """
+    for attempt in range(max_retries + 1):
+        try:
+            return func()
+        except YFRateLimitError as exc:
+            if attempt < max_retries:
+                delay = base_delay * (2 ** attempt)
+                logger.warning(f"Yahoo Finance rate limited, retrying in {delay:.0f}s (attempt {attempt + 1}/{max_retries})")
+                time.sleep(delay)
+            else:
+                raise VendorUnavailableError(
+                    f"Yahoo Finance rate limited after {max_retries} retries: {exc}"
+                ) from exc
+        except Exception as exc:
+            if _answered_empty(exc):
+                return None
+            raise VendorUnavailableError(f"Yahoo Finance request failed: {type(exc).__name__}") from exc
+
+```
+
+---
+
+## Assistant (Plan · DeepSeek-V4-Flash · 14.0s)
+
+I have everything needed. Since plan mode is active, here is the finalized execution plan ready to run once you approve leaving plan mode — no files have been changed.
+
+## Execution plan (approved scope: T-O1-01–12, three files)
+
+### File 1 (new): `test/offline/test_o1_sma_guard.py`
+Write first, per instruction. `@pytest.mark.unit`, no network (conftest already blocks). Helpers:
+- `_frame(n, start="2026-01-01")` → deterministic non-constant closes via `pd.bdate_range`; `_mean(closes, W)` reference.
+- Seek pattern reused from `tests/test_ohlcv_latest_bar.py::_run_load` for real-loader cases.
+
+One test per case (node IDs will be `test/offline/test_o1_sma_guard.py::test_T_O1_01` … `::test_T_O1_12`):
+- **T-O1-01/02/03**: monkeypatch `market.load_ohlcv`; call `_get_stock_stats_bulk` per SMA per fixture (40/49/50/60/199/200/220); assert exact sentinel strings with correct `have N` and numeric within `1e-6`.
+- **T-O1-04**: 260 dates; `target=frame["Date"].iloc[59]`; assert `bulk50[target]` = mean dates 11–60, `bulk200[target]` = `have 60`.
+- **T-O1-05**: monkeypatch `snapshot.load_ohlcv`; `build_verified_market_snapshot` at 40/49/50/199/200; assert exact cells + `price_text(mean)`.
+- **T-O1-06**: patch `market._get_stock_stats_bulk` to raise `RuntimeError`; spy `market.get_stockstats_indicator`; `get_stock_stats_indicators_window(...,look_back_days=0)` at 49/50 & 199/200.
+- **T-O1-07**: `rsi` through bulk, forced fallback, snapshot vs same-run stockstats reference.
+- **T-O1-08**: window output with a short-history date + absent weekend; distinct exact strings.
+- **T-O1-09**: both seeded real-loader cases (50→49, 200→199) → exact sentinels.
+- **T-O1-10**: all-`Close`-missing seeded frame → `pytest.raises(NoMarketDataError,"no bar in range has a closing price")`; routed tool → `NO_DATA_AVAILABLE`.
+- **T-O1-11**: shuffled 260 + future extreme row; `_get_stock_stats_bulk` at date60 & final; assert sorted==shuffled and cutoff ignored-later.
+- **T-O1-12**: duplicate date injected at `load_ohlcv`; bulk, `get_stock_stats`, snapshot → exact `N/A: invalid price history (duplicate trading date)`, never numeric; non-SMA control unchanged.
+
+### File 2: `market.py`
+- Add module constant `_SMA_WINDOWS = {"close_50_sma": 50, "close_200_sma": 200}` and helpers: `_INSufficient` text formatter, `_invalid_duplicate()` text, `_sma_series(df, as_of_date, W)` → `(dict date→value or sentinel)`; enforce cutoff `<= as_of`, duplicate-date rejection, sort by date, per-date cumulative count.
+- `_get_stock_stats_bulk` (line 205): if `indicator in _SMA_WINDOWS`, return the guarded date-keyed map; else existing path untouched.
+- `get_stock_stats` (line 273): same guard for the single target date.
+- `get_stock_stats_indicators_window` (line 66): unchanged (signature, fallback, lookup). Sentinel strings flow through its existing dict lookup.
+
+### File 3: `snapshot.py`
+- In `build_verified_market_snapshot` (line 67), for SMA cells use the same shared rule (import from `market.py`); duplicate-date → invalid text; valid → `price_text`. Other cells and no-data path unchanged.
+
+### Verification (run after both code files)
+```text
+pytest --collect-only -q test/offline/test_o1_sma_guard.py
+pytest -q test/offline/test_o1_sma_guard.py
+pytest -q
+ruff check tradingagents/dataflows/vendors/yahoo/market.py tradingagents/dataflows/vendors/yahoo/snapshot.py test/offline/test_o1_sma_guard.py
+```
+Report actual results + node IDs. Do not touch untracked files; do not commit.
+
+### Guardrails
+Stop before changing any requirement, public behavior, or file scope. Preserve this session for D5.
+
+**Ready to execute on your switch out of plan mode.** Confirm and I will write tests first, then implement, then run the verification commands.
+
+---
+
+## User
+
+I have approved the O1 v1.1 execution plan. Please proceed in Build mode now.
+
+Write the approved T-O1-01–12 offline tests first, then implement the O1 guard. Only change `tradingagents/dataflows/vendors/yahoo/market.py`, `tradingagents/dataflows/vendors/yahoo/snapshot.py`, and `test/offline/test_o1_sma_guard.py`.
+
+Run the verification commands in the approved plan. Report the actual results, pytest node IDs, and changed files. Do not commit. Stop and ask me before changing the requirements, public behavior, or file scope. 
+
+---
+
+## Assistant (Plan · DeepSeek-V4-Flash · 13.2s)
+
+I'm still in plan mode (read-only), so I cannot write files or run tests yet despite your approval. The plan is finalized and matches PR #4; I need you to switch me to Build mode to execute.
+
+To be ready to run immediately, here is exactly what will happen the moment you toggle Build mode — no changes made yet.
+
+## Files to create/change (only these three)
+1. **`test/offline/test_o1_sma_guard.py`** (new) — T-O1-01–12, `@pytest.mark.unit`, network-free.
+2. **`tradingagents/dataflows/vendors/yahoo/market.py`** — `_SMA_WINDOWS`, shared guard helpers, wired into `_get_stock_stats_bulk` (:205) and `get_stock_stats` (:273); `get_stock_stats_indicators_window` (:66) untouched.
+3. **`tradingagents/dataflows/vendors/yahoo/snapshot.py`** — same rule for the two SMA cells in `build_verified_market_snapshot` (:67).
+
+## Order of operations
+1. Write `test/offline/test_o1_sma_guard.py`.
+2. Implement guard in `market.py`, then `snapshot.py`.
+3. Run, capturing real output + node IDs:
+   ```text
+   pytest --collect-only -q test/offline/test_o1_sma_guard.py
+   pytest -q test/offline/test_o1_sma_guard.py
+   pytest -q
+   ruff check tradingagents/dataflows/vendors/yahoo/market.py tradingagents/dataflows/vendors/yahoo/snapshot.py test/offline/test_o1_sma_guard.py
+   ```
+4. Report actual pass/fail, node IDs, changed files. No commit. No touching the other untracked files.
+
+## Guardrails I will hold
+- Stop and ask before any requirement, public-behavior, or file-scope change.
+- Report real results only; no invented evidence.
+
+Please switch to Build mode and I'll proceed.
+
+---
+
+> **Human annotation — Member A:** The agent was still in Plan mode after my first approval. I switched to Build and repeated the file and test limits before any implementation.
+
+## User
+
+"I have approved the O1 v1.1 execution plan. Continue this same session in Build mode now. Write the approved T-O1-01 through T-O1-12 offline tests first, then implement the O1 guard. Change only tradingagents/dataflows/vendors/yahoo/market.py, tradingagents/dataflows/vendors/yahoo/snapshot.py, and test/offline/test_o1_sma_guard.py. Run the verification commands in the approved plan. Report the actual results, pytest node IDs, and changed files. Do not commit. Stop and ask before changing requirements, public behavior, or file scope. Preserve the full session for D5."
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 25.0s)
+
+I'm now in Build mode. Writing the tests first, then the guard, then running verification.
+
+**Tool: todowrite**
+
+**Input:**
+```json
+{
+  "todos": [
+    {
+      "content": "Write test/offline/test_o1_sma_guard.py (T-O1-01–12)",
+      "status": "in_progress",
+      "priority": "high"
+    },
+    {
+      "content": "Implement guard in market.py",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Implement guard in snapshot.py",
+      "status": "pending",
+      "priority": "high"
+    },
+    {
+      "content": "Run verification commands and report results",
+      "status": "pending",
+      "priority": "high"
+    }
+  ]
+}
+```
+
+**Output:**
+```
+[
+  {
+    "content": "Write test/offline/test_o1_sma_guard.py (T-O1-01–12)",
+    "status": "in_progress",
+    "priority": "high"
+  },
+  {
+    "content": "Implement guard in market.py",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Implement guard in snapshot.py",
+    "status": "pending",
+    "priority": "high"
+  },
+  {
+    "content": "Run verification commands and report results",
+    "status": "pending",
+    "priority": "high"
+  }
+]
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 18.6s)
+
+Let me check how `get_stock_stats_indicators_window` is spied and how seeding the loader works, and confirm the router path for the routed-tool assertion in T-O1-10.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "sed -n '96,135p' tests/test_ohlcv_latest_bar.py; echo \"=== router get_indicators cfg ===\"; grep -n \"data_vendors\\|technical_indicators\\|set_config\" tests/test_alpha_vantage_hardening.py | head"
+}
+```
+
+**Output:**
+```
+# --- load_ohlcv end-to-end (with a mocked cache read) -----------------------
+
+def _run_load(monkeypatch, tmp_path, frame, curr_date):
+    """Drive load_ohlcv against a pre-seeded cache frame (no network)."""
+    monkeypatch.setattr(ohlcv, "get_config", lambda: {"data_cache_dir": str(tmp_path)})
+    today = pd.Timestamp(curr_date)
+    monkeypatch.setattr(ohlcv.pd.Timestamp, "today", staticmethod(lambda: today))
+    cache_file = tmp_path / "AAPL-YFin-data.csv"
+    cache_file.write_text(frame.to_csv(index=False))
+    _stamp(cache_file, today)
+
+    def _fail_download(*a, **k):
+        raise AssertionError("should use the seeded cache, not download")
+    monkeypatch.setattr(ohlcv.yf, "Ticker", lambda symbol: SimpleNamespace(history=_fail_download))
+    return ohlcv.load_ohlcv("AAPL", curr_date)
+
+
+@pytest.mark.unit
+def test_unsettled_latest_bar_is_served_as_the_last_settled_bar(monkeypatch, tmp_path):
+    # Newest bar (the curr_date) has no close: serve the last settled bar rather
+    # than reporting the whole symbol as unavailable (#1289).
+    frame = pd.DataFrame({
+        "Date": ["2026-05-07", "2026-05-08"],
+        "Open": [100.0, 101.0], "High": [101.0, 102.0], "Low": [99.0, 100.0],
+        "Close": [100.5, float("nan")], "Volume": [1_000_000, 1_000_000],
+    })
+    out = _run_load(monkeypatch, tmp_path, frame, "2026-05-08")
+    assert out["Date"].iloc[-1] == pd.Timestamp("2026-05-07")
+    assert out["Close"].iloc[-1] == 100.5
+
+
+@pytest.mark.unit
+def test_no_settled_bar_at_all_is_still_no_data(monkeypatch, tmp_path):
+    frame = pd.DataFrame({
+        "Date": ["2026-05-07", "2026-05-08"],
+        "Open": [100.0, 101.0], "High": [101.0, 102.0], "Low": [99.0, 100.0],
+        "Close": [float("nan"), float("nan")], "Volume": [1_000_000, 1_000_000],
+    })
+    with pytest.raises(NoMarketDataError, match="no bar in range has a closing price"):
+        _run_load(monkeypatch, tmp_path, frame, "2026-05-08")
+=== router get_indicators cfg ===
+73:    from tradingagents.dataflows.config import set_config
+84:    set_config({"data_vendors": {"core_stock_apis": "alpha_vantage"}})
+
+```
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "grep -rn \"from tradingagents.dataflows.vendors.yahoo import market\\|market\\s*$\" tests/test_undated_tools_as_of.py | head; echo \"=== ruff cfg line/select ===\"; sed -n '70,89p' pyproject.toml"
+}
+```
+
+**Output:**
+```
+tests/test_undated_tools_as_of.py:17:from tradingagents.dataflows.vendors import polymarket
+=== ruff cfg line/select ===
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = ["results"]
+
+[tool.ruff.lint]
+# Standard "good defaults" rule set (pyflakes + pycodestyle + isort + bugbear +
+# pyupgrade + comprehensions/simplify). Line length (E501) and layout are owned
+# by the formatter; whole-repo `ruff format` adoption is deferred until the
+# open-PR backlog clears, to avoid mass merge conflicts.
+select = ["E", "W", "F", "I", "B", "UP", "C4", "SIM"]
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["F401"]   # intentional re-exports
+
+[tool.ruff.lint.isort]
+# Keep multiple aliased names from one module in a single combined import block
+# (e.g. the vendor imports in router.py) instead of one statement per name.
+combine-as-imports = true
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 49.7s)
+
+Now writing the test file.
+
+**Tool: write**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/test/offline/test_o1_sma_guard.py",
+  "content": "\"\"\"O1 SMA validity guard: T-O1-01 through T-O1-12.\n\nThe 50- and 200-session SMAs are reported as a number only when enough usable,\nnon-missing dated closes exist through the reported date. Otherwise the result\nis the exact insufficient-history text. Duplicate trading dates are rejected\nwith the exact invalid-history text. These cases are deterministic and offline:\nthe Yahoo loader is either mocked or driven against a seeded local cache.\n\"\"\"\n\nfrom __future__ import annotations\n\nimport os\nfrom types import SimpleNamespace\n\nimport pandas as pd\nimport pytest\nimport stockstats\n\nfrom tradingagents.dataflows.errors import NoMarketDataError\nfrom tradingagents.dataflows.vendors.yahoo import market, ohlcv, snapshot\n\nINSUFFICIENT = \"N/A: insufficient history (needs {w} sessions, have {n})\"\nDUPLICATE = \"N/A: invalid price history (duplicate trading date)\"\nHOLIDAY = \"N/A: Not a trading day (weekend or holiday)\"\n\nW50 = 50\nW200 = 200\n\n\ndef _frame(n, *, shuffle=False, start=\"2025-01-01\"):\n    \"\"\"n dated rows with non-constant closes; the last close is unique.\"\"\"\n    dates = pd.bdate_range(start, periods=n)\n    closes = [100.0 + i * 0.5 for i in range(n)]\n    frame = pd.DataFrame(\n        {\n            \"Date\": dates,\n            \"Open\": closes,\n            \"High\": [c + 1.0 for c in closes],\n            \"Low\": [c - 1.0 for c in closes],\n            \"Close\": closes,\n            \"Volume\": [1_000_000 + i for i in range(n)],\n        }\n    )\n    if shuffle:\n        # Deterministic reordering that is not the chronological order.\n        frame = frame.iloc[list(range(n))[::-2] + list(range(n))[1::2]].reset_index(drop=True)\n    return frame\n\n\ndef _mean(closes, w):\n    return sum(closes[-w:]) / w\n\n\ndef _mean_through(frame, date, w):\n    upto = frame[frame[\"Date\"] <= pd.Timestamp(date)][\"Close\"].tolist()\n    return _mean(upto, w)\n\n\ndef _mock_loader(monkeypatch, frame, module=market):\n    monkeypatch.setattr(module, \"load_ohlcv\", lambda s, d, fill_gaps=True: frame.copy())\n\n\ndef _date(frame, idx):\n    return pd.Timestamp(frame[\"Date\"].iloc[idx]).strftime(\"%Y-%m-%d\")\n\n\n# --- T-O1-01 / -02 / -03: bulk boundaries ----------------------------------\n\n\n@pytest.mark.unit\ndef test_t_o1_01_bulk_40_and_49(monkeypatch):\n    f40 = _frame(40)\n    _mock_loader(monkeypatch, f40)\n    d = _date(f40, -1)\n    assert market._get_stock_stats_bulk(\"X\", \"close_50_sma\", d)[d] == INSUFFICIENT.format(w=50, n=40)\n    assert market._get_stock_stats_bulk(\"X\", \"close_200_sma\", d)[d] == INSUFFICIENT.format(w=200, n=40)\n\n    f49 = _frame(49)\n    _mock_loader(monkeypatch, f49)\n    d = _date(f49, -1)\n    out = market._get_stock_stats_bulk(\"X\", \"close_50_sma\", d)[d]\n    assert out == INSUFFICIENT.format(w=50, n=49)\n    assert not out.replace(\"N/A\", \"\").strip().replace(\":\", \"\").strip().split()[0].replace(\".\", \"\").isdigit()\n\n\n@pytest.mark.unit\ndef test_t_o1_02_bulk_50_and_60(monkeypatch):\n    f50 = _frame(50)\n    _mock_loader(monkeypatch, f50)\n    d = _date(f50, -1)\n    v = float(market._get_stock_stats_bulk(\"X\", \"close_50_sma\", d)[d])\n    assert abs(v - _mean_through(f50, d, 50)) <= 1e-6\n    assert market._get_stock_stats_bulk(\"X\", \"close_200_sma\", d)[d] == INSUFFICIENT.format(w=200, n=50)\n\n    f60 = _frame(60)\n    _mock_loader(monkeypatch, f60)\n    d = _date(f60, -1)\n    v = float(market._get_stock_stats_bulk(\"X\", \"close_50_sma\", d)[d])\n    assert abs(v - _mean_through(f60, d, 50)) <= 1e-6\n    assert market._get_stock_stats_bulk(\"X\", \"close_200_sma\", d)[d] == INSUFFICIENT.format(w=200, n=60)\n\n\n@pytest.mark.unit\ndef test_t_o1_03_bulk_199_200_220(monkeypatch):\n    f199 = _frame(199)\n    _mock_loader(monkeypatch, f199)\n    d = _date(f199, -1)\n    assert market._get_stock_stats_bulk(\"X\", \"close_200_sma\", d)[d] == INSUFFICIENT.format(w=200, n=199)\n\n    for n in (200, 220):\n        frame = _frame(n)\n        _mock_loader(monkeypatch, frame)\n        d = _date(frame, -1)\n        v50 = float(market._get_stock_stats_bulk(\"X\", \"close_50_sma\", d)[d])\n        v200 = float(market._get_stock_stats_bulk(\"X\", \"close_200_sma\", d)[d])\n        assert abs(v50 - _mean_through(frame, d, 50)) <= 1e-6\n        assert abs(v200 - _mean_through(frame, d, 200)) <= 1e-6\n\n\n# --- T-O1-04: early date in a long frame -----------------------------------\n\n\n@pytest.mark.unit\ndef test_t_o1_04_early_date_uses_its_own_history(monkeypatch):\n    frame = _frame(260)\n    _mock_loader(monkeypatch, frame)\n    target = _date(frame, 59)  # the 60th chronological session\n    bulk50 = market._get_stock_stats_bulk(\"X\", \"close_50_sma\", _date(frame, -1))\n    bulk200 = market._get_stock_stats_bulk(\"X\", \"close_200_sma\", _date(frame, -1))\n    v50 = float(bulk50[target])\n    assert abs(v50 - _mean_through(frame, target, 50)) <= 1e-6\n    assert bulk200[target] == INSUFFICIENT.format(w=200, n=60)\n\n\n# --- T-O1-05: verified snapshot -------------------------------------------\n\n\ndef _snapshot_cell(text, name):\n    for line in text.splitlines():\n        if line.strip().startswith(f\"| {name} |\"):\n            return line.split(\"|\")[2].strip()\n    raise AssertionError(f\"{name} row not found\")\n\n\n@pytest.mark.unit\ndef test_t_o1_05_snapshot_boundaries(monkeypatch):\n    f40 = _frame(40)\n    _mock_loader(monkeypatch, f40, module=snapshot)\n    d = _date(f40, -1)\n    snap = snapshot.build_verified_market_snapshot(\"X\", d)\n    assert _snapshot_cell(snap, \"close_50_sma\") == INSUFFICIENT.format(w=50, n=40)\n    assert _snapshot_cell(snap, \"close_200_sma\") == INSUFFICIENT.format(w=200, n=40)\n\n    f49 = _frame(49)\n    _mock_loader(monkeypatch, f49, module=snapshot)\n    d = _date(f49, -1)\n    snap = snapshot.build_verified_market_snapshot(\"X\", d)\n    assert _snapshot_cell(snap, \"close_50_sma\") == INSUFFICIENT.format(w=50, n=49)\n\n    f50 = _frame(50)\n    _mock_loader(monkeypatch, f50, module=snapshot)\n    d = _date(f50, -1)\n    snap = snapshot.build_verified_market_snapshot(\"X\", d)\n    assert _snapshot_cell(snap, \"close_50_sma\") == snapshot.price_text(_mean_through(f50, d, 50))\n    assert _snapshot_cell(snap, \"close_200_sma\") == INSUFFICIENT.format(w=200, n=50)\n\n    f199 = _frame(199)\n    _mock_loader(monkeypatch, f199, module=snapshot)\n    d = _date(f199, -1)\n    snap = snapshot.build_verified_market_snapshot(\"X\", d)\n    assert _snapshot_cell(snap, \"close_50_sma\") == snapshot.price_text(_mean_through(f199, d, 50))\n    assert _snapshot_cell(snap, \"close_200_sma\") == INSUFFICIENT.format(w=200, n=199)\n\n    f200 = _frame(200)\n    _mock_loader(monkeypatch, f200, module=snapshot)\n    d = _date(f200, -1)\n    snap = snapshot.build_verified_market_snapshot(\"X\", d)\n    assert _snapshot_cell(snap, \"close_50_sma\") == snapshot.price_text(_mean_through(f200, d, 50))\n    assert _snapshot_cell(snap, \"close_200_sma\") == snapshot.price_text(_mean_through(f200, d, 200))\n\n\n# --- T-O1-06: per-day fallback --------------------------------------------\n\n\n@pytest.mark.unit\n@pytest.mark.parametrize(\"n,w\", [(49, 50), (50, 50), (199, 200), (200, 200)])\ndef test_t_o1_06_fallback_guard(monkeypatch, n, w):\n    frame = _frame(n)\n    d = _date(frame, -1)\n    indicator = \"close_50_sma\" if w == 50 else \"close_200_sma\"\n\n    def _boom(*a, **k):\n        raise RuntimeError(\"bulk failed\")\n\n    spy = {\"ran\": False}\n    real = market.get_stockstats_indicator\n\n    def _spy(*a, **k):\n        spy[\"ran\"] = True\n        return real(*a, **k)\n\n    monkeypatch.setattr(market, \"_get_stock_stats_bulk\", _boom)\n    monkeypatch.setattr(market, \"get_stockstats_indicator\", _spy)\n    _mock_loader(monkeypatch, frame)\n\n    out = market.get_stock_stats_indicators_window(\"X\", indicator, d, 0)\n    assert spy[\"ran\"], \"the per-day fallback did not run\"\n    line = next(ln for ln in out.splitlines() if ln.startswith(f\"{d}:\"))\n    value = line.split(\":\", 1)[1].strip()\n    if n < w:\n        assert value == INSUFFICIENT.format(w=w, n=n)\n    else:\n        assert abs(float(value) - _mean_through(frame, d, w)) <= 1e-6\n\n\n# --- T-O1-07: non-SMA control ---------------------------------------------\n\n\n@pytest.mark.unit\ndef test_t_o1_07_non_sma_unchanged(monkeypatch):\n    frame = _frame(60)\n    _mock_loader(monkeypatch, frame)\n    d = _date(frame, -1)\n\n    stock = stockstats.wrap(frame.copy())\n    stock[\"Date\"] = stock[\"Date\"].dt.strftime(\"%Y-%m-%d\")\n    stock[\"rsi\"]\n    expected = stock.loc[stock[\"Date\"] == d, \"rsi\"].iloc[0]\n\n    bulk = market._get_stock_stats_bulk(\"X\", \"rsi\", d)[d]\n    if pd.isna(expected):\n        assert bulk == \"N/A\"\n    else:\n        assert abs(float(bulk) - float(expected)) <= 1e-6\n\n    _mock_loader(monkeypatch, frame, module=snapshot)\n    snap = snapshot.build_verified_market_snapshot(\"X\", d)\n    assert \"rsi\" in snap  # still rendered; not blanked by the SMA guard\n\n\n# --- T-O1-08: insufficient vs non-trading-day -----------------------------\n\n\n@pytest.mark.unit\ndef test_t_o1_08_distinct_messages(monkeypatch):\n    frame = _frame(49)\n    _mock_loader(monkeypatch, frame)\n    trade_date = _date(frame, -1)\n    # look back to the last row plus a weekend gap: 49 ROWS then a guaranteed\n    # absent calendar date (as_of on a Saturday keeps the prior Friday's absent).\n    saturday = (pd.Timestamp(trade_date) + pd.Timedelta(days=1))\n    while saturday.weekday() != 5:\n        saturday += pd.Timedelta(days=1)\n    as_of = saturday.strftime(\"%Y-%m-%d\")\n\n    out = market.get_stock_stats_indicators_window(\"X\", \"close_50_sma\", as_of, 2)\n    by_date = {}\n    for ln in out.splitlines():\n        if \":\" in ln and ln[:4].isdigit():\n            by_date[ln.split(\":\", 1)[0]] = ln.split(\":\", 1)[1].strip()\n\n    # a nearby absent weekend date keeps the holiday text\n    assert by_date[as_of] == HOLIDAY\n    # a short-history date has the insufficient text, not the holiday text\n    insufficient = [v for v in by_date.values() if v.startswith(\"N/A: insufficient history\")]\n    assert insufficient\n    assert insufficient[0] != HOLIDAY\n\n\n# --- T-O1-09: real loader, one missing close ------------------------------\n\n\ndef _stamp(path, ts):\n    t = ts.to_pydatetime().timestamp()\n    os.utime(path, (t, t))\n\n\ndef _run_load(monkeypatch, tmp_path, frame, curr_date):\n    monkeypatch.setattr(ohlcv, \"get_config\", lambda: {\"data_cache_dir\": str(tmp_path)})\n    today = pd.Timestamp(curr_date)\n    monkeypatch.setattr(ohlcv.pd.Timestamp, \"today\", staticmethod(lambda: today))\n    cache_file = tmp_path / \"AAPL-YFin-data.csv\"\n    cache_file.write_text(frame.to_csv(index=False))\n    _stamp(cache_file, today)\n\n    def _fail_download(*a, **k):\n        raise AssertionError(\"should use the seeded cache, not download\")\n\n    monkeypatch.setattr(ohlcv.yf, \"Ticker\", lambda symbol: SimpleNamespace(history=_fail_download))\n    return ohlcv.load_ohlcv(\"AAPL\", curr_date)\n\n\n@pytest.mark.unit\n@pytest.mark.parametrize(\"n,w\", [(50, 50), (200, 200)])\ndef test_t_o1_09_real_loader_missing_close(monkeypatch, tmp_path, n, w):\n    frame = _frame(n)\n    mid = n // 2\n    frame.loc[mid, \"Close\"] = float(\"nan\")\n    curr_date = _date(frame, -1)\n\n    loaded = _run_load(monkeypatch, tmp_path, frame, curr_date)\n    assert len(loaded) == n - 1  # the missing-close row was dropped\n\n    monkeypatch.setattr(market, \"load_ohlcv\", lambda s, d, fill_gaps=True: loaded)\n    indicator = \"close_50_sma\" if w == 50 else \"close_200_sma\"\n    out = market._get_stock_stats_bulk(\"AAPL\", indicator, curr_date)[curr_date]\n    assert out == INSUFFICIENT.format(w=w, n=n - 1)\n\n\n# --- T-O1-10: all closes missing ------------------------------------------\n\n\n@pytest.mark.unit\ndef test_t_o1_10_all_closes_missing(monkeypatch, tmp_path):\n    frame = _frame(50)\n    frame[\"Close\"] = float(\"nan\")\n    curr_date = _date(frame, -1)\n\n    with pytest.raises(NoMarketDataError, match=\"no bar in range has a closing price\"):\n        _run_load(monkeypatch, tmp_path, frame, curr_date)\n\n    # Routed tool: the snapshot tool converts the loader error to NO_DATA_AVAILABLE.\n    from tradingagents.agents.tools import get_verified_market_snapshot\n\n    def _raise(s, d, fill_gaps=True):\n        raise NoMarketDataError(\"AAPL\", \"AAPL\", \"no bar in range has a closing price\")\n\n    monkeypatch.setattr(snapshot, \"load_ohlcv\", _raise)\n    out = get_verified_market_snapshot.invoke({\"symbol\": \"AAPL\", \"curr_date\": curr_date})\n    assert \"NO_DATA_AVAILABLE\" in out\n    assert \"have 0\" not in out\n\n\n# --- T-O1-11: shuffled + future rows --------------------------------------\n\n\n@pytest.mark.unit\ndef test_t_o1_11_shuffled_and_future_rows(monkeypatch):\n    sorted_frame = _frame(260)\n    shuffled = _frame(260, shuffle=True)\n    early = _date(sorted_frame, 59)\n    last = _date(sorted_frame, -1)\n\n    _mock_loader(monkeypatch, sorted_frame)\n    s50_early = market._get_stock_stats_bulk(\"X\", \"close_50_sma\", early)[early]\n    s200_early = market._get_stock_stats_bulk(\"X\", \"close_200_sma\", early)[early]\n    s50_last = market._get_stock_stats_bulk(\"X\", \"close_50_sma\", last)[last]\n    s200_last = market._get_stock_stats_bulk(\"X\", \"close_200_sma\", last)[last]\n\n    _mock_loader(monkeypatch, shuffled)\n    f50_early = market._get_stock_stats_bulk(\"X\", \"close_50_sma\", early)[early]\n    f200_early = market._get_stock_stats_bulk(\"X\", \"close_200_sma\", early)[early]\n    f50_last = market._get_stock_stats_bulk(\"X\", \"close_50_sma\", last)[last]\n    f200_last = market._get_stock_stats_bulk(\"X\", \"close_200_sma\", last)[last]\n\n    assert abs(float(s50_early) - _mean_through(sorted_frame, early, 50)) <= 1e-6\n    assert s200_early == INSUFFICIENT.format(w=200, n=60)\n    assert abs(float(s50_last) - _mean_through(sorted_frame, last, 50)) <= 1e-6\n    assert abs(float(s200_last) - _mean_through(sorted_frame, last, 200)) <= 1e-6\n    # shuffled and sorted agree for each date\n    assert abs(float(f50_early) - float(s50_early)) <= 1e-6\n    assert f200_early == s200_early\n    assert abs(float(f50_last) - float(s50_last)) <= 1e-6\n    assert abs(float(f200_last) - float(s200_last)) <= 1e-6\n\n    # An extreme price after the earlier analysis date must not affect that date.\n    with_future = _frame(260)\n    future_row = with_future.iloc[[-1]].copy()\n    future_row[\"Close\"] = 1.0e9\n    extended = pd.concat([with_future, future_row], ignore_index=True)\n    _mock_loader(monkeypatch, extended)\n    x50_early = market._get_stock_stats_bulk(\"X\", \"close_50_sma\", early)[early]\n    assert abs(float(x50_early) - _mean_through(sorted_frame, early, 50)) <= 1e-6\n\n\n# --- T-O1-12: duplicate trading date --------------------------------------\n\n\n@pytest.mark.unit\ndef test_t_o1_12_duplicate_date_rejected(monkeypatch):\n    frame = _frame(60)\n    dup = frame.iloc[[30]].copy()\n    dup[\"Close\"] = dup[\"Close\"] + 5.0\n    repeated = pd.concat([frame, dup], ignore_index=True)\n    _mock_loader(monkeypatch, repeated)\n    d = _date(frame, -1)\n\n    assert market._get_stock_stats_bulk(\"X\", \"close_50_sma\", d)[d] == DUPLICATE\n    assert market._get_stock_stats_bulk(\"X\", \"close_200_sma\", d)[d] == DUPLICATE\n    assert market.get_stock_stats(\"X\", \"close_50_sma\", d) == DUPLICATE\n\n    _mock_loader(monkeypatch, repeated, module=snapshot)\n    snap = snapshot.build_verified_market_snapshot(\"X\", d)\n    assert _snapshot_cell(snap, \"close_50_sma\") == DUPLICATE\n    assert _snapshot_cell(snap, \"close_200_sma\") == DUPLICATE\n\n    # A non-SMA indicator is not rejected by the SMA duplicate rule.\n    _mock_loader(monkeypatch, repeated)\n    rsi = market._get_stock_stats_bulk(\"X\", \"rsi\", d)[d]\n    assert rsi != DUPLICATE\n"
+}
+```
+
+**Output:**
+```
+Wrote file successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 49.4s)
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "sed -n '1,15p' tradingagents/dataflows/vendors/yahoo/snapshot.py | grep -n \"price_text\""
+}
+```
+
+**Output:**
+```
+(no output)
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 57.0s)
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "grep -n \"price_text\" tradingagents/dataflows/vendors/yahoo/snapshot.py"
+}
+```
+
+**Output:**
+```
+20:from tradingagents.dataflows.vendors.yahoo.common import price_text
+63:        return price_text(value)
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 68.0s)
+
+`snapshot.price_text` is imported, so `snapshot.price_text` resolves. Now implementing the guard in `market.py`.
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/tradingagents/dataflows/vendors/yahoo/market.py",
+  "oldString": "logger = logging.getLogger(__name__)",
+  "newString": "logger = logging.getLogger(__name__)\n\n# O1: the two SMA windows whose partial-window value must be suppressed. Only\n# these names are guarded; every other Yahoo indicator keeps its stockstats path.\n_SMA_WINDOWS = {\"close_50_sma\": 50, \"close_200_sma\": 200}\n\n_INSUFFICIENT = \"N/A: insufficient history (needs {w} sessions, have {n})\"\n_DUPLICATE_DATE = \"N/A: invalid price history (duplicate trading date)\"\n\n\ndef _sma_values(data: pd.DataFrame, as_of_date: str, window: int) -> dict:\n    \"\"\"Per-date SMA value (or a labelled unavailable value) for one SMA window.\n\n    Works on cleaned, dated closes. Rows after ``as_of_date`` are excluded from\n    the O1 SMA calculation; duplicate trading dates among the eligible rows make\n    the input invalid and every eligible date reports the duplicate text rather\n    than a numeric SMA (no silent deduplication); otherwise the eligible rows are\n    sorted by date and each reported date gets the latest-``window`` mean only\n    when at least ``window`` usable closes exist through it.\n    \"\"\"\n    eligible = data.copy()\n    eligible[\"Date\"] = pd.to_datetime(eligible[\"Date\"], errors=\"coerce\")\n    eligible = eligible.dropna(subset=[\"Date\"])\n    eligible = eligible[eligible[\"Date\"] <= pd.to_datetime(as_of_date)]\n\n    dates = eligible[\"Date\"].dt.strftime(\"%Y-%m-%d\")\n\n    if dates.duplicated().any():\n        return {d: _DUPLICATE_DATE for d in dates}\n\n    order = eligible.sort_values(\"Date\")\n    ordered_dates = order[\"Date\"].dt.strftime(\"%Y-%m-%d\").tolist()\n    closes = pd.to_numeric(order[\"Close\"], errors=\"coerce\")\n\n    result: dict[str, str] = {}\n    count = 0\n    for date_str, close in zip(ordered_dates, closes):\n        if pd.notna(close):\n            count += 1\n        if count >= window:\n            window_closes = closes[closes.notna()].iloc[count - window:count]\n            result[date_str] = str(window_closes.mean())\n        else:\n            result[date_str] = _INSUFFICIENT.format(w=window, n=count)\n    return result"
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 115.5s)
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/tradingagents/dataflows/vendors/yahoo/market.py",
+  "newString": "    data = load_ohlcv(symbol, as_of_date)\n    df = wrap(data)\n    df[\"Date\"] = df[\"Date\"].dt.strftime(\"%Y-%m-%d\")\n\n    df[indicator]  # This triggers stockstats to calculate the indicator\n\n    if indicator in _SMA_WINDOWS:\n        # O1 guard: the partial-window value stockstats would return is replaced\n        # with the exact insufficient-history / duplicate-date text.\n        return _sma_values(data, as_of_date, _SMA_WINDOWS[indicator])\n\n    result_dict = {}",
+  "oldString": "    data = load_ohlcv(symbol, as_of_date)\n    df = wrap(data)\n    df[\"Date\"] = df[\"Date\"].dt.strftime(\"%Y-%m-%d\")\n\n    df[indicator]  # This triggers stockstats to calculate the indicator\n\n    result_dict = {}"
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 60.2s)
+
+Now `get_stock_stats` (single-date path).
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/tradingagents/dataflows/vendors/yahoo/market.py",
+  "newString": "    data = load_ohlcv(symbol, as_of_date)\n    df = wrap(data)\n    df[\"Date\"] = df[\"Date\"].dt.strftime(\"%Y-%m-%d\")\n    as_of_str = pd.to_datetime(as_of_date).strftime(\"%Y-%m-%d\")\n\n    df[indicator]  # trigger stockstats to calculate the indicator\n    matching_rows = df[df[\"Date\"].str.startswith(as_of_str)]\n\n    if indicator in _SMA_WINDOWS:\n        # O1 guard for the per-day fallback: apply the same rule to one date so\n        # this path cannot bypass the bulk guard.\n        guarded = _sma_values(data, as_of_date, _SMA_WINDOWS[indicator])\n        if as_of_str in guarded:\n            return guarded[as_of_str]\n        return \"N/A: Not a trading day (weekend or holiday)\"\n\n    if not matching_rows.empty:",
+  "oldString": "    data = load_ohlcv(symbol, as_of_date)\n    df = wrap(data)\n    df[\"Date\"] = df[\"Date\"].dt.strftime(\"%Y-%m-%d\")\n    as_of_str = pd.to_datetime(as_of_date).strftime(\"%Y-%m-%d\")\n\n    df[indicator]  # trigger stockstats to calculate the indicator\n    matching_rows = df[df[\"Date\"].str.startswith(as_of_str)]\n\n    if not matching_rows.empty:"
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 48.8s)
+
+Now `snapshot.py`.
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/tradingagents/dataflows/vendors/yahoo/snapshot.py",
+  "newString": "from tradingagents.dataflows.vendors.yahoo.common import price_text\nfrom tradingagents.dataflows.vendors.yahoo.market import _SMA_WINDOWS, _sma_values\nfrom tradingagents.dataflows.vendors.yahoo.ohlcv import load_ohlcv",
+  "oldString": "from tradingagents.dataflows.vendors.yahoo.common import price_text\nfrom tradingagents.dataflows.vendors.yahoo.ohlcv import load_ohlcv"
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 39.0s)
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/tradingagents/dataflows/vendors/yahoo/snapshot.py",
+  "newString": "    selected = tuple(indicators or DEFAULT_SNAPSHOT_INDICATORS)\n    indicator_values: dict[str, str] = {}\n    for name in selected:\n        if name in _SMA_WINDOWS:\n            # O1 guard: replace the latest-row value with the exact unavailable\n            # text when history is short or a trading date is duplicated.\n            guarded = _sma_values(df, as_of_date, _SMA_WINDOWS[name])\n            if guarded:\n                latest_guarded = guarded.get(_fmt(df.iloc[-1][\"Date\"]))\n                indicator_values[name] = latest_guarded if latest_guarded is not None else \"N/A\"\n            else:\n                indicator_values[name] = \"N/A\"\n            continue\n        try:\n            stock_df[name]  # triggers stockstats calculation\n            indicator_values[name] = _fmt(stock_df.iloc[-1][name])\n        except Exception as exc:  # noqa: BLE001 — one bad indicator shouldn't sink the snapshot\n            indicator_values[name] = f\"N/A ({type(exc).__name__})\"",
+  "oldString": "    selected = tuple(indicators or DEFAULT_SNAPSHOT_INDICATORS)\n    indicator_values: dict[str, str] = {}\n    for name in selected:\n        try:\n            stock_df[name]  # triggers stockstats calculation\n            indicator_values[name] = _fmt(stock_df.iloc[-1][name])\n        except Exception as exc:  # noqa: BLE001 — one bad indicator shouldn't sink the snapshot\n            indicator_values[name] = f\"N/A ({type(exc).__name__})\""
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 72.3s)
+
+The snapshot guard must reject duplicates even when the latest date isn't the duplicated one, and must key by the verified latest date. Let me check `_fmt` usage — `_fmt` on the latest date returns a string; `_sma_values` keys are `%Y-%m-%d` strings, so compare consistently. Let me tighten the snapshot block.
+
+**Tool: read**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/tradingagents/dataflows/vendors/yahoo/snapshot.py",
+  "limit": 30,
+  "offset": 78
+}
+```
+
+**Output:**
+```
+<path><PROJECT_ROOT>/tradingagents/dataflows/vendors/yahoo/snapshot.py</path>
+<type>file</type>
+<content>
+78:     df = _verified_rows(symbol, as_of_date)
+79:     stock_df = wrap(df.copy())
+80: 
+81:     selected = tuple(indicators or DEFAULT_SNAPSHOT_INDICATORS)
+82:     indicator_values: dict[str, str] = {}
+83:     for name in selected:
+84:         if name in _SMA_WINDOWS:
+85:             # O1 guard: replace the latest-row value with the exact unavailable
+86:             # text when history is short or a trading date is duplicated.
+87:             guarded = _sma_values(df, as_of_date, _SMA_WINDOWS[name])
+88:             if guarded:
+89:                 latest_guarded = guarded.get(_fmt(df.iloc[-1]["Date"]))
+90:                 indicator_values[name] = latest_guarded if latest_guarded is not None else "N/A"
+91:             else:
+92:                 indicator_values[name] = "N/A"
+93:             continue
+94:         try:
+95:             stock_df[name]  # triggers stockstats calculation
+96:             indicator_values[name] = _fmt(stock_df.iloc[-1][name])
+97:         except Exception as exc:  # noqa: BLE001 — one bad indicator shouldn't sink the snapshot
+98:             indicator_values[name] = f"N/A ({type(exc).__name__})"
+99: 
+100:     latest = df.iloc[-1]
+101:     latest_date = _fmt(latest["Date"])
+102:     window = max(1, min(int(look_back_days), 30))
+103:     recent = df.tail(window)
+104: 
+105:     lines = [
+106:         f"## Verified market data snapshot for {symbol.upper()}",
+107:         "",
+
+(Showing lines 78-107 of 139. Use offset=108 to continue.)
+</content>
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 44.3s)
+
+The `_fmt` of a Timestamp returns `%Y-%m-%d`, matching `_sma_values` keys. But T-O1-12 expects the snapshot cell to be `DUPLICATE` even though the duplicate is at a mid-date while the latest row date differs. My `_sma_values` returns duplicate text for *all* dates when any duplicate exists, so `latest_guarded` will be `DUPLICATE`. Good. But for valid values, `_sma_values` returns `str(mean)` — not `price_text`. The snapshot must apply `price_text`. Let me fix that.
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/tradingagents/dataflows/vendors/yahoo/snapshot.py",
+  "newString": "        if name in _SMA_WINDOWS:\n            # O1 guard: replace the latest-row value with the exact unavailable\n            # text when history is short or a trading date is duplicated. Valid\n            # values keep the snapshot's price_text display rule.\n            guarded = _sma_values(df, as_of_date, _SMA_WINDOWS[name])\n            latest_key = df.iloc[-1][\"Date\"].strftime(\"%Y-%m-%d\")\n            value = guarded.get(latest_key) if guarded else None\n            if value is None:\n                indicator_values[name] = \"N/A\"\n            elif value.startswith(\"N/A\"):\n                indicator_values[name] = value\n            else:\n                indicator_values[name] = price_text(float(value))\n            continue",
+  "oldString": "        if name in _SMA_WINDOWS:\n            # O1 guard: replace the latest-row value with the exact unavailable\n            # text when history is short or a trading date is duplicated.\n            guarded = _sma_values(df, as_of_date, _SMA_WINDOWS[name])\n            if guarded:\n                latest_guarded = guarded.get(_fmt(df.iloc[-1][\"Date\"]))\n                indicator_values[name] = latest_guarded if latest_guarded is not None else \"N/A\"\n            else:\n                indicator_values[name] = \"N/A\"\n            continue"
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 44.0s)
+
+Wait — if any duplicate date exists, `_sma_values` returns duplicate text for all dates including the latest key, so `value.startswith("N/A")` gives `DUPLICATE`. Good. Now run the O1 tests.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "ls .venv 2>/dev/null; which python3; python3 -c \"import pandas, stockstats, pytest\" 2>&1 | head -3"
+}
+```
+
+**Output:**
+```
+/usr/bin/python3
+Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+ModuleNotFoundError: No module named 'pandas'
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 55.1s)
+
+Dependencies aren't installed in this environment. Let me check for a virtualenv or an available interpreter.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "ls -d */ 2>/dev/null | head; find . -maxdepth 2 -name \"python*\" -type f 2>/dev/null | head; pip3 --version 2>&1; which -a python python3 python3.11 python3.12 2>/dev/null"
+}
+```
+
+**Output:**
+```
+assets/
+cli/
+docs/
+prompts/
+src/
+test/
+tests/
+tradingagents/
+transcripts/
+pip 21.2.4 from /Library/Developer/CommandLineTools/Library/Frameworks/Python3.framework/Versions/3.9/lib/python3.9/site-packages/pip (python 3.9)
+python not found
+/usr/bin/python3
+/opt/homebrew/bin/python3.11
+/opt/homebrew/bin/python3.12
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 50.0s)
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "for p in /opt/homebrew/bin/python3.11 /opt/homebrew/bin/python3.12; do echo \"== $p ==\"; $p -c \"import pandas, stockstats, pytest, yfinance, curl_cffi; print('ok', pandas.__version__)\" 2>&1 | tail -1; done"
+}
+```
+
+**Output:**
+```
+== /opt/homebrew/bin/python3.11 ==
+ModuleNotFoundError: No module named 'pandas'
+== /opt/homebrew/bin/python3.12 ==
+ModuleNotFoundError: No module named 'pandas'
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 34.8s)
+
+No interpreter has the dependencies installed, and I must not install anything without your go-ahead (it changes the environment, not the three approved files). Let me at least statically validate what I can: syntax/compile of the three files and ruff if present.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "/opt/homebrew/bin/python3.12 -m py_compile tradingagents/dataflows/vendors/yahoo/market.py tradingagents/dataflows/vendors/yahoo/snapshot.py test/offline/test_o1_sma_guard.py && echo \"PY_COMPILE_OK\"; which ruff 2>/dev/null || echo \"no ruff\""
+}
+```
+
+**Output:**
+```
+PY_COMPILE_OK
+ruff not found
+no ruff
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash)
+
+Files compile. The verification commands (`pytest`, `ruff`) can't run here because no environment has the project dependencies. Installing them modifies the environment — outside the approved three-file write scope — so I'm stopping to ask rather than proceed.
+
+## Status
+
+**Changed/created files (only the approved three):**
+- `test/offline/test_o1_sma_guard.py` (new) — T-O1-01 through T-O1-12.
+- `tradingagents/dataflows/vendors/yahoo/market.py` — added `_SMA_WINDOWS`, `_INSUFFICIENT`, `_DUPLICATE_DATE`, `_sma_values()`; wired guard into `_get_stock_stats_bulk` and `get_stock_stats`; `get_stock_stats_indicators_window` untouched.
+- `tradingagents/dataflows/vendors/yahoo/snapshot.py` — same rule for the two SMA cells in `build_verified_market_snapshot`; other cells and no-data path unchanged.
+
+**Static checks:** `py_compile` passes on all three files. `ruff` not installed.
+
+**Blocker:** No Python environment has `pandas`, `stockstats`, `yfinance`, `curl_cffi`, `pytest`. `/usr/bin/python3`, Homebrew 3.11, 3.12 all lack them. The approved verification commands cannot run.
+
+I need your decision before I take an action outside the three-file scope:
+
+**Tool: question**
+
+**Input:**
+```json
+{
+  "questions": [
+    {
+      "header": "Test environment",
+      "question": "The approved verification commands need project dependencies (pandas, stockstats, yfinance, curl_cffi, pytest) which are not installed in any interpreter here. Creating/installing a venv changes the environment beyond the three approved files. How should I proceed?",
+      "options": [
+        {
+          "label": "Create venv & install (Recommended)",
+          "description": "Create a local .venv and pip install the project (pyproject.toml) so I can run pytest/ruff. Adds an untracked .venv only; does not change tracked files or requirements."
+        },
+        {
+          "label": "I'll install, then you run",
+          "description": "You set up the environment; tell me when ready and I run the exact approved commands."
+        },
+        {
+          "label": "Stop; static only",
+          "description": "Leave code+tests as-is with only py_compile evidence; run pytest/ruff later in CI or your environment."
+        }
+      ]
+    }
+  ]
+}
+```
+
+---
+
+> **Human annotation — Member A:** The first targeted run had 14 passes and 2 failures. I pointed out the test input and window mistakes and asked for fixes in the same approved files, then a rerun.
+
+## User
+
+"The O1 test environment is now available at <TEMP_TEST_ENV>. I ran collect-only successfully: 16 nodes from T-O1-01 through T-O1-12. Targeted pytest reported 14 passed, 2 failed. T-O1-08 uses a Saturday that can be several days after the 49th trading date but look_back_days=2, so the output has no short-history trading date; fix the fixture/window to include both that trading date and the non-trading Saturday, keeping the approved expected messages. T-O1-11 creates a supposed shuffled frame with duplicated odd rows and missing even rows in _frame(shuffle=True); replace it with a genuine permutation with every date exactly once, while keeping separate duplicate-date coverage in T-O1-12. Ruff --no-cache reported C420 at market.py line 43 and B905 at line 51; fix those in the approved file scope. Use <TEMP_TEST_ENV>/bin/python -m pytest and <TEMP_TEST_ENV>/bin/ruff check --no-cache for verification; do not install or edit dependency files. Change only market.py, snapshot.py and test/offline/test_o1_sma_guard.py; no commit. Re-run targeted O1 tests, default pytest -q, and lint, then report actual results. Stop if a requirement or file scope change is needed."
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 4.9s)
+
+I'll fix the four issues in the approved files. Let me first see the exact ruff lines and the current T-O1-11 helper.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "sed -n '38,55p' tradingagents/dataflows/vendors/yahoo/market.py"
+}
+```
+
+**Output:**
+```
+    eligible = eligible[eligible["Date"] <= pd.to_datetime(as_of_date)]
+
+    dates = eligible["Date"].dt.strftime("%Y-%m-%d")
+
+    if dates.duplicated().any():
+        return {d: _DUPLICATE_DATE for d in dates}
+
+    order = eligible.sort_values("Date")
+    ordered_dates = order["Date"].dt.strftime("%Y-%m-%d").tolist()
+    closes = pd.to_numeric(order["Close"], errors="coerce")
+
+    result: dict[str, str] = {}
+    count = 0
+    for date_str, close in zip(ordered_dates, closes):
+        if pd.notna(close):
+            count += 1
+        if count >= window:
+            window_closes = closes[closes.notna()].iloc[count - window:count]
+
+```
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "<TEMP_TEST_ENV>/bin/ruff check --no-cache tradingagents/dataflows/vendors/yahoo/market.py 2>&1 | head -30"
+}
+```
+
+**Output:**
+```
+C420 [*] Unnecessary dict comprehension for iterable; use `dict.fromkeys` instead
+  --> tradingagents/dataflows/vendors/yahoo/market.py:43:16
+   |
+42 |     if dates.duplicated().any():
+43 |         return {d: _DUPLICATE_DATE for d in dates}
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+44 |
+45 |     order = eligible.sort_values("Date")
+   |
+help: Replace with `dict.fromkeys(iterable)`)
+   |
+42 |     if dates.duplicated().any():
+   -         return {d: _DUPLICATE_DATE for d in dates}
+43 +         return dict.fromkeys(dates, _DUPLICATE_DATE)
+44 |
+   |
+
+B905 `zip()` without an explicit `strict=` parameter
+  --> tradingagents/dataflows/vendors/yahoo/market.py:51:28
+   |
+49 |     result: dict[str, str] = {}
+50 |     count = 0
+51 |     for date_str, close in zip(ordered_dates, closes):
+   |                            ^^^^^^^^^^^^^^^^^^^^^^^^^^
+52 |         if pd.notna(close):
+53 |             count += 1
+   |
+help: Add explicit value for parameter `strict=`
+   |
+50 |     count = 0
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 3.3s)
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/tradingagents/dataflows/vendors/yahoo/market.py",
+  "oldString": "    if dates.duplicated().any():\n        return {d: _DUPLICATE_DATE for d in dates}",
+  "newString": "    if dates.duplicated().any():\n        return dict.fromkeys(dates, _DUPLICATE_DATE)"
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 3.7s)
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/tradingagents/dataflows/vendors/yahoo/market.py",
+  "newString": "    for date_str, close in zip(ordered_dates, closes, strict=True):",
+  "oldString": "    for date_str, close in zip(ordered_dates, closes):"
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 4.7s)
+
+Now fix `_frame(shuffle=True)` to a genuine permutation, and fix T-O1-08.
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/test/offline/test_o1_sma_guard.py",
+  "newString": "    if shuffle:\n        # A genuine permutation: every date appears exactly once, out of order.\n        rng = np.random.default_rng(20261116)\n        order = rng.permutation(n)\n        frame = frame.iloc[order].reset_index(drop=True)\n    return frame",
+  "oldString": "    if shuffle:\n        # Deterministic reordering that is not the chronological order.\n        frame = frame.iloc[list(range(n))[::-2] + list(range(n))[1::2]].reset_index(drop=True)\n    return frame"
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 7.8s)
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/test/offline/test_o1_sma_guard.py",
+  "newString": "import os\nfrom types import SimpleNamespace\n\nimport numpy as np\nimport pandas as pd",
+  "oldString": "import os\nfrom types import SimpleNamespace\n\nimport pandas as pd"
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 7.8s)
+
+Now fix T-O1-08. The problem: with 49 rows and `look_back_days=2`, the window only covers the last trading date + Saturday, but the short-history trading date (the 49th) is the last date — the window must include a trading date whose SMA is insufficient AND an absent Saturday. Let me make the frame end *before* a Saturday so both the last trading date and the Saturday are within the window.
+
+**Tool: read**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/test/offline/test_o1_sma_guard.py",
+  "limit": 28,
+  "offset": 194
+}
+```
+
+**Output:**
+```
+<path><PROJECT_ROOT>/test/offline/test_o1_sma_guard.py</path>
+<type>file</type>
+<content>
+194: 
+195:     def _boom(*a, **k):
+196:         raise RuntimeError("bulk failed")
+197: 
+198:     spy = {"ran": False}
+199:     real = market.get_stockstats_indicator
+200: 
+201:     def _spy(*a, **k):
+202:         spy["ran"] = True
+203:         return real(*a, **k)
+204: 
+205:     monkeypatch.setattr(market, "_get_stock_stats_bulk", _boom)
+206:     monkeypatch.setattr(market, "get_stockstats_indicator", _spy)
+207:     _mock_loader(monkeypatch, frame)
+208: 
+209:     out = market.get_stock_stats_indicators_window("X", indicator, d, 0)
+210:     assert spy["ran"], "the per-day fallback did not run"
+211:     line = next(ln for ln in out.splitlines() if ln.startswith(f"{d}:"))
+212:     value = line.split(":", 1)[1].strip()
+213:     if n < w:
+214:         assert value == INSUFFICIENT.format(w=w, n=n)
+215:     else:
+216:         assert abs(float(value) - _mean_through(frame, d, w)) <= 1e-6
+217: 
+218: 
+219: # --- T-O1-07: non-SMA control ---------------------------------------------
+220: 
+221: 
+
+(Showing lines 194-221 of 403. Use offset=222 to continue.)
+</content>
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 7.5s)
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "grep -n \"test_t_o1_08_distinct_messages\" test/offline/test_o1_sma_guard.py"
+}
+```
+
+**Output:**
+```
+248:def test_t_o1_08_distinct_messages(monkeypatch):
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 5.7s)
+
+**Tool: read**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/test/offline/test_o1_sma_guard.py",
+  "limit": 30,
+  "offset": 246
+}
+```
+
+**Output:**
+```
+<path><PROJECT_ROOT>/test/offline/test_o1_sma_guard.py</path>
+<type>file</type>
+<content>
+246: 
+247: @pytest.mark.unit
+248: def test_t_o1_08_distinct_messages(monkeypatch):
+249:     frame = _frame(49)
+250:     _mock_loader(monkeypatch, frame)
+251:     trade_date = _date(frame, -1)
+252:     # look back to the last row plus a weekend gap: 49 ROWS then a guaranteed
+253:     # absent calendar date (as_of on a Saturday keeps the prior Friday's absent).
+254:     saturday = (pd.Timestamp(trade_date) + pd.Timedelta(days=1))
+255:     while saturday.weekday() != 5:
+256:         saturday += pd.Timedelta(days=1)
+257:     as_of = saturday.strftime("%Y-%m-%d")
+258: 
+259:     out = market.get_stock_stats_indicators_window("X", "close_50_sma", as_of, 2)
+260:     by_date = {}
+261:     for ln in out.splitlines():
+262:         if ":" in ln and ln[:4].isdigit():
+263:             by_date[ln.split(":", 1)[0]] = ln.split(":", 1)[1].strip()
+264: 
+265:     # a nearby absent weekend date keeps the holiday text
+266:     assert by_date[as_of] == HOLIDAY
+267:     # a short-history date has the insufficient text, not the holiday text
+268:     insufficient = [v for v in by_date.values() if v.startswith("N/A: insufficient history")]
+269:     assert insufficient
+270:     assert insufficient[0] != HOLIDAY
+271: 
+272: 
+273: # --- T-O1-09: real loader, one missing close ------------------------------
+274: 
+275: 
+
+(Showing lines 246-275 of 403. Use offset=276 to continue.)
+</content>
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 6.2s)
+
+The window is `[as_of - look_back, as_of]`. If `as_of` is Saturday and the last trading date (Friday) is `as_of - 1` day, then `look_back_days=2` includes Friday and Saturday — but Friday's 50-SMA with only 49 rows is insufficient and IS in the window. The issue: the mocked `_get_stock_stats_bulk` isn't used here (real bulk runs), and `as_of` Saturday is after the last frame date, so the loader step is fine. Let me actually run T-O1-08 to see the real failure before rewriting.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "cd \"<PROJECT_ROOT>\" && <TEMP_TEST_ENV>/bin/python -m pytest -q test/offline/test_o1_sma_guard.py -k \"t_o1_08\" 2>&1 | tail -30"
+}
+```
+
+**Output:**
+```
+
+    @pytest.mark.unit
+    def test_t_o1_08_distinct_messages(monkeypatch):
+        frame = _frame(49)
+        _mock_loader(monkeypatch, frame)
+        trade_date = _date(frame, -1)
+        # look back to the last row plus a weekend gap: 49 ROWS then a guaranteed
+        # absent calendar date (as_of on a Saturday keeps the prior Friday's absent).
+        saturday = (pd.Timestamp(trade_date) + pd.Timedelta(days=1))
+        while saturday.weekday() != 5:
+            saturday += pd.Timedelta(days=1)
+        as_of = saturday.strftime("%Y-%m-%d")
+    
+        out = market.get_stock_stats_indicators_window("X", "close_50_sma", as_of, 2)
+        by_date = {}
+        for ln in out.splitlines():
+            if ":" in ln and ln[:4].isdigit():
+                by_date[ln.split(":", 1)[0]] = ln.split(":", 1)[1].strip()
+    
+        # a nearby absent weekend date keeps the holiday text
+        assert by_date[as_of] == HOLIDAY
+        # a short-history date has the insufficient text, not the holiday text
+        insufficient = [v for v in by_date.values() if v.startswith("N/A: insufficient history")]
+>       assert insufficient
+E       assert []
+
+test/offline/test_o1_sma_guard.py:269: AssertionError
+=========================== short test summary info ============================
+FAILED test/offline/test_o1_sma_guard.py::test_t_o1_08_distinct_messages - as...
+1 failed, 15 deselected in 0.39s
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 5.4s)
+
+Confirmed: the last trading date is a Friday, and the nearest Saturday is 1 day later, but if `trade_date` itself was already Friday then `as_of`=next Saturday, window covers Fri+Sat. Why no insufficient? Because `_get_stock_stats_bulk` is real here and the mocked `load_ohlcv` returns the frame — but `get_stock_stats_indicators_window` calls `_get_stock_stats_bulk` which calls `load_ohlcv` for the **as_of Saturday**, and my `_sma_values` filters `<= as_of`, so Friday is eligible with 49 closes → insufficient IS produced for Friday. Let me debug what dates are actually in output.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "cd \"<PROJECT_ROOT>\" && <TEMP_TEST_ENV>/bin/python -c \"\nimport pandas as pd\nfrom tradingagents.dataflows.vendors.yahoo import market\nimport test.offline.test_o1_sma_guard as t\n\" 2>&1 | tail -5; <TEMP_TEST_ENV>/bin/python -m pytest -q \"test/offline/test_o1_sma_guard.py::test_t_o1_08_distinct_messages\" -s 2>&1 | grep -A40 \"out ==\" | head -5"
+}
+```
+
+**Output:**
+```
+Traceback (most recent call last):
+  File "<string>", line 4, in <module>
+ModuleNotFoundError: No module named 'test.offline'
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 3.7s)
+
+Let me trace which dates appear. The frame's last date is Friday; `as_of` is the following Saturday. Window = `[Sat-2, Sat]` = `[Thu, Sat]`, so Thu, Fri, Sat should appear — Fri has 49 closes (insufficient). But maybe `_frame(49)` last date isn't Friday. Let me check.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "cd \"<PROJECT_ROOT>\" && <TEMP_TEST_ENV>/bin/python -c \"\nimport pandas as pd\nd = pd.bdate_range('2025-01-01', periods=49)\nprint('last', d[-1], d[-1].weekday())\nsat = d[-1] + pd.Timedelta(days=1)\nwhile sat.weekday()!=5: sat+=pd.Timedelta(days=1)\nprint('sat', sat)\n\""
+}
+```
+
+**Output:**
+```
+last 2025-03-10 00:00:00 0
+sat 2025-03-15 00:00:00
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 5.2s)
+
+The last date is Monday 2025-03-10, next Saturday is 2025-03-15 — a 5-day gap, so `look_back_days=2` window `[03-13, 03-15]` contains no trading date at all. That's the bug the user described. Fix: pin `as_of` to the Saturday immediately after a *known* Friday trading date, and size the window to include both that Friday and the Saturday. Simplest robust fix: set `as_of` to the Saturday right after the last trading date, and use `look_back_days` large enough to reach the last trading date. Use `look_back_days = (Sat - lastTrading).days`.
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/test/offline/test_o1_sma_guard.py",
+  "newString": "@pytest.mark.unit\ndef test_t_o1_08_distinct_messages(monkeypatch):\n    frame = _frame(49)\n    _mock_loader(monkeypatch, frame)\n    last_trading = pd.Timestamp(frame[\"Date\"].iloc[-1])\n    # The nearest Saturday on or after the last trading date is an absent\n    # calendar date (a non-trading day) within the same window.\n    saturday = last_trading + pd.Timedelta(days=1)\n    while saturday.weekday() != 5:\n        saturday += pd.Timedelta(days=1)\n    as_of = saturday.strftime(\"%Y-%m-%d\")\n    # Size the window so it spans from the last trading date through the Saturday,\n    # so the output has both the short-history trading date and the absent day.\n    look_back = (saturday - last_trading).days\n\n    out = market.get_stock_stats_indicators_window(\"X\", \"close_50_sma\", as_of, look_back)\n    by_date = {}\n    for ln in out.splitlines():\n        if \":\" in ln and ln[:4].isdigit():\n            by_date[ln.split(\":\", 1)[0]] = ln.split(\":\", 1)[1].strip()\n\n    # a nearby absent weekend date keeps the holiday text\n    assert by_date[as_of] == HOLIDAY\n    # the short-history trading date has the insufficient text, not the holiday text\n    trade_key = last_trading.strftime(\"%Y-%m-%d\")\n    assert by_date[trade_key] == INSUFFICIENT.format(w=50, n=49)\n    assert by_date[trade_key] != HOLIDAY",
+  "oldString": "@pytest.mark.unit\ndef test_t_o1_08_distinct_messages(monkeypatch):\n    frame = _frame(49)\n    _mock_loader(monkeypatch, frame)\n    trade_date = _date(frame, -1)\n    # look back to the last row plus a weekend gap: 49 ROWS then a guaranteed\n    # absent calendar date (as_of on a Saturday keeps the prior Friday's absent).\n    saturday = (pd.Timestamp(trade_date) + pd.Timedelta(days=1))\n    while saturday.weekday() != 5:\n        saturday += pd.Timedelta(days=1)\n    as_of = saturday.strftime(\"%Y-%m-%d\")\n\n    out = market.get_stock_stats_indicators_window(\"X\", \"close_50_sma\", as_of, 2)\n    by_date = {}\n    for ln in out.splitlines():\n        if \":\" in ln and ln[:4].isdigit():\n            by_date[ln.split(\":\", 1)[0]] = ln.split(\":\", 1)[1].strip()\n\n    # a nearby absent weekend date keeps the holiday text\n    assert by_date[as_of] == HOLIDAY\n    # a short-history date has the insufficient text, not the holiday text\n    insufficient = [v for v in by_date.values() if v.startswith(\"N/A: insufficient history\")]\n    assert insufficient\n    assert insufficient[0] != HOLIDAY"
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 3.0s)
+
+`get_stock_stats_indicators_window` with `look_back_days` spanning weekend days: the window loop iterates calendar days, so it emits Thu/Fri/Sat; Fri is the trading date. But my `_get_stock_stats_bulk` returns a map keyed only by trading dates, so `by_date[as_of]` (Saturday) won't exist in the bulk map → falls to holiday text. Good. Now T-O1-11: genuine permutation fixed. But the "future row" block appends a duplicate of the last date with a different close — that creates a duplicate date, which now triggers DUPLICATE. Need to make the future row a genuinely later date.
+
+**Tool: read**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/test/offline/test_o1_sma_guard.py",
+  "limit": 45,
+  "offset": 325
+}
+```
+
+**Output:**
+```
+<path><PROJECT_ROOT>/test/offline/test_o1_sma_guard.py</path>
+<type>file</type>
+<content>
+325:     with pytest.raises(NoMarketDataError, match="no bar in range has a closing price"):
+326:         _run_load(monkeypatch, tmp_path, frame, curr_date)
+327: 
+328:     # Routed tool: the snapshot tool converts the loader error to NO_DATA_AVAILABLE.
+329:     from tradingagents.agents.tools import get_verified_market_snapshot
+330: 
+331:     def _raise(s, d, fill_gaps=True):
+332:         raise NoMarketDataError("AAPL", "AAPL", "no bar in range has a closing price")
+333: 
+334:     monkeypatch.setattr(snapshot, "load_ohlcv", _raise)
+335:     out = get_verified_market_snapshot.invoke({"symbol": "AAPL", "curr_date": curr_date})
+336:     assert "NO_DATA_AVAILABLE" in out
+337:     assert "have 0" not in out
+338: 
+339: 
+340: # --- T-O1-11: shuffled + future rows --------------------------------------
+341: 
+342: 
+343: @pytest.mark.unit
+344: def test_t_o1_11_shuffled_and_future_rows(monkeypatch):
+345:     sorted_frame = _frame(260)
+346:     shuffled = _frame(260, shuffle=True)
+347:     early = _date(sorted_frame, 59)
+348:     last = _date(sorted_frame, -1)
+349: 
+350:     _mock_loader(monkeypatch, sorted_frame)
+351:     s50_early = market._get_stock_stats_bulk("X", "close_50_sma", early)[early]
+352:     s200_early = market._get_stock_stats_bulk("X", "close_200_sma", early)[early]
+353:     s50_last = market._get_stock_stats_bulk("X", "close_50_sma", last)[last]
+354:     s200_last = market._get_stock_stats_bulk("X", "close_200_sma", last)[last]
+355: 
+356:     _mock_loader(monkeypatch, shuffled)
+357:     f50_early = market._get_stock_stats_bulk("X", "close_50_sma", early)[early]
+358:     f200_early = market._get_stock_stats_bulk("X", "close_200_sma", early)[early]
+359:     f50_last = market._get_stock_stats_bulk("X", "close_50_sma", last)[last]
+360:     f200_last = market._get_stock_stats_bulk("X", "close_200_sma", last)[last]
+361: 
+362:     assert abs(float(s50_early) - _mean_through(sorted_frame, early, 50)) <= 1e-6
+363:     assert s200_early == INSUFFICIENT.format(w=200, n=60)
+364:     assert abs(float(s50_last) - _mean_through(sorted_frame, last, 50)) <= 1e-6
+365:     assert abs(float(s200_last) - _mean_through(sorted_frame, last, 200)) <= 1e-6
+366:     # shuffled and sorted agree for each date
+367:     assert abs(float(f50_early) - float(s50_early)) <= 1e-6
+368:     assert f200_early == s200_early
+369:     assert abs(float(f50_last) - float(s50_last)) <= 1e-6
+
+(Showing lines 325-369 of 406. Use offset=370 to continue.)
+</content>
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 2.5s)
+
+**Tool: read**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/test/offline/test_o1_sma_guard.py",
+  "limit": 20,
+  "offset": 369
+}
+```
+
+**Output:**
+```
+<path><PROJECT_ROOT>/test/offline/test_o1_sma_guard.py</path>
+<type>file</type>
+<content>
+369:     assert abs(float(f50_last) - float(s50_last)) <= 1e-6
+370:     assert abs(float(f200_last) - float(s200_last)) <= 1e-6
+371: 
+372:     # An extreme price after the earlier analysis date must not affect that date.
+373:     with_future = _frame(260)
+374:     future_row = with_future.iloc[[-1]].copy()
+375:     future_row["Close"] = 1.0e9
+376:     extended = pd.concat([with_future, future_row], ignore_index=True)
+377:     _mock_loader(monkeypatch, extended)
+378:     x50_early = market._get_stock_stats_bulk("X", "close_50_sma", early)[early]
+379:     assert abs(float(x50_early) - _mean_through(sorted_frame, early, 50)) <= 1e-6
+380: 
+381: 
+382: # --- T-O1-12: duplicate trading date --------------------------------------
+383: 
+384: 
+385: @pytest.mark.unit
+386: def test_t_o1_12_duplicate_date_rejected(monkeypatch):
+387:     frame = _frame(60)
+388:     dup = frame.iloc[[30]].copy()
+
+(Showing lines 369-388 of 406. Use offset=389 to continue.)
+</content>
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 3.5s)
+
+The future row must be a genuinely later date (not a duplicate). Fix it to use `last_date + business days`.
+
+**Tool: edit**
+
+**Input:**
+```json
+{
+  "filePath": "<PROJECT_ROOT>/test/offline/test_o1_sma_guard.py",
+  "newString": "    # An extreme price after the earlier analysis date must not affect that date.\n    with_future = _frame(260)\n    future_date = pd.bdate_range(pd.Timestamp(with_future[\"Date\"].iloc[-1]) + pd.Timedelta(days=1), periods=1)[0]\n    future_row = with_future.iloc[[-1]].copy()\n    future_row[\"Date\"] = future_date\n    future_row[\"Close\"] = 1.0e9\n    extended = pd.concat([with_future, future_row], ignore_index=True)\n    _mock_loader(monkeypatch, extended)\n    x50_early = market._get_stock_stats_bulk(\"X\", \"close_50_sma\", early)[early]\n    assert abs(float(x50_early) - _mean_through(sorted_frame, early, 50)) <= 1e-6",
+  "oldString": "    # An extreme price after the earlier analysis date must not affect that date.\n    with_future = _frame(260)\n    future_row = with_future.iloc[[-1]].copy()\n    future_row[\"Close\"] = 1.0e9\n    extended = pd.concat([with_future, future_row], ignore_index=True)\n    _mock_loader(monkeypatch, extended)\n    x50_early = market._get_stock_stats_bulk(\"X\", \"close_50_sma\", early)[early]\n    assert abs(float(x50_early) - _mean_through(sorted_frame, early, 50)) <= 1e-6"
+}
+```
+
+**Output:**
+```
+Edit applied successfully.
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 4.7s)
+
+Now run the full O1 file.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "cd \"<PROJECT_ROOT>\" && <TEMP_TEST_ENV>/bin/python -m pytest -q test/offline/test_o1_sma_guard.py 2>&1 | tail -25"
+}
+```
+
+**Output:**
+```
+................                                                         [100%]
+16 passed in 0.54s
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 3.0s)
+
+All 16 pass. Now ruff and the default suite.
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "cd \"<PROJECT_ROOT>\" && <TEMP_TEST_ENV>/bin/ruff check --no-cache tradingagents/dataflows/vendors/yahoo/market.py tradingagents/dataflows/vendors/yahoo/snapshot.py test/offline/test_o1_sma_guard.py 2>&1 | tail -20"
+}
+```
+
+**Output:**
+```
+All checks passed!
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 15.5s)
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "cd \"<PROJECT_ROOT>\" && <TEMP_TEST_ENV>/bin/python -m pytest --collect-only -q test/offline/test_o1_sma_guard.py 2>&1 | tail -20"
+}
+```
+
+**Output:**
+```
+test/offline/test_o1_sma_guard.py::test_t_o1_01_bulk_40_and_49
+test/offline/test_o1_sma_guard.py::test_t_o1_02_bulk_50_and_60
+test/offline/test_o1_sma_guard.py::test_t_o1_03_bulk_199_200_220
+test/offline/test_o1_sma_guard.py::test_t_o1_04_early_date_uses_its_own_history
+test/offline/test_o1_sma_guard.py::test_t_o1_05_snapshot_boundaries
+test/offline/test_o1_sma_guard.py::test_t_o1_06_fallback_guard[49-50]
+test/offline/test_o1_sma_guard.py::test_t_o1_06_fallback_guard[50-50]
+test/offline/test_o1_sma_guard.py::test_t_o1_06_fallback_guard[199-200]
+test/offline/test_o1_sma_guard.py::test_t_o1_06_fallback_guard[200-200]
+test/offline/test_o1_sma_guard.py::test_t_o1_07_non_sma_unchanged
+test/offline/test_o1_sma_guard.py::test_t_o1_08_distinct_messages
+test/offline/test_o1_sma_guard.py::test_t_o1_09_real_loader_missing_close[50-50]
+test/offline/test_o1_sma_guard.py::test_t_o1_09_real_loader_missing_close[200-200]
+test/offline/test_o1_sma_guard.py::test_t_o1_10_all_closes_missing
+test/offline/test_o1_sma_guard.py::test_t_o1_11_shuffled_and_future_rows
+test/offline/test_o1_sma_guard.py::test_t_o1_12_duplicate_date_rejected
+
+16 tests collected in 0.23s
+
+```
+
+**Tool: bash**
+
+**Input:**
+```json
+{
+  "command": "cd \"<PROJECT_ROOT>\" && <TEMP_TEST_ENV>/bin/python -m pytest -q 2>&1 | tail -20"
+}
+```
+
+**Output:**
+```
+    self.warn_if_unknown_model()
+
+tests/test_ollama_base_url.py::test_resolver_does_not_affect_other_providers
+  <PROJECT_ROOT>/tradingagents/llm_clients/openai_client.py:346: RuntimeWarning: Model 'm' is not in the known model list for provider 'deepseek'. Continuing anyway.
+    self.warn_if_unknown_model()
+
+tests/test_openai_reasoning_effort.py::test_non_reasoning_model_drops_effort
+tests/test_temperature_config.py::TestTemperatureForwarding::test_temperature_reaches_client_when_set[openai-gpt-4.1]
+tests/test_temperature_config.py::TestTemperatureForwarding::test_temperature_omitted_leaves_provider_default
+  <PROJECT_ROOT>/tradingagents/llm_clients/openai_client.py:346: RuntimeWarning: Model 'gpt-4.1' is not in the known model list for provider 'openai'. Continuing anyway.
+    self.warn_if_unknown_model()
+
+tests/test_temperature_config.py::TestTemperatureForwarding::test_temperature_reaches_client_when_set[deepseek-deepseek-chat]
+  <PROJECT_ROOT>/tradingagents/llm_clients/openai_client.py:346: RuntimeWarning: Model 'deepseek-chat' is not in the known model list for provider 'deepseek'. Continuing anyway.
+    self.warn_if_unknown_model()
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+SKIPPED [1] tests/test_bedrock_provider.py:74: could not import 'langchain_aws': No module named 'langchain_aws'
+1428 passed, 1 skipped, 1 deselected, 24 warnings, 100 subtests passed in 12.21s
+
+```
+
+---
+
+## Assistant (Build · DeepSeek-V4-Flash · 4.9s)
+
+All green. Reporting actual results.
+
+## Results
+
+**Targeted O1 file:** `16 passed in 0.54s` — all 16 nodes (T-O1-01 through T-O1-12, with parametrized T-O1-06 ×4 and T-O1-09 ×2):
+
+```
+test/offline/test_o1_sma_guard.py::test_t_o1_01_bulk_40_and_49
+test/offline/test_o1_sma_guard.py::test_t_o1_02_bulk_50_and_60
+test/offline/test_o1_sma_guard.py::test_t_o1_03_bulk_199_200_220
+test/offline/test_o1_sma_guard.py::test_t_o1_04_early_date_uses_its_own_history
+test/offline/test_o1_sma_guard.py::test_t_o1_05_snapshot_boundaries
+test/offline/test_o1_sma_guard.py::test_t_o1_06_fallback_guard[49-50]
+test/offline/test_o1_sma_guard.py::test_t_o1_06_fallback_guard[50-50]
+test/offline/test_o1_sma_guard.py::test_t_o1_06_fallback_guard[199-200]
+test/offline/test_o1_sma_guard.py::test_t_o1_06_fallback_guard[200-200]
+test/offline/test_o1_sma_guard.py::test_t_o1_07_non_sma_unchanged
+test/offline/test_o1_sma_guard.py::test_t_o1_08_distinct_messages
+test/offline/test_o1_sma_guard.py::test_t_o1_09_real_loader_missing_close[50-50]
+test/offline/test_o1_sma_guard.py::test_t_o1_09_real_loader_missing_close[200-200]
+test/offline/test_o1_sma_guard.py::test_t_o1_10_all_closes_missing
+test/offline/test_o1_sma_guard.py::test_t_o1_11_shuffled_and_future_rows
+test/offline/test_o1_sma_guard.py::test_t_o1_12_duplicate_date_rejected
+```
+
+**Default suite (`pytest -q`):** `1428 passed, 1 skipped, 1 deselected, 24 warnings, 100 subtests passed in 12.21s`. The one skip is unrelated (`tests/test_bedrock_provider.py:74`, missing `langchain_aws`).
+
+**Lint (`ruff check --no-cache` on the three files):** `All checks passed!`
+
+## Fixes applied (approved file scope only)
+- **market.py:43** — C420: `{d: _DUPLICATE_DATE for d in dates}` → `dict.fromkeys(dates, _DUPLICATE_DATE)`.
+- **market.py:51** — B905: `zip(ordered_dates, closes)` → `zip(..., strict=True)`.
+- **test file `_frame(shuffle=True)`** — replaced the broken odd/even selection with a genuine `np.random.default_rng(20261116).permutation` (every date exactly once); duplicate coverage stays in T-O1-12.
+- **T-O1-08** — window now sized with `look_back = (saturday - last_trading).days` so the output contains both the 49-row trading date (insufficient text) and the absent Saturday (holiday text); asserts exact strings.
+- **T-O1-11 future row** — was a duplicate of the last date (would now trip the duplicate rule); changed to a genuinely later business date.
+
+## Changed files (only the approved three)
+- `test/offline/test_o1_sma_guard.py` (new)
+- `tradingagents/dataflows/vendors/yahoo/market.py`
+- `tradingagents/dataflows/vendors/yahoo/snapshot.py`
+
+No commit made; no other files touched.
+
+---
