@@ -1,0 +1,64 @@
+{
+  "title": "F original native OpenCode session exports",
+  "exported_on": "2026-11-23",
+  "submission_base_main": "2eb77a4188954f5f671f924dbebca7294738c13f",
+  "handling": "Copied byte-for-byte from native opencode export outputs. No redaction, message filtering, formatting, role/attribution rewriting or inline annotation. Separate annotation files only.",
+  "credential_scan": "No matches for known provider/GitHub/AWS/private-key/Bearer formats; not a guarantee that all sensitive information is absent.",
+  "files": [
+    {
+      "file": "CI_Gate.json",
+      "session_id": "ses_e27f33c94ffeOKeCXPrAQQW93Z",
+      "messages": 1997,
+      "roles": {
+        "user": 156,
+        "assistant": 1841
+      },
+      "sha256": "cd0cb15d861e83ebd2e875065064c7b39abe9e8f153443be4f202e382d727065",
+      "byte_identical_to_native_export": true
+    },
+    {
+      "file": "CI_Six_Gates.json",
+      "session_id": "ses_e008a12afffeF1VypDhIPQYQBc",
+      "messages": 202,
+      "roles": {
+        "user": 20,
+        "assistant": 182
+      },
+      "sha256": "137b568adf91180d1fbd623c1207b166d6846ecf738b94ff7e579b0140ea66cf",
+      "byte_identical_to_native_export": true
+    },
+    {
+      "file": "CI_Test_Approval.json",
+      "session_id": "ses_e00d872f7ffe13z09Dg34QBWSc",
+      "messages": 163,
+      "roles": {
+        "user": 7,
+        "assistant": 156
+      },
+      "sha256": "481ad6f8d8ad1d089374524e3b3e108ffe517fd133f864c0ebe4382a5b4dd71b",
+      "byte_identical_to_native_export": true
+    },
+    {
+      "file": "CS5351_O6.json",
+      "session_id": "ses_e2d9653d0ffeYFgcWPdRM7FFUZ",
+      "messages": 411,
+      "roles": {
+        "user": 51,
+        "assistant": 360
+      },
+      "sha256": "f5858eb6faa3c5bb4ea27e04ea86c1eccb363a3d34c0c2b01abdf0b73778cc31",
+      "byte_identical_to_native_export": true
+    },
+    {
+      "file": "O6_batch1.json",
+      "session_id": "ses_e1b0938ceffekagmwTfRtJ6NhK",
+      "messages": 894,
+      "roles": {
+        "user": 91,
+        "assistant": 803
+      },
+      "sha256": "01a127b45db48a9a9483378125ee61388ac73eb2f93f5159ace83fce6bec84d9",
+      "byte_identical_to_native_export": true
+    }
+  ]
+}
