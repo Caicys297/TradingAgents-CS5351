@@ -1,0 +1,14 @@
+{
+  // Human-reviewed scope template. This file does not itself enforce an OpenCode sandbox.
+  // Each task must narrow these paths to an approved exact file list before the agent acts.
+  "default": { "read": [], "write": [] },
+  "enforcement": { "agent_runtime_verified": false, "scope_review": "human-approved execution plan", "repository_guards": "separate CI and branch protection checks" },
+  "deny": [".env", "**/.env", "agent.env", "**/agent.env", "**/secrets/**", "**/credentials/**"],
+  "roles": {
+    "O1": { "read": ["AGENTS.md", "Prompt.md", "docs/req/requirements.yaml", "docs/req/product-requirements.yaml", "docs/req/reviews/o1/**", "docs/test-approvals/O1-2026-11-16.md", "tradingagents/dataflows/vendors/yahoo/market.py", "tradingagents/dataflows/vendors/yahoo/snapshot.py", "test/offline/test_o1_sma_guard.py"], "write": ["tradingagents/dataflows/vendors/yahoo/market.py", "tradingagents/dataflows/vendors/yahoo/snapshot.py", "test/offline/test_o1_sma_guard.py"] },
+    "O2_O4_O6_shared_integration": { "read": ["AGENTS.md", "Prompt.md", "docs/req/requirements.yaml", "docs/architecture/**", "cli/run.py", "tradingagents/graph/trading_graph.py"], "write": [] },
+    "O5": { "read": ["AGENTS.md", "Prompt.md", "docs/req/requirements.yaml", "docs/architecture/**", "tradingagents/dataflows/macro_news_filter.py", "tradingagents/dataflows/vendors/yahoo/news.py"], "write": [] },
+    "CI": { "read": ["AGENTS.md", "Prompt.md", "docs/req/requirements.yaml", ".github/workflows/ci.yml", "scripts/check_*.py", "tests/**", "test/offline/**"], "write": [] }
+  },
+  "notes": "Only O1 has historical exact write paths here. Other roles require an approved task-specific file list; no general write permission is granted. Human C owns shared integration."
+}
