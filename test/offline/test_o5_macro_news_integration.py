@@ -503,3 +503,65 @@ def test_s4_early_stop_unchanged_when_supply_is_relevant(monkeypatch, adapter):
     assert calls == ["q1"]  # early stop preserved
     assert adapter.events[0]["variant"] == "V-SELECTED"
     assert adapter.events[0]["executed_query_count"] == 1
+
+
+def test_s5_appends_real_events_and_restores_parent(tmp_path, adapter):
+    path = tmp_path / "o5_evidence.jsonl"
+    with news.o5_evidence_run(tmp_path):
+        saved = news._o5_evidence_sink.get()
+        for _ in range(2):
+            news.get_global_news_yfinance("2026-09-28", limit=0)
+    assert saved.stream.closed
+    assert news._o5_evidence_sink.get() is adapter
+    rows = [json.loads(line) for line in path.read_bytes().splitlines()]
+    assert [row["variant"] for row in rows] == ["V-LIMIT-ZERO"] * 2
+    assert all(row["executed_query_count"] == 0 for row in rows)
+    assert adapter.events == []
+
+
+@pytest.mark.parametrize("failure", ["write", "open"])
+def test_s5_i5_and_i5b_preserve_full_result(tmp_path, adapter, monkeypatch, caplog, failure):
+    def fetch_result():
+        search, _ = _search_returning(_one_macro_article())
+        monkeypatch.setattr(news.yf, "Search", search)
+        return news.get_global_news_yfinance("2026-09-28", limit=1)
+
+    working = tmp_path / "working"
+    working.mkdir()
+    with news.o5_evidence_run(working):
+        control = fetch_result()
+    assert "Fed holds rates" in control
+    control_rows = (working / "o5_evidence.jsonl").read_bytes().splitlines()
+    assert [json.loads(row)["variant"] for row in control_rows] == ["V-SELECTED"]
+
+    target = tmp_path / "target"
+    if failure == "write":
+        target.mkdir()
+    with news.o5_evidence_run(target):
+        if failure == "write":
+            news.get_global_news_yfinance("2026-09-28", limit=0)
+            path = target / "o5_evidence.jsonl"
+            before = path.read_bytes()
+            sink = news._o5_evidence_sink.get()
+            original = sink.stream
+
+            class PartialWrite:
+                def write(self, data):
+                    original.write(data[:5])
+                    raise OSError("injected mid-line failure")
+
+                def __getattr__(self, name):
+                    return getattr(original, name)
+
+            monkeypatch.setattr(sink, "stream", PartialWrite())
+        actual = fetch_result()
+    assert actual == control
+    assert news._o5_evidence_sink.get() is adapter
+    assert adapter.events == []
+    assert any(record.name == "tradingagents.o5.evidence" and "SINK_FAILED" in record.message
+               for record in caplog.records)
+    if failure == "write":
+        assert path.read_bytes() == before
+        assert len(before.splitlines()) == 1
+    else:
+        assert not (target / "o5_evidence.jsonl").exists()
