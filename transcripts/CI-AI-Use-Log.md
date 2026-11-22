@@ -149,3 +149,22 @@ batch, per REQ-GOV-06. The repository does not prescribe a fixed path or schema.
 
 > Authenticity/access is verified by humans; the automated check verifies only
 > structure and reference association, not truthfulness.
+
+## Entry — PR #37 approval-gate reconciliation (feature CI, post-#38 merge)
+
+- Task: after the Test Approval authorization migration (#38, main `6dce2fa`)
+  merged, sync PR #37 to main and reconcile its genuine approval records to the
+  migrated `CI` classification so A's original #35 plan approvals verify under the
+  merged rule. No checker/approval-policy change; no new implementation scope.
+- Usage scope: `docs/test-approvals/ci-closure-v5.test_plan.json`,
+  `docs/test-approvals/ci-closure-v5.execution_plan.json` (feature → `CI`, records
+  otherwise unchanged: plan `ed0589f`, v5, same A evidence and approved scope), the
+  main merge, and `transcripts/CI-Closure-v5-reconciliation-excerpt.md`. No
+  production feature code changed.
+- OpenCode session: `ses_e27f33c94ffeOKeCXPrAQQW93Z`.
+- Session/export evidence (genuine, reviewer-accessible, specific to this task):
+  `transcripts/CI-Closure-v5-reconciliation-excerpt.md` (bounded excerpt from a
+  fresh `opencode export`; local paths redacted).
+- Verification: Test Approval run with the actual PR range (`origin/main...HEAD`,
+  base `main`) and live GitHub evidence → `OK: batch pr-37 has valid pre-code
+  test-plan + execution-plan approval` (both records verify under the merged rule).
