@@ -1,0 +1,28 @@
+{
+  "batch_id": "pr-33",
+  "feature": "O5",
+  "approval_kinds": [
+    "test_plan"
+  ],
+  "evidence": {
+    "type": "review",
+    "id": 5993326783,
+    "pr": 31
+  },
+  "plan_sha": "cc08cecaac0b801f0f373efcf083af81ac8003c3",
+  "plan_path": "docs/req/reviews/o5/s6-t17/O5-S6-T17-Performance-Test-and-Execution-Plan-v0.1-DRAFT.md",
+  "plan_version": "v0.2",
+  "requirement_ids": [
+    "REQ-O5-10"
+  ],
+  "approved_test_ids": [
+    "T17"
+  ],
+  "allowed_files": [
+    "test/offline/fixtures/o5/O5-T17-Perf-Fixture-1000-v1.json",
+    "test/offline/fixtures/o5/O5-T17-Expected-Results-v1.json",
+    "test/offline/fixtures/o5/O5-T17-Manifest-v1.json",
+    "test/offline/test_o5_macro_news_perf.py"
+  ],
+  "provenance_note": "Original natural-language evidence. Requires independent base-trusted historical binding. This record does not assert gate success."
+}

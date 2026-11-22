@@ -29,6 +29,8 @@ jobs:
       TZ: ${{ matrix.tz }}
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
@@ -44,6 +46,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -58,19 +62,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - name: Install ruff
-        run: pip install "ruff>=0.16"
-      - name: Lint the repository
+        run: pip install "ruff==0.16.3"
+      - name: Lint the repository (final tree)
         run: ruff check .
+      - name: Lint each commit in the event range (REQ-GOV-07)
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          GITHUB_BEFORE: ${{ github.event.before }}
+          GITHUB_AFTER: ${{ github.event.after }}
+          # Real PR head (not the synthetic refs/pull/N/merge); resolved by ci_event.
+          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python scripts/lint_commits.py
 
   requirements-schema:
     name: requirements schema
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -90,6 +108,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -115,6 +134,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -139,6 +159,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -182,6 +203,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -206,6 +228,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
@@ -227,11 +250,134 @@ jobs:
           GITHUB_AFTER: ${{ github.event.after }}
         run: python scripts/semantic_report.py --json semantic-report.json
 
+  semantic-o4:
+    name: semantic (deterministic O4)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install (dev extras)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Run deterministic O4 evidence/rating cases (offline)
+        run: >
+          pytest -v
+          test/offline/test_evidence_gate_legacy_boundary.py::test_bare_complete_evidence_gates_and_preserves_buy
+          test/offline/test_evidence_gate_legacy_boundary.py::test_bare_missing_evidence_gates_to_review
+          test/offline/test_evidence_gate_legacy_boundary.py::test_bare_unknown_config_aborts_no_logging_no_memory
+          test/offline/test_evidence_gate_legacy_boundary.py::test_bare_stale_buy_cannot_bypass_required_review
+          test/offline/test_evidence_gate_graph_integration.py::test_conflict_downgrades_at_boundary
+          test/offline/test_evidence_gate.py::test_t07_recoverable_failure_fails_closed
+
+  governance-contract:
+    name: governance contract
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install (dev extras)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Check protected contract paths
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          GITHUB_BEFORE: ${{ github.event.before }}
+          GITHUB_AFTER: ${{ github.event.after }}
+          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python scripts/check_contracts.py
+
+  governance-security:
+    name: governance security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install (dev extras)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Check protected security paths
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          GITHUB_BEFORE: ${{ github.event.before }}
+          GITHUB_AFTER: ${{ github.event.after }}
+          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python scripts/check_security.py
+
+  governance-api:
+    name: governance api
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install (dev extras)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Check protected API paths
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          GITHUB_BEFORE: ${{ github.event.before }}
+          GITHUB_AFTER: ${{ github.event.after }}
+          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python scripts/check_api.py
+
+  governance-permissions:
+    name: governance permissions
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install (dev extras)
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e ".[dev]"
+      - name: Check workflow permissions baseline
+        env:
+          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+          GITHUB_BEFORE: ${{ github.event.before }}
+          GITHUB_AFTER: ${{ github.event.after }}
+          CI_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python scripts/check_permissions.py
+
   o5-perf:
     name: o5 perf (threshold enforced)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: "3.11"

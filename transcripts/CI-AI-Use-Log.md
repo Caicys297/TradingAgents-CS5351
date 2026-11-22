@@ -81,3 +81,90 @@ batch, per REQ-GOV-06. The repository does not prescribe a fixed path or schema.
   commit identities while preserving the final tree (remote HEAD tree ==
   `f53c29b`). The original SHAs above are kept verbatim; the replayed SHAs are the
   identities actually reachable from PR #32's branch head (`95860ca…`).
+
+## Entry — CI Closure v5 WS A–C (plan ed0589f)
+
+- Task: implement CI Closure v5 WS A–C — per-commit Ruff (`lint_commits.py`,
+  `ci_event.py` explicit-PR-head), deterministic O4 CI job (six fixed nodes), and
+  the four GOV-07 governance guards (contract/security/api/permission) with
+  bounded negatives and applicability; prepare WS D/E evidence.
+- Usage scope: `scripts/lint_commits.py`, `scripts/ci_event.py`, the four
+  `scripts/check_*.py` guards, their `test/offline/test_*_guard.py` /
+  `test_lint_commits.py` tests, `docs/ci/governance-guards.yaml`,
+  `.github/workflows/ci.yml`, `docs/test-approvals/ci-closure-v5.*.json`,
+  `transcripts/CI-Closure-v5-implementation-excerpt.md`. No production feature
+  code changed.
+- OpenCode session: `ses_e27f33c94ffeOKeCXPrAQQW93Z`.
+- Session/export evidence (genuine, reviewer-accessible, specific to this task):
+  `transcripts/CI-Closure-v5-implementation-excerpt.md` (bounded excerpt from a
+  fresh `opencode export`; local paths redacted).
+- Implementation commit: `30bd320ac22e0ed1241361d50ef962b6aece95eb`.
+
+## Entry — PR #37 reviewed-gap fixes (check_permissions + real-contract negatives)
+
+- Task: fix the reviewed gaps on PR #37 within the approved #35 plan — harden
+  `scripts/check_permissions.py` (structural secret-reference detection for
+  `secrets.X`/`secrets['X']`/`secrets["X"]` and whitespace variants; workflow- and
+  job-level permission-value validation recognizing read/write/none and failing
+  closed on unknown scopes / non-string / expressions / unresolved structures), and
+  record three real-contract negative experiments (Contract/Security/API) proving
+  the mapped guards block genuine contract breaks.
+- Usage scope: `scripts/check_permissions.py`,
+  `test/offline/test_permissions_guard.py`, `docs/ci/CI-Closure-v5-Evidence.md`,
+  `transcripts/CI-Closure-v5-gapfix-excerpt.md`. No production feature code changed.
+- OpenCode session: `ses_e27f33c94ffeOKeCXPrAQQW93Z`.
+- Session/export evidence (genuine, reviewer-accessible, specific to this task):
+  `transcripts/CI-Closure-v5-gapfix-excerpt.md` (bounded excerpt from a fresh
+  `opencode export`; local paths redacted). Raw experiment scrollback was not
+  retained as a file; the observed lines are recorded in
+  `docs/ci/CI-Closure-v5-Evidence.md` and the preserved fix reports.
+- Implementation commit: see PR #37 reviewed-gap follow-up commit (below).
+
+## Entry — Test Approval authorization migration (separate prerequisite PR #38)
+
+- Task: separately authorized migration enabling a **non-implementer A** to review
+  **BOTH** the Test Plan and Execution Plan for **genuine F-implemented
+  CI/governance batches** (feature `CI`), plus a follow-up correction that enforces
+  the qualification boundary — implementers resolved to trusted role F, and actual
+  changed files + immutable approved scope restricted to CI/governance paths — so a
+  product implementation merely relabelled `CI` or a non-F batch cannot use the
+  special authority. Applied on the marker and historical routes; delegation cannot
+  stand in for A on a CI test plan.
+- Usage scope: `scripts/check_test_approval.py`,
+  `test/offline/test_check_test_approval.py`, `docs/ci/Test-Approval-Status.md`, and
+  this AI-use log plus the session excerpt (evidence-only cleanup). No production
+  feature code; PR #37's workspace/files/branch/records untouched.
+- OpenCode session: `ses_e00d872f7ffe13z09Dg34QBWSc` ("CI Test Approval authorization").
+- Session/export evidence (genuine, reviewer-accessible, specific to this migration):
+  `transcripts/CI-Test-Approval-Authorization-Migration-excerpt.md` — a bounded
+  excerpt derived from a fresh `opencode export` of the session above, with local
+  paths redacted; raw export sha256
+  `e4c502428f3e10a7700816af0075bfa9f69dd6d5b95525ad1824c487a00cc0db`
+  (retained locally, not committed). This excerpt is the covering evidence for the
+  work described here; unrelated main-batch (six-gate) evidence is not reused.
+- Implementation commits (in the PR #38 range `origin/main..HEAD`):
+  `76eef822e82eafaa2283493a5b3a0c4b20953483` (authorization migration) and
+  `fd798b47017afa7b9bd38ce1f997659b963c6a27` (qualification-boundary correction).
+  A follow-up evidence-only commit follows these.
+
+> Authenticity/access is verified by humans; the automated check verifies only
+> structure and reference association, not truthfulness.
+
+## Entry — PR #37 approval-gate reconciliation (feature CI, post-#38 merge)
+
+- Task: after the Test Approval authorization migration (#38, main `6dce2fa`)
+  merged, sync PR #37 to main and reconcile its genuine approval records to the
+  migrated `CI` classification so A's original #35 plan approvals verify under the
+  merged rule. No checker/approval-policy change; no new implementation scope.
+- Usage scope: `docs/test-approvals/ci-closure-v5.test_plan.json`,
+  `docs/test-approvals/ci-closure-v5.execution_plan.json` (feature → `CI`, records
+  otherwise unchanged: plan `ed0589f`, v5, same A evidence and approved scope), the
+  main merge, and `transcripts/CI-Closure-v5-reconciliation-excerpt.md`. No
+  production feature code changed.
+- OpenCode session: `ses_e27f33c94ffeOKeCXPrAQQW93Z`.
+- Session/export evidence (genuine, reviewer-accessible, specific to this task):
+  `transcripts/CI-Closure-v5-reconciliation-excerpt.md` (bounded excerpt from a
+  fresh `opencode export`; local paths redacted).
+- Verification: Test Approval run with the actual PR range (`origin/main...HEAD`,
+  base `main`) and live GitHub evidence → `OK: batch pr-37 has valid pre-code
+  test-plan + execution-plan approval` (both records verify under the merged rule).

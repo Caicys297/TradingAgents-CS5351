@@ -20,6 +20,20 @@ Enforced rules (A-confirmed):
 - Earliest implementation is computed across all batch commits with a defensible
   comparison; non-monotonic/ambiguous/rewritten provenance is reported, not
   silently accepted; incomplete history never becomes success.
+- **CI/governance batch rule (separately authorized migration):** for a genuine
+  batch of a CI/governance feature (``CI``), a **non-implementer A** reviews BOTH
+  the Test Plan and the Execution Plan. This is narrow and feature-scoped: it only
+  changes *who* may approve the test plan for ``CI`` features (A instead of the
+  product-feature reviewer). Self-approval, authenticated original authors and
+  timestamps, immutable-plan identity, batch binding and scope checks are
+  unchanged. The ``CI`` label ALONE is insufficient: ``_ci_governance_qualified``
+  additionally requires that the batch be genuinely F-implemented (all resolved
+  implementers have trusted role F) AND that the actual changed files and immutable
+  approved scope are CI/governance paths only — so a product implementation merely
+  relabelled ``CI`` is rejected. For CI batches, delegation cannot stand in for A
+  on the test plan, and clarification/historical routes cannot bypass the
+  qualification. It is NOT a blanket A override and does not touch any non-CI
+  feature.
 
 Workflow trust model (accurate): the job runs this from the PR checkout with a
 read-only token; a PR can edit the checker. Trust anchors: the base-revision
@@ -52,6 +66,29 @@ except ImportError:  # pragma: no cover
 
 TEST_PLAN_REVIEWER = {"O1": "F", "O2": "A", "O3": "F", "O4": "F", "O5": "F", "O6": "A"}
 EXECUTION_PLAN_REVIEWER = "A"
+# CI/governance batches (separately authorized migration). For a GENUINE batch of
+# this kind implemented by F, a NON-implementer A reviews BOTH the Test Plan and
+# the Execution Plan. This is a narrow, feature-scoped rule: every other feature
+# keeps its product-feature reviewer from TEST_PLAN_REVIEWER above. It does NOT
+# relax self-approval, timestamps, immutable-plan identity, batch binding, scope,
+# delegation, or the historical-approval boundaries — those all still apply.
+CI_GOVERNANCE_FEATURES = {"CI"}
+CI_GOVERNANCE_TEST_PLAN_REVIEWER = "A"
+CI_GOVERNANCE_IMPLEMENTER_ROLES = {"F"}
+# Paths that count as CI/governance work. A qualifying batch's ENTIRE applicable
+# file set (actual changed files AND immutable approved scope) must live under
+# these prefixes — so a product implementation (``tradingagents/``, ``cli/``,
+# ``src/``, ``prompts/``) merely relabelled ``CI`` is NOT qualified. ``test/`` is
+# included because CI/governance guards are exercised by their offline tests.
+CI_GOVERNANCE_PATH_PREFIXES = (
+    ".github/",
+    "scripts/",
+    "docs/ci/",
+    "docs/test-approvals/",
+    "transcripts/",
+    "test/",
+    "tests/",
+)
 OWNER_ROLES = {"A", "B", "C", "D", "E", "F"}
 RECORDS_DIR = "docs/test-approvals"
 REVIEWERS_FILE = "docs/test-approvals/reviewers.yaml"
@@ -269,6 +306,83 @@ def _applicable(changed: list[str]) -> set[str]:
 def _feature(record: dict) -> str:
     f = str(record.get("feature", "")).strip()
     return f[:2].upper() if f else ""
+
+
+def test_plan_reviewer_for(feature: str) -> str | None:
+    """Role required to approve a TEST plan for ``feature``.
+
+    CI/governance batches (``CI``) require non-implementer role A for BOTH plans
+    (the separately authorized migration). All other features use the Registry
+    mapping unchanged; an unknown, non-CI feature returns ``None`` and is rejected
+    by the caller. This only chooses WHO approves; self-approval, timestamps,
+    immutable-plan, batch-binding and scope checks are unaffected.
+    """
+    if feature in CI_GOVERNANCE_FEATURES:
+        return CI_GOVERNANCE_TEST_PLAN_REVIEWER
+    return TEST_PLAN_REVIEWER.get(feature)
+
+
+def _is_ci_governance_path(path: str) -> bool:
+    """True iff ``path`` is CI/governance work (not product implementation).
+
+    Used so a product implementation merely relabelled ``CI`` cannot borrow the
+    CI/governance A-test-plan authority.
+    """
+    return any(path.startswith(p) for p in CI_GOVERNANCE_PATH_PREFIXES)
+
+
+def _ci_governance_qualified_paths(files) -> list[str]:
+    """Return the offending files that are NOT CI/governance work (empty = ok)."""
+    return sorted(f for f in files if not _is_ci_governance_path(f))
+
+
+def _ci_governance_implementer_problem(resolved: set[str], reviewers: dict[str, str]) -> str | None:
+    """Return a problem string if the resolved implementers are not a genuine
+    F-only set under the trusted base role mapping; else ``None``.
+
+    The special authorization is for batches implemented by F. A missing identity,
+    an unauthenticated login, or any resolved implementer whose trusted role is not
+    F disqualifies the batch.
+    """
+    if not resolved:
+        return "cannot establish implementer identity for CI/governance batch"
+    # ``_resolve_implementers`` records both a login and its lowercase form; the
+    # trusted mapping is case-sensitive. Compare case-insensitively, preferring the
+    # canonical (mapping-present) spelling, so a login is never double-counted as
+    # both authorized and unknown.
+    by_lower = {str(k).lower(): (str(k), role) for k, role in reviewers.items()}
+    canonical: dict[str, str] = {}
+    for login in resolved:
+        hit = by_lower.get(str(login).lower())
+        if hit is None:
+            return f"CI/governance implementer {login!r} has no trusted role (not in base reviewers mapping)"
+        canon_login, role = hit
+        canonical[canon_login] = role
+    bad = {login: role for login, role in canonical.items() if role not in CI_GOVERNANCE_IMPLEMENTER_ROLES}
+    if bad:
+        return (f"CI/governance batch must be implemented by F; non-F implementer(s): {bad}")
+    return None
+
+
+def _ci_governance_qualified(applicable, approved_scope, resolved, reviewers) -> str | None:
+    """Verify a batch genuinely qualifies for the CI/governance A-test-plan rule.
+
+    Returns ``None`` when qualified, else a problem string. Qualification requires
+    ALL of:
+      - the ACTUAL changed (applicable) files are CI/governance paths only;
+      - the IMMUTABLE approved scope is CI/governance paths only;
+      - the resolved/authenticated implementers are a non-empty, trusted F-only set.
+    This is the boundary that a product implementation merely relabelled ``CI`` (or a
+    non-F-implemented batch) cannot cross.
+    """
+    bad_changed = _ci_governance_qualified_paths(applicable)
+    if bad_changed:
+        return ("CI/governance batch has non-CI/governance changed files (unrelated "
+                f"product work relabelled CI?): {bad_changed}")
+    bad_scope = _ci_governance_qualified_paths(approved_scope)
+    if bad_scope:
+        return f"CI/governance approved scope includes non-CI/governance files: {bad_scope}"
+    return _ci_governance_implementer_problem(resolved, reviewers)
 
 
 def _pr_from_issue_url(obj: dict) -> int | None:
@@ -497,7 +611,7 @@ def _verify_binding(rec, api, repo, reviewers, feature, approval_iso, root, prob
     if resolved_pr is not None and oref["pr"] != int(resolved_pr):
         problems.append(f"{rp}: ORIGINAL-APPROVAL pr {oref['pr']} does not match resolved original source pr {resolved_pr}")
         return None
-    if reviewers.get(author) not in (TEST_PLAN_REVIEWER.get(feature), EXECUTION_PLAN_REVIEWER):
+    if reviewers.get(author) not in (test_plan_reviewer_for(feature), EXECUTION_PLAN_REVIEWER):
         problems.append(f"{rp}: clarification author {author!r} not authorized for {feature}")
         return None
     if utime and utime != ctime:
@@ -776,7 +890,7 @@ def _verify_historical(hist_entry, rec, batch_id, reviewers, feature, applicable
             return None
     # role / delegation
     role = reviewers.get(art["author"])
-    need = TEST_PLAN_REVIEWER.get(feature) if kind == "test_plan" else EXECUTION_PLAN_REVIEWER
+    need = test_plan_reviewer_for(feature) if kind == "test_plan" else EXECUTION_PLAN_REVIEWER
     if role != need and not _verify_delegation(hist_entry, art, reviewers, feature, kind,
                                                problems, rp, api, default_pr):
         return None
@@ -854,7 +968,7 @@ def validate_batch(records, api, default_pr, batch_id, applicable, reviewers, ea
         if rec.get("batch_id") != batch_id:
             continue
         feature = _feature(rec)
-        role_needed = TEST_PLAN_REVIEWER.get(feature)
+        role_needed = test_plan_reviewer_for(feature)
         if role_needed is None:
             problems.append(f"{rp}: unknown feature {rec.get('feature')!r}")
             continue
@@ -943,6 +1057,16 @@ def validate_batch(records, api, default_pr, batch_id, applicable, reviewers, ea
             if author in (declared | resolved) or author.lower() in {x.lower() for x in (declared | resolved)}:
                 problems.append(f"{rp}: self-approval (historical actor {author} is an implementer)")
                 continue
+            # CI/governance boundary also applies on the historical route: the A
+            # test-plan authority is not usable unless the batch is genuinely
+            # F-implemented and CI/governance-scoped. (No bypass via history.)
+            if feature in CI_GOVERNANCE_FEATURES and "test_plan" in credited:
+                ci_block = _ci_governance_qualified(applicable, plan_allowed_h, resolved, reviewers)
+                if ci_block is not None:
+                    problems.append(f"{rp}: test_plan for {feature} not authorized — {ci_block}")
+                    credited.discard("test_plan")
+            if not credited:
+                continue
             print(f"NOTE {rp}: HISTORICAL approval credited for {sorted(credited)} "
                   f"(original {otime}, actor {author})", file=sys.stderr)
             if "test_plan" in credited:
@@ -1013,10 +1137,22 @@ def validate_batch(records, api, default_pr, batch_id, applicable, reviewers, ea
             # A clarification may additionally confirm exactly its own kind, but
             # only if it is a different, still-authenticated kind for this record.
             credit_kinds.add(clar["kind"])
-        if "test_plan" in credit_kinds:
-            if role == role_needed or _delegated(records, api, default_pr, reviewers, batch_id,
-                                                 feature, "test_plan", plan_sha, plan_ver,
-                                                 reviewer_login=author, approval_iso=otime):
+        # CI/governance boundary: the special A test-plan authority applies ONLY to
+        # a genuine F-implemented, CI/governance-scoped batch. Verify qualification
+        # using the resolved (authenticated) implementers and the actual changed +
+        # immutable approved scope BEFORE crediting any test-plan authority.
+        ci_block = None
+        if feature in CI_GOVERNANCE_FEATURES and "test_plan" in credit_kinds:
+            ci_block = _ci_governance_qualified(applicable, allowed, resolved, reviewers)
+            if ci_block is not None:
+                problems.append(f"{rp}: test_plan for {feature} not authorized — {ci_block}")
+        if "test_plan" in credit_kinds and ci_block is None:
+            # For CI/governance batches, A must review the test plan DIRECTLY: the
+            # delegation fallback is disabled so no other role can stand in for A.
+            delegated_ok = feature not in CI_GOVERNANCE_FEATURES and _delegated(
+                records, api, default_pr, reviewers, batch_id, feature, "test_plan",
+                plan_sha, plan_ver, reviewer_login=author, approval_iso=otime)
+            if role == role_needed or delegated_ok:
                 test_ok = rec
             else:
                 problems.append(f"{rp}: test_plan for {feature} requires reviewer {role_needed} "

@@ -4,7 +4,11 @@ Defines the trusted comparison base and the per-commit range for the workflow's
 supported events, failing closed on missing/zero/ambiguous history (never a
 silent skip or working-tree fallback).
 
-- pull_request: range = merge-base(origin/<base>, HEAD) .. HEAD
+- pull_request: range = merge-base(origin/<base>, HEAD) .. HEAD. When
+                ``CI_HEAD_SHA`` is provided it is used as the PR head instead of
+                ``HEAD`` (GitHub's checkout of ``refs/pull/N/merge`` makes HEAD a
+                synthetic merge commit; callers that know the real head pass it).
+                Absent => current behaviour (HEAD) is unchanged.
 - push:         range = github.event.before .. github.event.after (all pushed
                 commits); new-branch/tag (zero before) or unavailable commits ->
                 explicit failure.
@@ -46,12 +50,23 @@ def resolve_range(root: Path, env: dict[str, str]) -> Range:
         base_ref = (env.get("GITHUB_BASE_REF") or "").strip()
         if not base_ref:
             raise EventError("pull_request event without GITHUB_BASE_REF")
+        # Optional explicit PR head (real PR head, not the synthetic merge commit).
+        # When set, it must resolve to a commit; a bad value fails closed rather
+        # than silently falling back to HEAD.
+        explicit_head = (env.get("CI_HEAD_SHA") or "").strip()
+        if explicit_head:
+            try:
+                _git(root, "cat-file", "-e", f"{explicit_head}^{{commit}}")
+            except EventError as exc:
+                raise EventError(f"CI_HEAD_SHA {explicit_head} is not a resolvable commit: {exc}") from exc
+            head = _git(root, "rev-parse", f"{explicit_head}^{{commit}}")
+        else:
+            head = _git(root, "rev-parse", "HEAD")
         try:
-            mb = _git(root, "merge-base", f"origin/{base_ref}", "HEAD")
+            mb = _git(root, "merge-base", f"origin/{base_ref}", head)
         except EventError as exc:
             raise EventError(f"cannot compute merge-base with origin/{base_ref}: {exc}") from exc
-        head = _git(root, "rev-parse", "HEAD")
-        commits = _commit_list(root, f"{mb}..HEAD")
+        commits = _commit_list(root, f"{mb}..{head}")
         return Range("pull_request", mb, head, commits)
 
     if event == "push":

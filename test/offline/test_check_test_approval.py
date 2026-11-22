@@ -1267,3 +1267,269 @@ def test_historical_record_declared_pr_ignored(tmp_path, capsys):
     assert "credited for ['test_plan']" in err
     assert "missing required execution-plan approval" in err
     assert rc == 1
+
+
+# ============================================================ CI/governance authorization migration
+# Separately authorized rule: for a GENUINE F-implemented CI/governance batch,
+# a NON-implementer A reviews BOTH the Test Plan and the Execution Plan. These
+# tests prove the positive path AND that every existing safeguard still rejects
+# (self-approval, unauthorized author, unrelated batch, late approval, mismatched
+# plan/scope) and that non-CI features keep their product-feature reviewer.
+CI_SHA = "c0ffee0000000000000000000000000000000042"
+CI_PLAN_PATH = "test-plans/ci-closure-v5/Test-Plan.md"
+CI_SCOPE = ["scripts/check_test_approval.py"]
+
+
+def _ci_plan_text(scope=None, ver="v1.0", rid="GOV-07", tid="GOV-T01"):
+    scope = scope if scope is not None else CI_SCOPE
+    lines = [f"# CI Closure Test Plan {ver}", rid, tid]
+    lines += [f"file: {f}" for f in scope]
+    return "\n".join(lines) + "\n"
+
+
+def _ci_record(root, name, **kw):
+    base = {
+        "batch_id": "pr-40", "feature": "CI",
+        "plan_sha": CI_SHA, "plan_version": "v1.0", "plan_path": CI_PLAN_PATH,
+        "requirement_ids": ["GOV-07"], "approved_test_ids": ["GOV-T01"],
+        "allowed_files": list(CI_SCOPE), "implementers": ["fancx777"],
+    }
+    base.update(kw)
+    _record(root, name, **base)
+
+
+def _ci_dual_records(root, **kw):
+    """One test_plan record (A) + one execution_plan record (A), each own marker."""
+    _ci_record(root, "ci_test.json", approval_kinds=["test_plan"],
+               evidence={"type": "issue_comment", "id": 401}, **kw)
+    _ci_record(root, "ci_exec.json", approval_kinds=["execution_plan"],
+               evidence={"type": "issue_comment", "id": 402}, **kw)
+
+
+def _ci_valid(tmp, impl_login="fancx777", feat="CI", scope=None, ver="v1.0",
+              batch="pr-40"):
+    """A genuine CI/governance batch: F implements, non-implementer A approves both."""
+    mod = _load()
+    r = _repo(tmp)
+    fix = tmp / "fix"
+    scope = scope if scope is not None else CI_SCOPE
+    _commit(r, scope[0], "2026-11-16T16:00:00+00:00")
+    _comment(fix, 401, "Caicys297", "2026-11-16T15:02:47Z",
+             body=_marker("test_plan", CI_SHA, ver, ",".join(scope)))
+    _comment(fix, 402, "Caicys297", "2026-11-16T15:02:48Z",
+             body=_marker("execution_plan", CI_SHA, ver, ",".join(scope)))
+    _plan(fix, CI_SHA, CI_PLAN_PATH, text=_ci_plan_text(scope, ver))
+    _register_commits(r, fix, login=impl_login)
+    _ci_dual_records(r, feature=feat, plan_version=ver, allowed_files=list(scope),
+                     batch_id=batch, implementers=[impl_login])
+    return mod, r, fix, _changed(tmp, scope)
+
+
+# ---------------------------------------------------------- positive
+@pytest.mark.unit
+def test_ci_governance_A_approves_both_plans_passes(tmp_path):
+    """Non-implementer A approves both plan kinds for a genuine F-implemented CI
+    batch -> valid (the authorized migration path)."""
+    mod, r, fix, z = _ci_valid(tmp_path)
+    assert _run(mod, r, z, fix, batch="pr-40", pr=40) == 0
+
+
+# ---------------------------------------------------------- safeguards preserved
+@pytest.mark.unit
+def test_ci_governance_self_approval_rejected(tmp_path):
+    """A both implements and approves the CI batch -> self-approval rejected."""
+    mod, r, fix, z = _ci_valid(tmp_path, impl_login="Caicys297")
+    assert _run(mod, r, z, fix, batch="pr-40", pr=40) == 1
+
+
+@pytest.mark.unit
+def test_ci_governance_unauthorized_author_rejected(tmp_path):
+    """A non-A (here B) approving a CI test plan is rejected (narrow A rule only)."""
+    mod, r, fix, z = _ci_valid(tmp_path)
+    # reviewers.yaml in fixture base maps only Caicys297:A, fancx777:F; use an
+    # unknown login to represent an unauthorized author.
+    _comment(fix, 401, "attacker", "2026-11-16T15:02:47Z",
+             body=_marker("test_plan", CI_SHA, "v1.0", ",".join(CI_SCOPE)))
+    assert _run(mod, r, z, fix, batch="pr-40", pr=40) == 1
+
+
+@pytest.mark.unit
+def test_ci_governance_F_author_cannot_test_plan(tmp_path):
+    """F (the implementer role) is NOT A; F cannot approve the CI test plan."""
+    mod, r, fix, z = _ci_valid(tmp_path)
+    _comment(fix, 401, "fancx777", "2026-11-16T15:02:47Z",
+             body=_marker("test_plan", CI_SHA, "v1.0", ",".join(CI_SCOPE)))
+    assert _run(mod, r, z, fix, batch="pr-40", pr=40) == 1
+
+
+@pytest.mark.unit
+def test_ci_governance_unrelated_batch_rejected(tmp_path):
+    """Records bound to one CI batch cannot authorize a different batch."""
+    mod, r, fix, z = _ci_valid(tmp_path)
+    assert _run(mod, r, z, fix, batch="pr-999", pr=999) == 1
+
+
+@pytest.mark.unit
+def test_ci_governance_late_approval_rejected(tmp_path):
+    """Implementation precedes A's approval -> not pre-code approval -> rejected."""
+    mod = _load()
+    r = _repo(tmp_path)
+    fix = tmp_path / "fix"
+    _commit(r, CI_SCOPE[0], "2026-11-16T14:00:00+00:00")  # before approval
+    _comment(fix, 401, "Caicys297", "2026-11-16T15:02:47Z",
+             body=_marker("test_plan", CI_SHA, "v1.0", ",".join(CI_SCOPE)))
+    _comment(fix, 402, "Caicys297", "2026-11-16T15:02:48Z",
+             body=_marker("execution_plan", CI_SHA, "v1.0", ",".join(CI_SCOPE)))
+    _plan(fix, CI_SHA, CI_PLAN_PATH, text=_ci_plan_text())
+    _register_commits(r, fix)
+    _ci_dual_records(r)
+    z = _changed(tmp_path, CI_SCOPE)
+    assert _run(mod, r, z, fix, batch="pr-40", pr=40) == 1
+
+
+@pytest.mark.unit
+def test_ci_governance_scope_mismatch_rejected(tmp_path):
+    """A file outside the immutable plan's approved scope is rejected."""
+    mod, r, fix, z = _ci_valid(tmp_path)
+    # change an extra implementation file not in the plan/records
+    _commit(r, "tradingagents/other.py", "2026-11-16T16:00:00+00:00")
+    z = _changed(tmp_path, CI_SCOPE + ["tradingagents/other.py"])
+    assert _run(mod, r, z, fix, batch="pr-40", pr=40) == 1
+
+
+@pytest.mark.unit
+def test_ci_governance_plan_mismatch_rejected(tmp_path):
+    """Plan version claimed by the record absent from the immutable plan -> fail."""
+    mod, r, fix, z = _ci_valid(tmp_path, ver="v1.0")
+    # immutable plan text says a different version than the record claims
+    _plan(fix, CI_SHA, CI_PLAN_PATH, text=_ci_plan_text(ver="v9.9"))
+    assert _run(mod, r, z, fix, batch="pr-40", pr=40) == 1
+
+
+# ---------------------------------------------------------- no blanket override
+@pytest.mark.unit
+def test_non_ci_feature_keeps_product_reviewer(tmp_path):
+    """O4 (product feature) still requires F for the test plan: A cannot approve
+    the O4 test plan just because A can approve CI. Proves the rule is scoped."""
+    mod = _load()
+    r = _repo(tmp_path)
+    fix = tmp_path / "fix"
+    _commit(r, "tradingagents/repro/manifest.py", "2026-11-16T16:00:00+00:00")
+    # A tries to approve the O4 test plan (should require F) + exec (A)
+    _comment(fix, 111, "Caicys297", "2026-11-16T15:02:47Z",
+             body=_marker("test_plan", FULL_SHA, "v0.3"))
+    _comment(fix, 112, "Caicys297", "2026-11-16T15:02:48Z",
+             body=_marker("execution_plan", FULL_SHA, "v0.3"))
+    _plan(fix, FULL_SHA, "test-plans/O2-plan.md")
+    _register_commits(r, fix)
+    _dual_records(r, feature="O4")
+    z = _changed(tmp_path, ["tradingagents/repro/manifest.py"])
+    assert _run(mod, r, z, fix) == 1  # O4 test plan by A is not authorized
+
+
+# ============================================================ CI/governance boundary completion
+# The special A test-plan authority requires the batch to be GENUINELY
+# F-implemented AND limited to CI/governance work. A product implementation
+# merely relabelled "CI", or a non-F-implemented batch, must NOT qualify.
+def _repo_with_reviewers(tmp, mapping_yaml):
+    """Like _repo but with a custom base-committed reviewers.yaml mapping."""
+    r = tmp / "r"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(r)], check=True)
+    _git(r, "config", "user.email", "t@t")
+    _git(r, "config", "user.name", "t")
+    (r / "docs/test-approvals").mkdir(parents=True, exist_ok=True)
+    (r / "docs/test-approvals/reviewers.yaml").write_text(mapping_yaml)
+    (r / "base.txt").write_text("b")
+    _git(r, "add", "-A")
+    _git(r, "commit", "-qm", "base")
+    base = _git(r, "rev-parse", "HEAD")
+    subprocess.run(["git", "-C", str(r), "update-ref", "refs/remotes/origin/main", base], check=True)
+    return r
+
+
+@pytest.mark.unit
+def test_ci_relabelled_product_implementation_rejected(tmp_path):
+    """A product implementation (tradingagents/) merely relabelled feature=CI must
+    NOT receive the A test-plan authority; the batch is not CI/governance work."""
+    mod = _load()
+    r = _repo(tmp_path)
+    fix = tmp_path / "fix"
+    prod_scope = ["tradingagents/repro/manifest.py"]
+    _commit(r, prod_scope[0], "2026-11-16T16:00:00+00:00")
+    _comment(fix, 401, "Caicys297", "2026-11-16T15:02:47Z",
+             body=_marker("test_plan", CI_SHA, "v1.0", ",".join(prod_scope)))
+    _comment(fix, 402, "Caicys297", "2026-11-16T15:02:48Z",
+             body=_marker("execution_plan", CI_SHA, "v1.0", ",".join(prod_scope)))
+    # immutable plan names the product file and plan lives under a CI path so the
+    # plan-retrieval/version check passes; only the SCOPE qualification must fail.
+    _plan(fix, CI_SHA, CI_PLAN_PATH, text=_ci_plan_text(prod_scope))
+    _register_commits(r, fix, login="fancx777")
+    _ci_dual_records(r, allowed_files=prod_scope, implementers=["fancx777"])
+    z = _changed(tmp_path, prod_scope)
+    assert _run(mod, r, z, fix, batch="pr-40", pr=40) == 1
+
+
+@pytest.mark.unit
+def test_ci_non_F_implementer_rejected(tmp_path):
+    """Implemented by role A (non-F) but approved by a DIFFERENT A (no self-approval):
+    still rejected because the batch is not F-implemented."""
+    mod = _load()
+    r = _repo_with_reviewers(
+        tmp_path, "logins:\n  Caicys297: A\n  OtherA: A\n  fancx777: F\n")
+    fix = tmp_path / "fix"
+    scope = CI_SCOPE
+    _commit(r, scope[0], "2026-11-16T16:00:00+00:00")
+    # OtherA (role A) approves; Caicys297 (role A) is the implementer -> non-F, no self.
+    _comment(fix, 401, "OtherA", "2026-11-16T15:02:47Z",
+             body=_marker("test_plan", CI_SHA, "v1.0", ",".join(scope)))
+    _comment(fix, 402, "OtherA", "2026-11-16T15:02:48Z",
+             body=_marker("execution_plan", CI_SHA, "v1.0", ",".join(scope)))
+    _plan(fix, CI_SHA, CI_PLAN_PATH, text=_ci_plan_text(scope))
+    _register_commits(r, fix, login="Caicys297")  # implementer is role A, not F
+    _ci_dual_records(r, allowed_files=list(scope), implementers=["Caicys297"])
+    z = _changed(tmp_path, scope)
+    assert _run(mod, r, z, fix, batch="pr-40", pr=40) == 1
+
+
+@pytest.mark.unit
+def test_ci_genuine_F_implemented_governance_scope_passes(tmp_path):
+    """Positive control for the boundary: F implements multiple CI/governance files
+    (scripts + docs/ci + test) and non-implementer A approves both -> passes."""
+    mod = _load()
+    r = _repo(tmp_path)
+    fix = tmp_path / "fix"
+    scope = ["scripts/check_test_approval.py", "docs/ci/Test-Approval-Status.md",
+             "test/offline/test_check_test_approval.py"]
+    for p in scope:
+        _commit(r, p, "2026-11-16T16:00:00+00:00")
+    _comment(fix, 401, "Caicys297", "2026-11-16T15:02:47Z",
+             body=_marker("test_plan", CI_SHA, "v1.0", ",".join(scope)))
+    _comment(fix, 402, "Caicys297", "2026-11-16T15:02:48Z",
+             body=_marker("execution_plan", CI_SHA, "v1.0", ",".join(scope)))
+    _plan(fix, CI_SHA, CI_PLAN_PATH, text=_ci_plan_text(scope))
+    _register_commits(r, fix, login="fancx777")
+    _ci_dual_records(r, allowed_files=list(scope), implementers=["fancx777"])
+    z = _changed(tmp_path, scope)
+    assert _run(mod, r, z, fix, batch="pr-40", pr=40) == 0
+
+
+@pytest.mark.unit
+def test_ci_mixed_product_and_governance_changed_rejected(tmp_path):
+    """Even if a CI/governance record scopes only governance files, a batch whose
+    ACTUAL changed set includes a product file does not qualify."""
+    mod, r, fix, z = _ci_valid(tmp_path)
+    # add an unrelated product change to the batch's actual changed files
+    _commit(r, "tradingagents/other.py", "2026-11-16T16:05:00+00:00")
+    _register_commits(r, fix)
+    z = _changed(tmp_path, CI_SCOPE + ["tradingagents/other.py"])
+    assert _run(mod, r, z, fix, batch="pr-40", pr=40) == 1
+
+
+@pytest.mark.unit
+def test_ci_unknown_implementer_identity_rejected(tmp_path):
+    """Commit author cannot be resolved to a trusted login -> CI qualification fails."""
+    mod, r, fix, z = _ci_valid(tmp_path)
+    # add a commit whose author is not registered in fixtures or implementers.yaml
+    _commit(r, CI_SCOPE[0], "2026-11-16T16:10:00+00:00", content="z", msg="more")
+    # do NOT register this new commit fixture -> unresolved identity
+    assert _run(mod, r, z, fix, batch="pr-40", pr=40) == 1

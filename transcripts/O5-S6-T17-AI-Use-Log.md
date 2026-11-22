@@ -116,3 +116,12 @@ Two different things must not be conflated:
    mergeable on the strength of the measurement.
 
 The PR remains **Draft** until the final implementation review is recorded.
+
+
+## Latest main alignment and original approval evidence
+
+The follow-up aligns the reviewed implementation at `845377946cc414cbcf18738f9724c9631fa4e2ab` with main at `6b0b840fc99be4fd87054b7f45739c94a31ee8f9`. The workflow preserves all current main jobs and the dedicated Ubuntu/Python 3.11 O5 job. Its checkout uses main's explicit persist-credentials setting. The selector, fixed inputs, validation entry point, warmup count, measurement count and 100 ms threshold retain their reviewed content.
+
+Two JSON records bind #31's original A/F evidence to the four originally approved test-side files, preserving their original plan versions and times. Independent base-trusted historical bindings are required. The generator-specific deviation remains governed by A comment 7065990924. Neither the generator nor later transcript helpers are represented as pre-code-approved by these four-file records.
+
+The 83.614 ms performance result and F/A reviews apply to the historical 8453779 head. Subsequent checks and any new-head review must use the resulting alignment SHA. The existing genuine T17 transcript remains `transcripts/O5-S6-T17-session-excerpt.md`.
