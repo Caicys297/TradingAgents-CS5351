@@ -1,0 +1,33 @@
+{
+  "batch_id": "pr-40",
+  "feature": "O5",
+  "approval_kinds": [
+    "execution_plan"
+  ],
+  "evidence": {
+    "type": "review",
+    "id": 6006681698,
+    "pr": 36
+  },
+  "plan_sha": "dc010f888c050a9b64967dff5f9f8552230c32a2",
+  "plan_path": "docs/req/reviews/o5/s5-handoff/README.md",
+  "plan_version": "S5",
+  "requirement_ids": [
+    "S5"
+  ],
+  "approved_test_ids": [
+    "Real tool path",
+    "Multiple events",
+    "CLI lifetime",
+    "Isolation",
+    "I5",
+    "I5b"
+  ],
+  "allowed_files": [
+    "cli/run.py",
+    "test/offline/test_o2_cli_manifest.py",
+    "tradingagents/dataflows/vendors/yahoo/news.py",
+    "test/offline/test_o5_macro_news_integration.py"
+  ],
+  "provenance_note": "Original natural-language evidence. Requires independent base-trusted historical binding. This record does not assert gate success."
+}

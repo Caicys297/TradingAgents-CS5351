@@ -37,3 +37,7 @@ handoff integration, per REQ-GOV-06.
 The redacted export was generated and inspected outside the repository before
 any inclusion decision. Credentials are never included, and machine-absolute
 paths are replaced rather than recorded.
+
+## E publication and verification
+
+E's publication of implementation commit `483e1f6c7a593a45799d66086570d020e2b9b10e` and verification of the remote ref are documented in [the redacted publication session excerpt](O5-S5-publication-session-excerpt.json). The eleven selected parts preserve their original message and part IDs, roles, and UTC timestamps. The excerpt describes its selection and omissions. C's implementation session is documented above.
