@@ -1,7 +1,7 @@
 # A-selected consolidated development baseline. Earlier owner drafts remain review evidence.
 registry_version: "1.0.0-a-baseline"
 status: "selected_for_development; test and agent-plan approvals still required"
-schema_target: "1.0.0"
+schema_target: "1.0.1"
 development_contract:
   authority: "A-selected development baseline requested 2026-11-16; this file does not claim retroactive approval by B-F"
   approval_gate: "Each change still requires a versioned test-plan approval and coding-agent execution-plan approval before code generation; PR/CI approval follows implementation"
