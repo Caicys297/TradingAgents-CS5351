@@ -3,7 +3,7 @@
 **Baseline:** `main@252fe311d8d1483b5713de69b04ce2769c33f1dd`
 **Owner:** C (document), with A as the authority for any new or widened permission.
 
-**Integration note (this PR):** The statements below about missing D3 files are a historical audit of the named baseline commit. This PR adds those files. The JSONC file is a documented whitelist, but no OpenCode filesystem enforcement has been verified; CI and human review remain separate controls. Do not read the historical gap table as the status after this PR.
+**Integration note (this PR):** The statements below about missing D3 files are a historical audit of `main@252fe311`. This PR adds `AGENTS.md`, `Prompt.md`, `.opencode/permissions.jsonc`, `.opencode/rules.md`, `.agent/rules.md`, and the three `docs/code-governance/` files. The JSONC file documents a default-deny task-scope policy; OpenCode filesystem enforcement has not been verified. Read §§5–7's missing-file rows as baseline findings, not the state of this PR.
 
 ---
 
@@ -30,8 +30,9 @@ This document therefore does three things:
 1. Records what **is** machine-enforced today (CI guards and pytest).
 2. Records what exists only as **approved scope** in human records (PR comments,
    registry contract text).
-3. States plainly that the **default-deny, per-path whitelist** the course asks
-   for is **not implemented** — rather than describing an aspiration as if it
+3. States plainly that the **default-deny, per-path whitelist** was **not present
+at the audited baseline**; this PR adds a documented policy, but runtime enforcement
+is unverified — rather than describing an aspiration as if it
    were a control.
 
 **This document does not add, widen or reinterpret any permission granted by A.**
@@ -207,10 +208,11 @@ is limited to workflow-file changes.
 The course requires: *"default is no read, no write; every path is explicitly
 whitelisted"*, expressed in `.opencode/permissions.jsonc`.
 
-**Current state:** the coding agent has whatever access the operator's machine
-and configuration give it. There is no project-level deny-by-default list, no
-per-role path whitelist, and no machine-readable permission file in the
-repository.
+**Audited baseline state (`main@252fe311`):** the coding agent had whatever access
+the operator's machine and configuration gave it. There was no project-level
+deny-by-default list, per-role path whitelist, or machine-readable permission file.
+**This PR:** `.opencode/permissions.jsonc` adds a documented default-deny list
+and role scopes. It has not been verified as an OpenCode runtime sandbox.
 
 What partially substitutes for it in practice:
 
@@ -220,11 +222,11 @@ What partially substitutes for it in practice:
    credentials, which is the highest-impact permission failure.
 3. **Import boundary test** — restricts one specific cross-layer capability.
 
-None of these is a per-role filesystem permission model.
+None of these demonstrates runtime enforcement of the new per-role file policy.
 
 ---
 
-## 7. Gaps, stated precisely
+## 7. Historical baseline gaps, stated precisely
 
 | Gap | What is missing | Consequence |
 |---|---|---|
@@ -237,7 +239,9 @@ None of these is a per-role filesystem permission model.
 | G7 | Per-change architecture-decision record | `REQ-GOV-08`'s "accompanying architecture decision" has no artefact linking a safety-critical change to a decision |
 | G8 | `.github/workflows` runtime credential proof | The permission guard is static; runtime flows are not traced |
 
-Listing G1–G8 is not a request to relax anything. It is the accurate state of a
+G1–G5 describe missing files at `main@252fe311`; this PR adds them. G6–G8 and
+runtime enforcement still require separate evidence. Listing G1–G8 is not a request
+to relax anything. It is the accurate state of a
 document that would otherwise be read as complete.
 
 ---

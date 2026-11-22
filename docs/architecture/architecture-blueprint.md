@@ -295,7 +295,7 @@ See [`memory-design.md`](memory-design.md).
 | Rule | Source | Enforcement status |
 |---|---|---|
 | C is sole editor of `cli/run.py`, `trading_graph.py`, rating wiring | `development_contract.integration_owner` | **Document rule.** No automated check detects a non-C edit. |
-| Per-path read/write rights for each AI coding agent role, default-deny | Course D3.6 | **Not implemented.** `.opencode/permissions.jsonc` does not exist at this SHA. |
+| Per-path read/write rights for each AI coding agent role, default-deny | Course D3.6 | **Documented in this PR** by `.opencode/permissions.jsonc`; runtime enforcement has not been verified. The file was absent at baseline `main@252fe311`. |
 | Safety-critical changes need an architecture decision plus human review | `REQ-GOV-08`; course §6 | **Partly.** Human review is a GitHub setting (branch protection); no repository file records the "architecture decision" link per change. |
 | Memory-log ownership and rotation | `memory_log_max_entries` | Config-driven behaviour, not a permission. |
 
@@ -310,13 +310,15 @@ See [`memory-design.md`](memory-design.md).
 | **E** | O5 requirements and the news adapter |
 | **F** | Reviews test plans for O1/O3/O4/O5; owns CI and test tooling |
 
-### 7.4 Governance files that do not exist
+### 7.4 Governance files: baseline and this PR
 
 The course requires `AGENTS.md`, `Prompt.md`, `docs/code-governance/{structural-constraints,verification-constraints,mcp-tool-manifest}.md`,
 `.opencode/permissions.jsonc`, `.opencode/rules.md` and `.agent/rules.md`.
-**None of these exist at `main@252fe311`.** `.opencode/` and `.agent/` are empty
-directories. This blueprint therefore cannot cite them as constraints; it
-records their absence as a gap.
+**None of these existed at the audited baseline `main@252fe311`.** That is a
+historical snapshot, not the state of this PR. This PR adds all the named files.
+They document the team's rules and permission scopes; their presence alone does
+not prove that OpenCode enforces file-level access. Human plan review and CI
+remain separate controls.
 
 See [`permission-model.md`](permission-model.md) for the full model and its
 evidence status.

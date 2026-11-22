@@ -7,6 +7,8 @@
   "roles": {
     "O1": { "read": ["AGENTS.md", "Prompt.md", "docs/req/requirements.yaml", "docs/req/product-requirements.yaml", "docs/req/reviews/o1/**", "docs/test-approvals/O1-2026-11-16.md", "tradingagents/dataflows/vendors/yahoo/market.py", "tradingagents/dataflows/vendors/yahoo/snapshot.py", "test/offline/test_o1_sma_guard.py"], "write": ["tradingagents/dataflows/vendors/yahoo/market.py", "tradingagents/dataflows/vendors/yahoo/snapshot.py", "test/offline/test_o1_sma_guard.py"] },
     "O2_O4_O6_shared_integration": { "read": ["AGENTS.md", "Prompt.md", "docs/req/requirements.yaml", "docs/architecture/**", "cli/run.py", "tradingagents/graph/trading_graph.py"], "write": [] },
+    // O5 implementation is closed for this handoff. No new write scope is granted.
+    // Any later O5 work needs a newly approved, exact file list before this policy changes.
     "O5": { "read": ["AGENTS.md", "Prompt.md", "docs/req/requirements.yaml", "docs/architecture/**", "tradingagents/dataflows/macro_news_filter.py", "tradingagents/dataflows/vendors/yahoo/news.py"], "write": [] },
     "CI": { "read": ["AGENTS.md", "Prompt.md", "docs/req/requirements.yaml", ".github/workflows/ci.yml", "scripts/check_*.py", "tests/**", "test/offline/**"], "write": [] }
   },
