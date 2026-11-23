@@ -1,7 +1,0 @@
-# After-O3 source reference, not a runtime-loaded prompt file.
-version: "1.1"
-status: after_o3_reference
-source_commit: d89dbbaaaa3873c9b56eb0777150ad6d8ce0f079
-source_paths:
-  - tradingagents/agents/analysts/sentiment_analyst.py
-note: This is the source revision at O3 PR 14. Runtime prompt text still lives in Python; this file identifies the reviewed revision for comparison and is not a new prompt loader.
