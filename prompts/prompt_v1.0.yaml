@@ -1,0 +1,7 @@
+# Before-O3 source reference, not a runtime-loaded prompt file.
+version: "1.0"
+status: before_o3_reference
+source_commit: c861d0307238a3b763a35446f7da1245b1e8322a
+source_paths:
+  - tradingagents/agents/analysts/sentiment_analyst.py
+note: This is the source revision before O3 PR 14 changed the Sentiment Analyst input assembly. Prompt text remained embedded in Python; no separate YAML prompt was executed.

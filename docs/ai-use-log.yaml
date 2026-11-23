@@ -1,0 +1,49 @@
+# Index of existing, member-authored AI-use evidence. Source files are retained.
+# This index is not a new agent session or a retrospective approval.
+version: 1
+entries:
+  - member: A
+    student_id: "60258776"
+    work: O1 SMA validity and team coordination
+    evidence:
+      - ../transcripts/A-O1-OpenCode-Session-annotated.md
+    change_record: https://github.com/Caicys297/TradingAgents-CS5351/pull/10
+  - member: B
+    student_id: "60096525"
+    work: O2 manifest and requirements
+    evidence:
+      - ../transcripts/O2-AI-Use-Log.md
+      - ../transcripts/O2-Finalize-TC15-session-excerpt.md
+    change_record: https://github.com/Caicys297/TradingAgents-CS5351/pull/34
+  - member: C
+    student_id: "61067158"
+    work: Architecture documents and shared integration
+    evidence:
+      - ../transcripts/C-Architecture-Docs-AI-Use-Log.md
+      - ../transcripts/C-architecture-docs-session-export.json
+    change_record: https://github.com/Caicys297/TradingAgents-CS5351/pull/49
+    provenance_note: The architecture export identifies itself as filtered and redacted supplementary evidence.
+  - member: D
+    student_id: "60290820"
+    work: O4 evidence gate
+    evidence:
+      - ../transcripts/O4-AI-Use-Log.md
+      - ../transcripts/D-O4-OpenCode-Session-annotated.md
+    change_record: https://github.com/Caicys297/TradingAgents-CS5351/pull/48
+  - member: E
+    student_id: "60216828"
+    work: O5 macro-news filtering and S5 evidence
+    evidence:
+      - ../transcripts/O5-S5-AI-Use-Log.md
+      - ../transcripts/O5-S5-session-export.json
+      - ../transcripts/O5-S5-publication-session-excerpt.json
+    change_record: https://github.com/Caicys297/TradingAgents-CS5351/pull/40
+  - member: F
+    student_id: "60263805"
+    work: O6 and CI verification
+    evidence:
+      - ../transcripts/F/README.md
+      - ../transcripts/F/F_Transcript_Manifest.json
+      - ../transcripts/F/F_Intervention_Annotations.md
+      - ../transcripts/CI-AI-Use-Log.md
+    change_record: https://github.com/Caicys297/TradingAgents-CS5351/pull/47
