@@ -168,7 +168,7 @@ proves blocking. Node-level detail is in
 **Real blocking evidence on the record:** the #37 approval-closure run
 (`44979161445`, pinned `1c0b740`, 17 checks successful) shows the approval gate
 **passing** on a complete batch; PR #41 **E2** shows a Schema fault **blocking**
-a change and **E4/E5** shows recovery (E5 run `44998474208` at `9462d6c1`,
+a change; **E4 → E1** shows missing-review block then review recovery, and **E2 → E5** shows repair and reapproval (E5 run `44998474208` at `9462d6c1`,
 17/17), after which the PR was closed unmerged.
 
 | ID | Statement (abridged) | Enforcing component | Verification | Fallback if violated |

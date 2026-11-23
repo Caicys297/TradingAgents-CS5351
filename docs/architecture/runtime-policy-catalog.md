@@ -260,7 +260,7 @@ change is a separate question, and is answered only by a cited run or PR:
 
 | Gate | Real blocking on the record |
 |---|---|
-| `requirements schema` / regression `tests` | **Yes** — PR #41 E2 blocked (Schema fault; the four test matrices failed together), E4/E5 recovered; [E5 run 44998474208](https://github.com/Caicys297/TradingAgents-CS5351/actions/runs/44998474208) 17/17; PR then closed unmerged |
+| `requirements schema` / regression `tests` | **Yes** — PR #41 E2 blocked (Schema fault; the four test matrices failed together), then E5 repaired and reapproved with [run 44998474208](https://github.com/Caicys297/TradingAgents-CS5351/actions/runs/44998474208) 17/17; separately, E4 missing-review blocking recovered at E1. PR then closed unmerged |
 | `test approval` | Gate **passing** recorded (#37 run `44979161445`, pinned `1c0b740`, 17 checks); a real rejection of a complete PR is **not** recorded |
 | `semantic (deterministic O4/O5)` | **Independent red-light blocking not verified** |
 | `governance permissions` | Guard logic and nodes exist; applicability is limited to workflow changes; a real blocking event is **not** recorded here |

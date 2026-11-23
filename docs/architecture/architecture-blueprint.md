@@ -333,7 +333,7 @@ evidence status.
 |---|---|---|
 | **Structural** | imports, module boundaries, permissions, fitness functions | `tests/test_layering.py` (yfinance only in dataflows), `scripts/check_contracts.py`, `check_api.py`, `check_security.py`, `check_permissions.py` |
 | **Regression** | all prior suites pass | CI job `tests (py3.11/3.12/3.13/3.14)`; default `pytest -q` collects `test/offline/` |
-| **Behavioral** | quality thresholds, zero safety escapes | `semantic (deterministic O5)` and `semantic (deterministic O4)` CI jobs running `scripts/semantic_report.py` against fixed fixtures |
+| **Behavioral** | quality thresholds, zero safety escapes | Deterministic O5 runs `scripts/semantic_report.py` on fixed fixtures; deterministic O4 directly runs six selected pytest nodes. These bounded cases do not prove universal zero safety escapes. |
 
 ### 8.2 Blocking gates as implemented
 
@@ -388,7 +388,8 @@ a state-transition record from a real PR:
 |---|---|
 | Approval gate **passing** on a complete batch | [#37 run 44979161445](https://github.com/Caicys297/TradingAgents-CS5351/actions/runs/44979161445), pinned `1c0b740`, 17 checks successful |
 | Schema fault **blocking** a change | PR #41 **E2** |
-| Repair and **recovery** | PR #41 **E4/E5**, [E5 run 44998474208](https://github.com/Caicys297/TradingAgents-CS5351/actions/runs/44998474208) at `9462d6c1`, 17/17 success |
+| Missing-review **block**, then review recovery | PR #41 **E4 → E1** |
+| Approved-but-failing **block**, then repaired recovery | PR #41 **E2 → E5**, [E5 run 44998474208](https://github.com/Caicys297/TradingAgents-CS5351/actions/runs/44998474208) at `9462d6c1`, 17/17 success |
 | Final read-back, then closed **unmerged** | [PR #41 comment 7076164337](https://github.com/Caicys297/TradingAgents-CS5351/pull/41#issuecomment-7076164337) |
 
 Limits that remain true and are not waived:
@@ -440,9 +441,10 @@ Neither substitutes for the other.
 
 ### 9.3 What is not observed
 
-- **S6 / T17 is not measured.** `REQ-O5-10` has verification `T17`, and
-  development is **stopped, not accepted**. No performance threshold is claimed
-  as met, and ordinary selector correctness is not performance evidence.
+- **S6 / T17 has a failed historical measurement.** On unmerged PR #33 at
+  `0ed7c94`, p95 was 114.376 ms against the 100 ms threshold (CI #192).
+  Development was stopped and the result was not accepted into main. Ordinary
+  selector correctness is not performance evidence.
 - No runtime monitor claims to detect a violated business invariant after the
   fact. Invariants are enforced at the code path and checked by tests; there is
   no independent production monitor.
@@ -503,7 +505,7 @@ unmeasured and stopped. Evidence status for the S5 tests is recorded in
 | A new attachment point in the analyst graph | Update §5.1 before merging the change |
 | A change to what is authoritative (§5.2) | New ADR; this section is not edited in place |
 | The gate moves from `cli/run.py` into the graph | New ADR and re-verification of `O4-INV-03` |
-| The governance files in §7.4 are added | Promote them from "document rule" to "machine-enforced" in §7.1 |
+| The governance files in §7.4 are added | Keep them as documented rules; promote only a specific control after runtime or CI enforcement is independently verified, including an out-of-scope refusal |
 | S6 is ever restarted | New ADR; `REQ-O5-10` re-enters §9.3 with a measured result |
 
 ### 10.3 Known state of the decision record

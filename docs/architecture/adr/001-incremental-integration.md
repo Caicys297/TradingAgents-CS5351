@@ -280,7 +280,7 @@ is met, and this ADR does not claim, restore or imply any T17 measurement. The
 | R2 | The four analysts stop being parallel | The O5 `ContextVar` propagation assumption and the checkpoint `analysts=parallel` key both change |
 | R3 | Token-level budgeting becomes a requirement | O3 would need a real tokenizer path and a measured provider-usage path; the character budget would become a secondary cap |
 | R4 | A production monitor is required for a business invariant | Currently no invariant is monitored at runtime; adding one changes the observability section of the blueprint |
-| R5 | `AGENTS.md` / `.opencode` / `.agent` are authored | §7 of the blueprint moves those rules from "document rule" to "machine-enforced" |
+| R5 | `AGENTS.md` / `.opencode` / `.agent` are authored | §7 of the blueprint records them as documented rules; only a separately verified runtime or CI control may be called machine-enforced |
 | R6 | S6 is restarted | `REQ-O5-10` re-enters scope with a measured T17 result; this ADR's §4.4 gap table is unaffected but the blueprint §9.3 changes |
 | R7 | Persistence becomes mandatory for O5 | Contradicts `development_contract.o5.sink_failure`; would need a Registry change, not just code |
 

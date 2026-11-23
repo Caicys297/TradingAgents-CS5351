@@ -112,7 +112,7 @@ State plainly, so the table is not read as a quantitative study:
 | Dimension | Status |
 |---|---|
 | Latency of the gate | Not measured. `O4-NFR-03` requires "bounded latency without external calls"; `O4-T-16` is the verification node, but no timing result is recorded in this document |
-| Latency of the selector | **Not measured.** `REQ-O5-10` / `T17` was not accepted: **S6 was stopped before any T17 result was accepted**, so no threshold is met. Ordinary selector tests are *correctness* evidence, not performance evidence |
+| Latency of the selector | A historical unmerged S6/T17 attempt on PR #33 at `0ed7c94` measured p95 114.376 ms, exceeding the 100 ms threshold (CI #192). S6 was stopped and not accepted into main. Ordinary selector tests are *correctness* evidence, not performance evidence |
 | Cost of condensation | Not measured. Character budgets exist; provider-usage reductions were not observed |
 | Token savings | **Not claimed.** `REQ-O3-07` forbids it without a labelled tokenizer count or observed provider usage |
 | Defect density per option | Not recorded |
@@ -123,7 +123,7 @@ State plainly, so the table is not read as a quantitative study:
 
 The repository does hold evidence that some CI gates blocked real changes — PR
 #41 **E2** (Schema fault; the four test matrices failed together while BLOCKED)
-and **E4/E5** (repair, green, recovered; [run 44998474208](https://github.com/Caicys297/TradingAgents-CS5351/actions/runs/44998474208)
+and **E4 → E1** (missing-review block then review recovery) and **E2 → E5** (failed checks then repair and reapproval; [run 44998474208](https://github.com/Caicys297/TradingAgents-CS5351/actions/runs/44998474208)
 at `9462d6c1`, 17/17), plus the #37 approval-closure pass
 ([run 44979161445](https://github.com/Caicys297/TradingAgents-CS5351/actions/runs/44979161445)
 at `1c0b740`).
