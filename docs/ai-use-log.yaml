@@ -13,6 +13,7 @@ entries:
     work: O2 manifest and requirements
     evidence:
       - ../transcripts/O2-AI-Use-Log.md
+      - ../transcripts/60096525-QIN-QILUN.md
       - ../transcripts/O2-Finalize-TC15-session-excerpt.md
     change_record: https://github.com/Caicys297/TradingAgents-CS5351/pull/34
   - member: C
