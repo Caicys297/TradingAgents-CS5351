@@ -35,10 +35,9 @@ Expected: the analysis options (`--ticker`, `--date`, `--analysts`, `--save/--no
 
 ---
 
-## 3. Non-interactive analysis (the main demo)
+## 3. CLI analysis (the main demo)
 
 ```bash
-export OPENAI_API_KEY=sk-...            # your own key; never commit it
 tradingagents --ticker NVDA --date 2026-11-19 --analysts market,news --no-save --no-show
 ```
 
@@ -53,7 +52,7 @@ What each flag does (from `cli/main.py`):
 | `--no-show` | Do not print the whole report at the end |
 | `--html/--no-html` | HTML page on by default when saving |
 
-**Without these flags** the same command prompts interactively — useful on camera, slower in a live demo.
+This command still prompts for output language, research depth, LLM provider and thinking models unless the corresponding `TRADINGAGENTS_*` settings are supplied. Run it in a real terminal and make those selections on camera. Set your provider key in your local environment before running; do not put a key in the slides, recording or repository. For an unattended run, first set `TRADINGAGENTS_OUTPUT_LANGUAGE`, both `TRADINGAGENTS_MAX_DEBATE_ROUNDS` and `TRADINGAGENTS_MAX_RISK_ROUNDS`, `TRADINGAGENTS_LLM_PROVIDER`, and at least one of `TRADINGAGENTS_QUICK_THINK_LLM` or `TRADINGAGENTS_DEEP_THINK_LLM`, along with any provider credential required by the selected model. The exact missing settings can be checked against `cli/selections.py::unattended_gaps`.
 
 ---
 
