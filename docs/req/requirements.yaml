@@ -157,7 +157,7 @@ requirements:
     status: "selected_for_development"
     source_review: "sources-v2.0/O2-Reproducibility-Manifest-Requirements.md#L57"
     verification: ["O2-TC-01", "O2-TC-04", "O2-TC-13", "O2-TC-14"]
-    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py"]
+    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py", "tradingagents/repro/manifest.py"]
   - id: "O2-FR-02"
     type: "functional_behavior"
     priority: "Must"
@@ -177,7 +177,7 @@ requirements:
     status: "selected_for_development"
     source_review: "sources-v2.0/O2-Reproducibility-Manifest-Requirements.md#L59"
     verification: ["O2-TC-04", "O2-TC-11"]
-    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py"]
+    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py", "tradingagents/repro/manifest.py"]
   - id: "O2-FR-04"
     type: "functional_behavior"
     priority: "Must"
@@ -187,11 +187,11 @@ requirements:
     status: "selected_for_development"
     source_review: "sources-v2.0/O2-Reproducibility-Manifest-Requirements.md#L60"
     verification: ["O2-TC-22"]
-    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py"]
+    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py", "tradingagents/repro/manifest.py"]
   - id: "O2-FR-05"
     type: "security"
     priority: "Must"
-    statement: "Serialize only the consolidated effective-configuration allowlist named in development_contract.o2_config_allowlist; omit absent values explicitly and never serialize a full config or environment."
+    statement: "Serialize only the consolidated effective-configuration allowlist named in development_contract.o2.config_allowlist; omit absent values explicitly and never serialize a full config or environment."
     fit_criterion: "For a fixture containing every allowlisted field plus secrets and unknown fields, JSON contains the allowed non-secret fields with correct values and excludes every unlisted field and credential."
     metric: "Missing Git/model metadata is explicit, and available package/runtime values are recorded.; No unapproved config fields or secret values appear in manifest.; Only allowlisted config/model fields are serialized; unapproved keys are absent."
     threshold: "100% of the specified acceptance cases pass"
@@ -199,7 +199,7 @@ requirements:
     status: "selected_for_development"
     source_review: "sources-v2.0/O2-Reproducibility-Manifest-Requirements.md#L61"
     verification: ["O2-TC-06", "O2-TC-23"]
-    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py"]
+    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py", "tradingagents/repro/manifest.py"]
   - id: "O2-FR-06"
     type: "functional_behavior"
     priority: "Must"
@@ -209,7 +209,7 @@ requirements:
     status: "selected_for_development"
     source_review: "sources-v2.0/O2-Reproducibility-Manifest-Requirements.md#L62"
     verification: ["O2-TC-08", "O2-TC-09", "O2-TC-17", "O2-TC-24"]
-    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py"]
+    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py", "tradingagents/repro/manifest.py"]
   - id: "O2-FR-07"
     type: "functional_behavior"
     priority: "Must"
@@ -219,7 +219,7 @@ requirements:
     status: "selected_for_development"
     source_review: "sources-v2.0/O2-Reproducibility-Manifest-Requirements.md#L63"
     verification: ["O2-TC-02", "O2-TC-03", "O2-TC-12"]
-    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py"]
+    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py", "tradingagents/repro/manifest.py"]
   - id: "O2-FR-08"
     type: "functional_behavior"
     priority: "Must"
@@ -229,7 +229,7 @@ requirements:
     status: "selected_for_development"
     source_review: "sources-v2.0/O2-Reproducibility-Manifest-Requirements.md#L64"
     verification: ["O2-TC-03", "O2-TC-12", "O2-TC-02"]
-    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py"]
+    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py", "tradingagents/repro/manifest.py"]
   - id: "O2-FR-09"
     type: "functional_behavior"
     priority: "Must"
@@ -239,7 +239,7 @@ requirements:
     status: "selected_for_development"
     source_review: "sources-v2.0/O2-Reproducibility-Manifest-Requirements.md#L65"
     verification: ["O2-TC-07"]
-    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py"]
+    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py", "tradingagents/repro/manifest.py"]
   - id: "O2-FR-10"
     type: "functional_behavior"
     priority: "Must"
@@ -249,7 +249,7 @@ requirements:
     status: "selected_for_development"
     source_review: "sources-v2.0/O2-Reproducibility-Manifest-Requirements.md#L66"
     verification: ["O2-TC-05"]
-    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py"]
+    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py", "tradingagents/repro/manifest.py"]
   - id: "O2-FR-11"
     type: "security"
     priority: "Must"
@@ -261,7 +261,7 @@ requirements:
     status: "selected_for_development"
     source_review: "sources-v2.0/O2-Reproducibility-Manifest-Requirements.md#L67"
     verification: ["O2-TC-06", "O2-TC-16", "O2-TC-23"]
-    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py"]
+    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py", "tradingagents/repro/manifest.py"]
   - id: "O2-FR-12"
     type: "functional_behavior"
     priority: "Must"
@@ -271,7 +271,7 @@ requirements:
     status: "selected_for_development"
     source_review: "sources-v2.0/O2-Reproducibility-Manifest-Requirements.md#L68"
     verification: ["O2-TC-01", "O2-TC-25"]
-    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py"]
+    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py", "tradingagents/repro/manifest.py"]
   - id: "O2-FR-13"
     type: "functional_behavior"
     priority: "Must"
@@ -281,7 +281,7 @@ requirements:
     status: "selected_for_development"
     source_review: "sources-v2.0/O2-Reproducibility-Manifest-Requirements.md#L69"
     verification: ["O2-TC-13", "O2-TC-14"]
-    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py"]
+    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py", "tradingagents/repro/manifest.py"]
   - id: "O2-FR-14"
     type: "functional_behavior"
     priority: "Must"
@@ -291,7 +291,7 @@ requirements:
     status: "selected_for_development"
     source_review: "sources-v2.0/O2-Reproducibility-Manifest-Requirements.md#L70"
     verification: ["O2-TC-13", "O2-TC-14"]
-    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py"]
+    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py", "tradingagents/repro/manifest.py"]
   - id: "O2-NFR-01"
     type: "quality_attribute"
     priority: "Should"
@@ -303,7 +303,7 @@ requirements:
     status: "selected_for_development"
     source_review: "sources-v2.0/O2-Reproducibility-Manifest-Requirements.md#L76"
     verification: ["O2-TC-18"]
-    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py"]
+    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py", "tradingagents/repro/manifest.py"]
   - id: "O2-NFR-02"
     type: "quality_attribute"
     priority: "Should"
@@ -315,7 +315,7 @@ requirements:
     status: "selected_for_development"
     source_review: "sources-v2.0/O2-Reproducibility-Manifest-Requirements.md#L77"
     verification: ["O2-TC-02", "O2-TC-10"]
-    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py"]
+    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py", "tradingagents/repro/manifest.py"]
   - id: "O2-NFR-03"
     type: "security"
     priority: "Must"
@@ -327,7 +327,7 @@ requirements:
     status: "selected_for_development"
     source_review: "sources-v2.0/O2-Reproducibility-Manifest-Requirements.md#L78"
     verification: ["O2-TC-06", "O2-TC-16", "O2-TC-23"]
-    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py"]
+    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py", "tradingagents/repro/manifest.py"]
   - id: "O2-NFR-04"
     type: "quality_attribute"
     priority: "Should"
@@ -375,7 +375,7 @@ requirements:
     status: "selected_for_development"
     source_review: "sources-v2.0/O2-Reproducibility-Manifest-Requirements.md#L82"
     verification: ["O2-TC-01"]
-    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py"]
+    source_code: ["cli/run.py", "tradingagents/graph/trading_graph.py", "tradingagents/repro/manifest.py"]
   - id: "O3-FR-01"
     type: "functional_behavior"
     priority: "Must"
