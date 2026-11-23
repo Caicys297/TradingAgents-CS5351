@@ -14,8 +14,9 @@ deliverable, per REQ-GOV-06.
   `docs/CLI-Demo-Guide.md`. No business code, test, CI workflow, Registry entry,
   approval record, `Report.md` or `README.md` was modified by this work.
 
-- Implementation commit: `e8cce9197e2950f06f8550df86426b841a6ed93e` (this document-only PR; in
-  `origin/main..HEAD`). The documents describe `main@252fe311d8d1483b5713de69b04ce2769c33f1dd`.
+- Historical source commit: `e8cce9197e2950f06f8550df86426b841a6ed93e` records the original architecture-document work. It is not a commit in this replacement PR. The documents describe `main@252fe311d8d1483b5713de69b04ce2769c33f1dd`.
+
+- Carry-forward note: PR #49 brings this existing AI-use log and its session export into the final handoff after the architecture documents were integrated separately. The historical source commit, session identity, message sequence and export hash below are retained as provenance; they are not claims that this PR reran or recreated the original session.
 
 - Session/export evidence: `transcripts/C-architecture-docs-session-export.json`
   — a real OpenCode session record mechanically extracted from the local session
