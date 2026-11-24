@@ -1,11 +1,15 @@
 # Debt register
 
-These are accepted limits at closeout, not promises of completed work.
+This lists evidenced limits and the AI-era debt categories requested by the course. “No documented item” means no specific issue was found in the closeout sources; it is not a claim that the project is debt-free.
 
-| Item | Current limit | Follow-up trigger and source |
-| --- | --- | --- |
-| O3 model usage | Bounded character context was tested; lower provider token usage or better advice was not established. | Measure with provider usage on fixed inputs if O3 is extended. [Architecture trace matrix](architecture/trace-matrix.md), [PR #14](https://github.com/Caicys297/TradingAgents-CS5351/pull/14) |
-| O5 branch coverage | The reported real CLI probe covered the `V-LIMIT-ZERO` path, not every provider/news path. | Add separately scoped probes before claiming wider live behavior. [PR #40](https://github.com/Caicys297/TradingAgents-CS5351/pull/40) |
-| Protection trial E3 | E3 was not executed in the final six-gate handoff. | Run a separate trial only if this behavior becomes an acceptance requirement. [F's CI summary](ci/F-Final-Test-and-CI-Summary.md), [PR #41](https://github.com/Caicys297/TradingAgents-CS5351/pull/41) |
-| O5 S6 performance | The later measured p95 exceeded the 100 ms target; S6 was stopped and its PR was closed unmerged. | A new reviewed scope and passing measurement would be needed to restart. [PR #33](https://github.com/Caicys297/TradingAgents-CS5351/pull/33), [Report](../Report.md) |
-| Local agent permissions | The permission matrix documents approved scopes; it is not proof of operating-system or OpenCode enforcement. | Verify a runtime enforcement mechanism before claiming one. [Permission model](architecture/permission-model.md), [verification constraints](code-governance/verification-constraints.md) |
+| Category | Recorded limit or finding | Trigger / action | Source |
+| --- | --- | --- | --- |
+| Prompt rot | No versioned prompt migration or measured drift is documented. `prompts/` remains a placeholder. | If runtime prompts change, record a version and regression evidence. | [README](../README.md), [architecture](architecture/) |
+| Hallucinated dependencies | No confirmed dependency hallucination is recorded. | Check added packages against `pyproject.toml` and clean install before accepting a new dependency. | [project dependencies](../pyproject.toml), [CI summary](ci/F-Final-Test-and-CI-Summary.md) |
+| Untouchable code | Shared Graph/CLI files required one human integrator, C; that was an ownership boundary, not a ban on repair. | Reopen integration scope if a defect needs those paths. | [structural constraints](code-governance/structural-constraints.md), [Report](../Report.md) |
+| Hidden dependencies | O4 publication required both the gate and shared Graph/CLI wiring; checker-only evidence was insufficient. | Keep publication-boundary regression checks. | [PR #27](https://github.com/Caicys297/TradingAgents-CS5351/pull/27), [O4 mapping](ci/O4-Semantic-Integration-Mapping.md) |
+| Agent-induced bloat | No measured bloat finding is recorded. | Review new files and dependency changes against the approved scope. | [governance constraints](code-governance/structural-constraints.md) |
+| Evaluation debt | O3 character reduction does not prove token savings; O5 CLI probe only covered LIMIT_ZERO; protection trial E3 was not run. | Run fixed-input provider measurement or separately scoped probes before broader claims. | [PR #14](https://github.com/Caicys297/TradingAgents-CS5351/pull/14), [PR #40](https://github.com/Caicys297/TradingAgents-CS5351/pull/40), [CI summary](ci/F-Final-Test-and-CI-Summary.md) |
+| Guardrail debt | `.opencode/permissions.jsonc` describes scopes, but local enforcement was not verified. | Test an actual enforcement mechanism before calling it a guardrail. | [permission model](architecture/permission-model.md), [verification constraints](code-governance/verification-constraints.md) |
+| Human/cognitive debt | Repeated approval and evidence reconciliation delayed O5 S5; historical binding could not replace original approval. | Freeze acceptance fields and evidence checklist earlier in a future batch. | [PR #40](https://github.com/Caicys297/TradingAgents-CS5351/pull/40), [PR #42](https://github.com/Caicys297/TradingAgents-CS5351/pull/42), [Report](../Report.md) |
+| Performance, stopped scope | O5 S6 p95 was 114.376 ms against the 100 ms target; S6 was terminated and #33 stayed unmerged. | A new approved scope and passing measurement are needed to restart. | [PR #33](https://github.com/Caicys297/TradingAgents-CS5351/pull/33), [Report](../Report.md) |
