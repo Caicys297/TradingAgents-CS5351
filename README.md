@@ -1,3 +1,23 @@
+# CS5351 Group 34 project
+
+This repository is our course extension of [TradingAgents](https://github.com/TauricResearch/TradingAgents), based on upstream commit `9fa1196fffbcfd9de5146d2dd2869df84ab99838`. Our repository is [Caicys297/TradingAgents-CS5351](https://github.com/Caicys297/TradingAgents-CS5351). The six improvements address SMA validity (O1), run provenance (O2), bounded analyst context (O3), evidence-gated ratings (O4), macro-news evidence (O5), and per-analyst usage reporting (O6). O5 S6 was stopped and is not in the delivered S1–S5 scope. [Report.md](Report.md) explains the process, results, and limits.
+
+## Project layout and architecture
+
+The existing application source remains in [`tradingagents/`](tradingagents/) and the command line interface in [`cli/`](cli/). Data retrieval stays in the dataflows layer; the Graph connects analysts and the rating gate. [`docs/req/requirements.yaml`](docs/req/requirements.yaml) is the selected requirement registry. [`docs/architecture/`](docs/architecture/) contains the blueprint, decisions, invariants, permission model and trace matrix. [`test/offline/`](test/offline/) and [`tests/`](tests/) contain the actual tests; [`test/live/`](test/live/) currently has no runnable tests. [`transcripts/`](transcripts/) contains member sessions, native exports, and intervention notes. [`docs/ci/`](docs/ci/) records CI and protection evidence. [`AGENTS.md`](AGENTS.md), [`Prompt.md`](Prompt.md), and the governance files describe human review and agent scope; they are not evidence of runtime permission enforcement.
+
+The assignment's example layout shows full source under `src/` and versioned runtime prompts under `prompts/`. This repository keeps the inherited Python package paths above, while `src/` and `prompts/` remain placeholders. We have not copied code or invented prompt versions merely to fill those directories. Runtime prompt text and selection are in the existing [`tradingagents/agents/`](tradingagents/agents/) implementation; [`Prompt.md`](Prompt.md) is the static coding-agent start prompt. See the architecture handoff for the actual boundaries.
+
+## Run and verify
+
+Use Python 3.11 or newer from the repository root. Install the project and test dependencies with `python -m pip install -e '.[dev]'`. Run deterministic offline tests with `python -m pytest -q test/offline`. Run the default project test collection with `python -m pytest -v`; [`pyproject.toml`](pyproject.toml) excludes tests marked `integration` by default. To include the marked integration tests, use `python -m pytest -o addopts='' -m integration tests`. Those tests may need external services, network access, and your own credentials; do not put credentials in the repository. For all collected tests, including integration, use `python -m pytest -o addopts='' tests test/offline`. The live test directory is presently a placeholder, so no live test result is claimed from it.
+
+To run the application, follow the upstream setup below and use `python -m cli.main` for the interactive CLI, with your own provider configuration. Offline tests do not need a live provider. The blocking GitHub checks and their observed scope are described in [`docs/ci/F-Final-Test-and-CI-Summary.md`](docs/ci/F-Final-Test-and-CI-Summary.md). PR #41 tested missing-review and failed-check blocking and recovery; it was closed without merge. The test does not establish every possible bypass or infrastructure failure mode.
+
+---
+
+## Upstream TradingAgents documentation
+
 <p align="center">
   <img src="tradingagents/assets/tauric-logo.svg" width="60%" alt="Tauric Research">
 </p>

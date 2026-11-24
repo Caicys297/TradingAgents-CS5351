@@ -3,7 +3,7 @@
 **Group 34 — TradingAgents extension**  
 **Course:** CS5351 Software Engineering, 2026–2027  
 **Repository:** https://github.com/Caicys297/TradingAgents-CS5351  
-**Report status:** closeout report prepared on 23 November 2026 against `main@b08d502e4a52064bdf9e35d09d10e88f343c1a94`. The submission commit and ZIP checksum are recorded after this documentation PR merges and the archive is built.
+**Report status:** revised on 24 November 2026 from release `v0.7.1`, whose `main` commit is `d41b22831bb7e855199b7b0b8b692d1cc1aa1b87`. Any later documentation commit and archive checksum must be recorded in the final handoff after this PR merges.
 
 ## 1. Team, scope and contribution
 
@@ -242,4 +242,4 @@ I would improve my process by freezing acceptance conditions earlier and keeping
 | B's O2 session | PR #51; `transcripts/60096525-QIN-QILUN.md` | Later annotated session added to the closeout PR; the earlier TC-15 excerpt remains a separate source |
 | Directory closeout | `architecture-blueprint.md`, `docs/ai-use-log.yaml`, `docs/review-memo.md`, `docs/debt-register.md`, `docs/bug-diary.md`, and student-ID entry files in `transcripts/` | Locates existing evidence and records known boundaries without changing runtime code |
 
-**Submission record:** the repository snapshot used to prepare this report is `b08d502e4a52064bdf9e35d09d10e88f343c1a94`. The later commit containing this report, its CI result, the ZIP filename and the ZIP SHA-256 belong in the archive handoff record generated after merge. The contribution percentages above remain a proposed team estimate until confirmed by the six members.
+**Submission record:** the source archive for this revision is release `v0.7.1` at `d41b22831bb7e855199b7b0b8b692d1cc1aa1b87`. This documentation PR creates a later commit; record its merged `main` SHA, CI result and downloaded ZIP checksum in the final submission handoff, not as a self-reference inside this report. The contribution percentages above remain a proposed team estimate until confirmed by the six members.
